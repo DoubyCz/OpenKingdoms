@@ -1,7 +1,9 @@
 #include "tak_fog.h"
 #include "tak_unit.h"
 #include "tak_world.h"
+#include "tak_platform.h"
 
+#include <SDL.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -77,21 +79,140 @@ static int test_map_revealed_initializes_explored(void) {
     return 0;
 }
 
-static int test_los_disabled_is_visible(void) {
+/* With Line of Sight off the original still grows the explored map as
+ * units move (legacy:167404-167409) and fills only its sight map
+ * (legacy:167211-167219). Ground never walked stays unexplored. */
+static int test_los_off_still_tracks_explored_ground(void) {
     GameWorld w;
     memset(&w, 0, sizeof(w));
-    w.map_pixels_w = 128;
-    w.map_pixels_h = 128;
+    memset(g_test_units, 0, sizeof(g_test_units));
+    memset(g_test_defs, 0, sizeof(g_test_defs));
+    w.map_pixels_w = 512;
+    w.map_pixels_h = 512;
     w.cfg.line_of_sight = 0;
     w.cfg.map_revealed = 0;
     ASSERT_EQ_INT(0, Fog_Init(&w));
+    g_test_unit_count = 1;
+    g_test_defs[0].sight_distance = 96;
+    g_test_units[0].alive = UNIT_ALIVE_ACTIVE;
+    g_test_units[0].player_id = 1;
+    g_test_units[0].def_idx = 0;
+    g_test_units[0].world_x = 64;
+    g_test_units[0].world_y = 64;
+
     Fog_Update(&w, 1);
-    int total = w.fog_w * w.fog_h;
-    for (int i = 0; i < total; i++) {
-        ASSERT_EQ_INT(TAK_FOG_VISIBLE, w.fog_state[i]);
-    }
-    ASSERT_EQ_INT(TAK_FOG_VISIBLE, Fog_StateAt(&w, 32, 32));
+    ASSERT_EQ_INT(TAK_FOG_VISIBLE, Fog_StateAtForPlayer(&w, 1, 64, 64));
+    ASSERT_EQ_INT(TAK_FOG_UNEXPLORED, Fog_StateAtForPlayer(&w, 1, 384, 384));
+
+    /* The unit walks away and the ground it saw stays explored. */
+    g_test_units[0].world_x = 384;
+    g_test_units[0].world_y = 384;
+    Fog_Update(&w, 1);
+    ASSERT_EQ_INT(TAK_FOG_EXPLORED, Fog_StateAtForPlayer(&w, 1, 64, 64));
+    ASSERT_EQ_INT(TAK_FOG_VISIBLE, Fog_StateAtForPlayer(&w, 1, 384, 384));
+    ASSERT_EQ_INT(TAK_FOG_UNEXPLORED, Fog_StateAt(&w, 64, 448));
+
     Fog_Free(&w);
+    g_test_unit_count = 0;
+    return 0;
+}
+
+/* A simulation guard. What the idle search, the AI and the influence
+ * maps read stays "everything is seen" with Line of Sight off, the
+ * original's full sight map (legacy:167211-167219), however much of
+ * the explored map is still dark. */
+static int test_los_off_simulation_still_sees_everything(void) {
+    GameWorld w;
+    memset(&w, 0, sizeof(w));
+    memset(g_test_units, 0, sizeof(g_test_units));
+    memset(g_test_defs, 0, sizeof(g_test_defs));
+    w.map_pixels_w = 512;
+    w.map_pixels_h = 512;
+    w.cfg.line_of_sight = 0;
+    ASSERT_EQ_INT(0, Fog_Init(&w));
+    g_test_unit_count = 1;
+    g_test_defs[0].sight_distance = 96;
+    g_test_units[0].alive = UNIT_ALIVE_ACTIVE;
+    g_test_units[0].player_id = 1;
+    g_test_units[0].def_idx = 0;
+    g_test_units[0].world_x = 64;
+    g_test_units[0].world_y = 64;
+    Fog_Update(&w, 1);
+    Fog_Update(&w, 2);
+    for (int p = 1; p <= 2; p++) {
+        for (int y = 16; y < 512; y += 32) {
+            for (int x = 16; x < 512; x += 32) {
+                ASSERT_EQ_INT(1, Fog_IsVisibleForPlayer(&w, p, x, y));
+            }
+        }
+    }
+    Fog_Free(&w);
+    g_test_unit_count = 0;
+    return 0;
+}
+
+/* One pixel of the overlay drawn over a white frame. */
+static int overlay_sample(const GameWorld *w, SDL_Renderer *r,
+                          int x, int y, int *out) {
+    TAK_Platform plat;
+    memset(&plat, 0, sizeof(plat));
+    plat.renderer = r;
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(r, 255, 255, 255, 255);
+    SDL_RenderClear(r);
+    Fog_RenderOverlay(w, &plat);
+    SDL_Rect px = { x, y, 1, 1 };
+    uint8_t rgba[4] = { 0, 0, 0, 0 };
+    if (SDL_RenderReadPixels(r, &px, SDL_PIXELFORMAT_RGBA32, rgba, 4) != 0)
+        return -1;
+    *out = rgba[0];
+    return 0;
+}
+
+/* The overlay keeps its black level in both modes and loses the grey
+ * one with Line of Sight off. The original gates only the middle level
+ * on the option (legacy:130175, legacy:130295-130305). */
+static int test_los_off_overlay_has_no_grey_level(void) {
+    SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, 256, 256, 32,
+                                                    SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer *r = s ? SDL_CreateSoftwareRenderer(s) : NULL;
+    if (!r) {
+        fprintf(stderr, "overlay test: no software renderer: %s\n",
+                SDL_GetError());
+        return 1;
+    }
+    GameWorld w;
+    memset(&w, 0, sizeof(w));
+    w.map_pixels_w = 512;
+    w.map_pixels_h = 512;
+    w.viewport_w = 256;
+    w.viewport_h = 256;
+    ASSERT_EQ_INT(0, Fog_Init(&w));
+    /* The left columns were explored and are out of sight, the rest
+     * were never seen. */
+    for (int cy = 0; cy < w.fog_h; cy++) {
+        for (int cx = 0; cx < w.fog_w; cx++) {
+            w.fog_layers[1][cy * w.fog_w + cx] =
+                cx < 4 ? TAK_FOG_EXPLORED : TAK_FOG_UNEXPLORED;
+        }
+    }
+    int explored = -1, dark = -1;
+    w.cfg.line_of_sight = 0;
+    ASSERT_EQ_INT(0, overlay_sample(&w, r, 64, 64, &explored));
+    ASSERT_EQ_INT(0, overlay_sample(&w, r, 192, 64, &dark));
+    ASSERT_EQ_INT(255, explored);
+    ASSERT_EQ_INT(0, dark);
+
+    /* With the option on, explored ground is dimmed as before. */
+    w.cfg.line_of_sight = 1;
+    ASSERT_EQ_INT(0, overlay_sample(&w, r, 64, 64, &explored));
+    ASSERT_EQ_INT(0, overlay_sample(&w, r, 192, 64, &dark));
+    ASSERT_EQ_INT(1, explored > 100 && explored < 170);
+    ASSERT_EQ_INT(0, dark);
+
+    Fog_Free(&w);
+    SDL_DestroyRenderer(r);
+    SDL_FreeSurface(s);
     return 0;
 }
 
@@ -219,11 +340,15 @@ static int test_an_ai_teammate_grants_no_sight(void) {
 }
 
 int main(void) {
-    if (test_map_revealed_initializes_explored() != 0) return 1;
-    if (test_los_disabled_is_visible() != 0) return 1;
-    if (test_player_layers_are_independent() != 0) return 1;
-    if (test_allies_share_sight() != 0) return 1;
-    if (test_an_ai_teammate_grants_no_sight() != 0) return 1;
+    int failed = 0;
+    failed |= test_map_revealed_initializes_explored();
+    failed |= test_los_off_still_tracks_explored_ground();
+    failed |= test_los_off_simulation_still_sees_everything();
+    failed |= test_los_off_overlay_has_no_grey_level();
+    failed |= test_player_layers_are_independent();
+    failed |= test_allies_share_sight();
+    failed |= test_an_ai_teammate_grants_no_sight();
+    if (failed) return 1;
     puts("test_fog: ok");
     return 0;
 }

@@ -55,17 +55,19 @@ static const uint8_t *fog_layer_const(const GameWorld *world, int player_id) {
     return world->fog_layers[player_id];
 }
 
-/* Per-corner overlay alpha — the legacy three-level scheme
- * (:130295-130346): opaque black over unexplored, 0x78 black over
- * explored-but-not-visible, clear over visible. Off-map reads as
- * unexplored, matching the legacy edge handling. */
+/* Per-corner overlay alpha, the legacy scheme (:130295-130346): opaque
+ * black over unexplored, clear over visible, and 0x78 black over
+ * explored ground out of sight. Only that middle level depends on Line
+ * of Sight, so with it off explored ground stays clear (legacy:130175,
+ * legacy:130295-130305). Off-map reads as unexplored, matching the
+ * legacy edge handling. */
 static uint8_t fog_corner_alpha(const GameWorld *world,
                                 const uint8_t *layer, int cx, int cy) {
     if (cx < 0 || cy < 0 || cx >= world->fog_w || cy >= world->fog_h)
         return 0xFF;
     switch (layer[fog_idx(world, cx, cy)]) {
         case TAK_FOG_VISIBLE:  return 0x00;
-        case TAK_FOG_EXPLORED: return 0x78;
+        case TAK_FOG_EXPLORED: return world->cfg.line_of_sight ? 0x78 : 0x00;
         default:               return 0xFF;
     }
 }
@@ -152,10 +154,9 @@ void Fog_Update(GameWorld *world, int player_id) {
     if (!world || !layer || world->fog_w <= 0 || world->fog_h <= 0)
         return;
     size_t n = (size_t)world->fog_w * (size_t)world->fog_h;
-    if (!world->cfg.line_of_sight) {
-        memset(layer, TAK_FOG_VISIBLE, n);
-        return;
-    }
+    /* The explored map grows in both modes (legacy:167404-167409). Line
+     * of Sight off only fills the sight map, which is what
+     * Fog_IsVisibleForPlayer answers (legacy:167211-167219). */
     for (size_t i = 0; i < n; i++) {
         if (layer[i] == TAK_FOG_VISIBLE)
             layer[i] = TAK_FOG_EXPLORED;
@@ -242,7 +243,7 @@ void Fog_Update(GameWorld *world, int player_id) {
 int Fog_StateAtForPlayer(const GameWorld *world, int player_id,
                          int32_t world_x, int32_t world_y) {
     const uint8_t *layer = fog_layer_const(world, player_id);
-    if (!world || !layer || !world->cfg.line_of_sight)
+    if (!world || !layer)
         return TAK_FOG_VISIBLE;
     int fx = world_x / FOG_CELL_PX;
     int fy = world_y / FOG_CELL_PX;
@@ -251,8 +252,13 @@ int Fog_StateAtForPlayer(const GameWorld *world, int player_id,
     return layer[fog_idx(world, fx, fy)];
 }
 
+/* What the simulation reads. With Line of Sight off the original fills
+ * every player's sight map (legacy:167211-167219), so everything counts
+ * as seen here and only the local player's drawing uses the explored
+ * map. */
 int Fog_IsVisibleForPlayer(const GameWorld *world, int player_id,
                            int32_t world_x, int32_t world_y) {
+    if (world && !world->cfg.line_of_sight) return 1;
     return Fog_StateAtForPlayer(world, player_id, world_x, world_y) == TAK_FOG_VISIBLE;
 }
 
@@ -288,8 +294,7 @@ int Fog_IsVisible(const GameWorld *world, int32_t world_x, int32_t world_y) {
  * seams. */
 void Fog_RenderOverlay(const GameWorld *world, TAK_Platform *plat) {
     const uint8_t *layer = fog_layer_const(world, g_fog_viewer);
-    if (!world || !plat || !plat->renderer || !layer ||
-        !world->cfg.line_of_sight) return;
+    if (!world || !plat || !plat->renderer || !layer) return;
     SDL_Renderer *r = plat->renderer;
     SDL_BlendMode prev;
     SDL_GetRenderDrawBlendMode(r, &prev);
