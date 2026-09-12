@@ -345,9 +345,13 @@ static void app_frame(AppState *app) {
                 World_End(&app->platform);
                 app->ingame_initialized = 0;
                 app->state = next_state;
-                /* Restart plays the same battle again (legacy:156329-156336). */
+                /* Restart plays the same battle again (legacy:156329-156336),
+                 * and Load Game arrives here as the same handoff. */
                 if (restart && World_BeginLoad(&app->platform, &again,
                                                again_map, again_kingdom) == 0) {
+                    /* Only the load raises this, never the restart: this
+                     * path serves both, and a restart has to spawn. */
+                    if (Loading_HasPendingSave()) World_SetRestoring(1);
                     app->state = GAMESTATE_GAME_LOADING;
                 }
             }

@@ -83,8 +83,10 @@ static struct {
  * the F1 menu keeps a restart request outside its own state.
  *
  * Setting it is not what stops the loading screen spawning an army on
- * top of the one the file carries. That is World_SetRestoring, thrown
- * after World_BeginLoad by whoever brings the world up. */
+ * top of the one the file carries. That is World_SetRestoring, raised
+ * after World_BeginLoad by whoever brings the world up, and
+ * Loading_HasPendingSave is what a path shared with an ordinary
+ * restart asks before raising it. */
 static TAK_SaveGame *s_pending_save;
 static char          s_save_refusal[256];
 

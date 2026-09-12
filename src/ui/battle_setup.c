@@ -909,6 +909,11 @@ static int bs_take_browser_result(SaveBrowserResult r, TAK_Platform *platform) {
         const TAK_SaveInfo *info = sg ? Save_Info(sg) : NULL;
         if (info && World_BeginLoad(platform, &info->cfg, info->map_name,
                                     info->map_kingdom) == 0) {
+            /* After BeginLoad, never before: the file carries the army,
+             * the pools and the fog that the final loading phase would
+             * otherwise create. BeginLoad puts the flag down, so a load
+             * abandoned from here cannot leak it into the next battle. */
+            World_SetRestoring(1);
             Loading_SetPendingSave(sg);
             SaveBrowser_Close();
             bs.browser_open = 0;
