@@ -28,6 +28,7 @@
 #include "tak_game_sound.h"
 #include "tak_gui.h"
 #include "tak_gui_render.h"
+#include "tak_message_box.h"
 #include "tak_paths.h"
 #include "tak_savegame.h"
 #include "tak_savelist.h"
@@ -53,10 +54,6 @@ static struct {
     char             enter_widget[32];
     char             esc_widget[32];
 
-    GUIDialog        msg_dialog;
-    int              has_msg;
-    GUIRuntime      *msg_rt;
-    char             message[256];
     /* A refusal that arrived before there was anything to show closes
      * the whole dialog once it is read (legacy:158733-158758). */
     int              message_closes;
@@ -124,24 +121,15 @@ static void parse_accelerators(const char *spec) {
 }
 
 static void free_message(void) {
-    if (sb.msg_rt) { GUIRuntime_Destroy(sb.msg_rt); sb.msg_rt = NULL; }
-    if (sb.has_msg) { GUIDialog_Free(&sb.msg_dialog); sb.has_msg = 0; }
-    sb.message[0] = '\0';
+    MessageBox_Close();
     sb.message_closes = 0;
 }
 
-/* Put a message in front of the dialog. data/guis/ok.gui is the
- * shipped one button box, accelerators "#Enter#Ok#Esc#Ok". */
+/* Put a message in front of the dialog, in the shipped one button
+ * box data/guis/ok.gui. */
 static void show_message(const char *text, int closes) {
-    free_message();
-    set_text(sb.message, sizeof(sb.message), text);
+    (void)MessageBox_Open(text);
     sb.message_closes = closes;
-    if (GUIDialog_Load(&sb.msg_dialog, "data/guis/ok.gui") != 0) return;
-    sb.has_msg = 1;
-    sb.msg_rt = GUIRuntime_Create(&sb.msg_dialog);
-    if (!sb.msg_rt) { GUIDialog_Free(&sb.msg_dialog); sb.has_msg = 0; return; }
-    GUIRuntime_SetWidgetText(sb.msg_rt, "Message", sb.message);
-    GUIRuntime_SetWidgetText(sb.msg_rt, "HelpText", "");
 }
 
 /* The translated message for a key, shown in the box. */
@@ -443,20 +431,20 @@ static SaveBrowserResult press_named(const char *name) {
 }
 
 SaveBrowserResult SaveBrowser_DismissMessage(void) {
-    if (!sb.has_msg && !sb.message[0]) return SAVEBROWSER_OPEN;
+    if (!MessageBox_IsOpen()) return SAVEBROWSER_OPEN;
     int closes = sb.message_closes;
     free_message();
     return closes ? SAVEBROWSER_CANCELLED : SAVEBROWSER_OPEN;
 }
 
 SaveBrowserResult SaveBrowser_Press(const char *name) {
-    if (sb.has_msg || sb.message[0]) return SaveBrowser_DismissMessage();
+    if (MessageBox_IsOpen()) return SaveBrowser_DismissMessage();
     return press_named(name);
 }
 
 SaveBrowserResult SaveBrowser_PressKey(const char *key) {
     if (!sb.open || !key) return SAVEBROWSER_OPEN;
-    if (sb.has_msg || sb.message[0]) return SaveBrowser_DismissMessage();
+    if (MessageBox_IsOpen()) return SaveBrowser_DismissMessage();
     const char *widget = NULL;
     if (tak_stricmp(key, "Enter") == 0) widget = sb.enter_widget;
     if (tak_stricmp(key, "Esc") == 0)   widget = sb.esc_widget;
@@ -537,7 +525,7 @@ static void render_all(void) {
     draw_rows();
     draw_name_field();
     draw_help_strip();
-    if (sb.msg_rt) GUIRuntime_Render(sb.msg_rt);
+    MessageBox_Render();
 }
 
 /* -- the frame ----------------------------------------------------- */
@@ -572,15 +560,18 @@ SaveBrowserResult SaveBrowser_Tick(TAK_Platform *platform) {
      * text is what makes it modal, not the art: a message whose
      * dialog would not load still has to be read before the dialog
      * underneath takes another press. */
-    if (sb.message[0]) {
-        char clicked[64];
-        int got = sb.msg_rt
-                ? GUIRuntime_Update(sb.msg_rt, mx, my, mouse_down,
-                                    clicked, sizeof(clicked))
-                : 0;
-        render_all();
+    if (MessageBox_IsOpen()) {
+        sync_thumb();
+        GUIRuntime_Render(sb.rt);
+        draw_rows();
+        draw_name_field();
+        int read = MessageBox_Tick(mx, my, mouse_down, enter_edge, esc_edge);
         sb.prev_mouse = mouse_down;
-        if (got || enter_edge || esc_edge) return SaveBrowser_DismissMessage();
+        if (read) {
+            int closes = sb.message_closes;
+            sb.message_closes = 0;
+            return closes ? SAVEBROWSER_CANCELLED : SAVEBROWSER_OPEN;
+        }
         return SAVEBROWSER_OPEN;
     }
 
@@ -706,7 +697,7 @@ const char *SaveBrowser_DetailSide(void) { return detail(0); }
 const char *SaveBrowser_DetailMap(void)  { return detail(1); }
 const char *SaveBrowser_DetailTime(void) { return detail(2); }
 
-const char *SaveBrowser_Message(void) { return sb.message; }
+const char *SaveBrowser_Message(void) { return MessageBox_Text(); }
 
 const char *SaveBrowser_Name(void) { return sb.name; }
 

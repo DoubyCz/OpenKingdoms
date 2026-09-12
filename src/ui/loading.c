@@ -29,6 +29,7 @@
 #include "tak_util.h"
 #include "tak_sides.h"
 #include "tak_savegame.h"
+#include "tak_message_box.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <string.h>
@@ -73,11 +74,17 @@ static struct {
     double       bink_timer;       /* accumulator for native-rate playback */
     SDL_Rect     bink_rect;        /* AnimatedControl widget rect          */
     int          next_chunk;       // Next terrain chunk idx to load
+    int          prev_enter;   /* edges for the refusal box */
+    int          prev_esc;
 } ld;
 
 /* The save a load is coming out of. It is set before Loading_Init runs
  * and Init clears everything it owns, so this lives outside ld, the way
- * the F1 menu keeps a restart request outside its own state. */
+ * the F1 menu keeps a restart request outside its own state.
+ *
+ * Setting it is not what stops the loading screen spawning an army on
+ * top of the one the file carries. That is World_SetRestoring, thrown
+ * after World_BeginLoad by whoever brings the world up. */
 static TAK_SaveGame *s_pending_save;
 static char          s_save_refusal[256];
 
@@ -88,6 +95,8 @@ void Loading_SetPendingSave(TAK_SaveGame *sg) {
 }
 
 const char *Loading_SaveRefusal(void) { return s_save_refusal; }
+
+int Loading_HasPendingSave(void) { return s_pending_save != NULL; }
 
 
 void Loading_SetProgress(float f) {
@@ -180,8 +189,10 @@ struct GUIRuntime *Loading_Runtime(void) {
 }
 
 void Loading_Shutdown(void) {
-    /* A load abandoned before the last phase still owns a reader. */
+    /* A load abandoned before the last phase still owns a reader, and
+     * a refusal nobody read still owns a dialog. */
     if (s_pending_save) { Save_ReadClose(s_pending_save); s_pending_save = NULL; }
+    MessageBox_Close();
     if (!ld.initialized) return;
     if (ld.bg_bink)     BinkPlayer_Close(ld.bg_bink);
     if (ld.rt)          GUIRuntime_Destroy(ld.rt);
@@ -917,23 +928,6 @@ static void loading_advance_step(TAK_Platform *platform) {
                     Fog_Update(world, p);
             }
         }
-        /* A battle coming out of a file takes its world scalars, its
-         * generator and its camera from the save, on top of the world
-         * the phases above built. A definition that moved under the
-         * save is only detectable here, with the registry in memory,
-         * so the refusal is kept for the screen that asked. */
-        if (s_pending_save) {
-            char err[256];
-            err[0] = '\0';
-            if (Save_Apply(s_pending_save, err, sizeof(err)) != 0) {
-                strncpy(s_save_refusal, err, sizeof(s_save_refusal) - 1);
-                s_save_refusal[sizeof(s_save_refusal) - 1] = '\0';
-                fprintf(stderr, "LS_FINALIZE: save refused: %s\n", s_save_refusal);
-            }
-            Save_ReadClose(s_pending_save);
-            s_pending_save = NULL;
-        }
-
         World_MarkLoaded();
         ld.step = LS_DONE;
         break;
@@ -945,8 +939,75 @@ static void loading_advance_step(TAK_Platform *platform) {
     }
 }
 
+/* A battle coming out of a file is applied once the screen has built
+ * the world and every registry the save names is in memory. Returns
+ * 0 when there was nothing to apply or it applied, and -1 when the
+ * save refused, in which case the world is already gone and the
+ * player is holding the reason.
+ *
+ * Tearing the world down matters: a save refused here has already
+ * built one, and dropping the player into a half loaded battle is
+ * the worst failure this feature has. The reason is copied out
+ * before the teardown, because it is a message about a world that no
+ * longer exists and a refusal that arrives blank is worse than
+ * none. */
+static int loading_apply_pending_save(TAK_Platform *platform) {
+    if (!s_pending_save) return 0;
+    char err[256];
+    err[0] = '\0';
+    int rc = Save_Apply(s_pending_save, err, sizeof(err));
+    Save_ReadClose(s_pending_save);
+    s_pending_save = NULL;
+    if (rc == 0) return 0;
+    strncpy(s_save_refusal, err[0] ? err : "This save could not be loaded.",
+            sizeof(s_save_refusal) - 1);
+    s_save_refusal[sizeof(s_save_refusal) - 1] = '\0';
+    fprintf(stderr, "Loading: save refused: %s\n", s_save_refusal);
+    World_End(platform);
+    (void)MessageBox_Open(s_save_refusal);
+    return -1;
+}
+
+/* The refusal box over the loading backdrop. Returns 1 once it has
+ * been read. */
+static int loading_read_refusal(TAK_Platform *platform) {
+    SDL_Surface *off = UI_Offscreen();
+    if (off) {
+        SDL_Rect whole = { 0, 0, 640, 480 };
+        fill_rect(off, whole, SDL_MapRGBA(off->format, 12, 10, 8, 255));
+    }
+    int focus = platform && platform->has_focus;
+    const Uint8 *keys = SDL_GetKeyboardState(NULL);
+    int enter = focus && (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER]);
+    int esc   = focus && keys[SDL_SCANCODE_ESCAPE];
+    int enter_edge = enter && !ld.prev_enter;
+    int esc_edge   = esc && !ld.prev_esc;
+    ld.prev_enter = enter;
+    ld.prev_esc = esc;
+    int mx = -1, my = -1, down = 0;
+    if (focus) {
+        int wx = 0, wy = 0;
+        uint32_t buttons = SDL_GetMouseState(&wx, &wy);
+        down = (buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+        if (!TAK_Platform_MapMouseToCanvas(platform, wx, wy, &mx, &my)) {
+            mx = -1; my = -1;
+        }
+    }
+    int read = MessageBox_Tick(mx, my, down, enter_edge, esc_edge);
+    UI_Present(platform);
+    return read;
+}
+
 int Loading_Tick(TAK_Platform *platform, float frame_dt) {
     if (!ld.initialized) return GAMESTATE_GAME_LOADING;
+
+    /* A save that refused after the world was built. The world is
+     * already gone, so the only thing left is to let the player read
+     * why and take them back to the menu. */
+    if (MessageBox_IsOpen()) {
+        if (loading_read_refusal(platform)) return GAMESTATE_MENU;
+        return GAMESTATE_GAME_LOADING;
+    }
 
     SDL_Surface *off = UI_Offscreen();
 
@@ -1017,6 +1078,10 @@ int Loading_Tick(TAK_Platform *platform, float frame_dt) {
      * we transition. */
     if (ld.progress >= 1.0f) {
         if (ld.held_one_frame) {
+            /* The world has been through the whole screen by now, so
+             * this is where a save is applied to it. */
+            if (loading_apply_pending_save(platform) != 0)
+                return GAMESTATE_GAME_LOADING;
             SDL_Rect whole = { 0, 0, 640, 480 };
             fill_rect(off, whole, SDL_MapRGBA(off->format, 0, 0, 0, 0));
             return GAMESTATE_IN_GAME;

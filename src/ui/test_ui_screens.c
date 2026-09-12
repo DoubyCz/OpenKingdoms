@@ -16204,6 +16204,99 @@ static int sb_open_menu_and_press(const char *button) {
     return InGameMenu_Press(button);
 }
 
+/* Live units by owner, and how many of those are monarchs. */
+static void sb_count_by_player(int *live, int *kings) {
+    int n = 0, i;
+    const Unit *units = Units_GetActive(&n);
+    for (i = 0; i <= TAK_MAX_PLAYERS; i++) { live[i] = 0; kings[i] = 0; }
+    for (i = 0; i < n; i++) {
+        const Unit *u = &units[i];
+        if (u->alive != UNIT_ALIVE_ACTIVE) continue;
+        if (u->player_id < 0 || u->player_id > TAK_MAX_PLAYERS) continue;
+        live[u->player_id]++;
+        const UnitDef *d = Units_GetDef(u->def_idx);
+        if (d && d->commander) kings[u->player_id]++;
+    }
+}
+
+/* A load brings back one army, not two.
+ *
+ * The loading screen builds a world and spawns each player a monarch,
+ * and a save carries the army it was written with. Those two have to
+ * be the same army, or a load hands the player a battle with doubled
+ * state and no error anywhere, which is the failure that survives
+ * longest because nothing complains.
+ *
+ * The switch that stops the spawn is World_SetRestoring(1), and it
+ * goes immediately AFTER World_BeginLoad, never before: BeginLoad
+ * clears the flag, which is what stops a leaked one reaching the
+ * next battle. Two sites need it, both on the line after a
+ * successful World_BeginLoad:
+ *
+ *   src/ui/battle_setup.c, bs_take_browser_result, the lobby path;
+ *   src/main.c, the GAMESTATE_IN_GAME branch that consumes
+ *   InGameMenu_TakeRestart, guarded by Loading_HasPendingSave(),
+ *   which is the F1 menu path because main.c is what brings that
+ *   world up.
+ *
+ * Neither call is here yet, because World_SetRestoring lands with
+ * the branch that writes units into the file. This case is green
+ * today only because that file carries no units to double, and it
+ * turns red the moment they arrive without those two lines. */
+TEST(a_load_brings_back_one_army_not_two) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    int live_before[TAK_MAX_PLAYERS + 1], kings_before[TAK_MAX_PLAYERS + 1];
+    sb_count_by_player(live_before, kings_before);
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    SaveBrowser_SetName("One Army");
+    ASSERT_EQ_INT(SAVEBROWSER_SAVED, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SAVEBROWSER_SAVED));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGameMenu_Press("LoadGame"));
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    SaveBrowser_SelectRow(0);
+    SaveBrowserResult r = SaveBrowser_Press("LoadGame");
+    ASSERT_EQ_INT(SAVEBROWSER_LOAD_READY, r);
+    ASSERT_EQ_INT(GAMESTATE_GAME_LOADING, InGameMenu_TakeBrowserResult(r));
+
+    BattleConfig again;
+    char again_map[96], again_kingdom[32];
+    ASSERT_EQ_INT(1, InGameMenu_TakeRestart(&again, again_map, sizeof(again_map),
+                                            again_kingdom, sizeof(again_kingdom)));
+    InGame_Shutdown();
+    World_End(&platform);
+    ASSERT_EQ_INT(0, World_BeginLoad(&platform, &again, again_map, again_kingdom));
+    ASSERT_EQ_INT(0, Loading_Init(&platform));
+    int next = GAMESTATE_GAME_LOADING;
+    for (int i = 0; i < 600 && next == GAMESTATE_GAME_LOADING; i++) {
+        next = Loading_Tick(&platform, 1.0f / 60.0f);
+    }
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, next);
+    ASSERT_EQ_STR("", Loading_SaveRefusal());
+    ASSERT_EQ_INT(0, InGame_Init(&platform));
+
+    int live_after[TAK_MAX_PLAYERS + 1], kings_after[TAK_MAX_PLAYERS + 1];
+    sb_count_by_player(live_after, kings_after);
+    for (int p = 1; p <= TAK_MAX_PLAYERS; p++) {
+        if (cfg.players[p - 1].kind == TAK_SLOT_CLOSED) continue;
+        printf("(p%d %d->%d units, %d->%d kings) ", p,
+               live_before[p], live_after[p], kings_before[p], kings_after[p]);
+        ASSERT_EQ_INT(1, kings_after[p]);
+        ASSERT_EQ_INT(live_before[p], live_after[p]);
+    }
+
+    sb_teardown(&platform);
+}
+
 /* Save Game brings up the shipped save dialog over the menu, which
  * stays drawn behind it (legacy:154703-154710). */
 TEST(the_menu_opens_the_save_dialog) {
@@ -16885,6 +16978,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_B, the_menu_opens_the_load_dialog);
     RUN_UI_TEST(UI_GROUP_C, a_saved_game_appears_in_the_load_list);
     RUN_UI_TEST(UI_GROUP_D, loading_a_save_reaches_a_running_battle);
+    RUN_UI_TEST(UI_GROUP_B, a_load_brings_back_one_army_not_two);
     RUN_UI_TEST(UI_GROUP_A, a_save_name_that_will_not_do_says_which_way);
     RUN_UI_TEST(UI_GROUP_B, saving_over_a_game_replaces_it_without_asking);
     RUN_UI_TEST(UI_GROUP_C, delete_takes_the_selected_game_at_once);
