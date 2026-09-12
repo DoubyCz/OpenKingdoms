@@ -97,10 +97,12 @@ static int plan_action_ok(const AiPlanState *s, const AiPlanCosts *c,
     /* A structure pick waits until the pool covers 70 percent of what
      * the frames already standing ask for (legacy:17201, :17270). An
      * income building is exempt, as it is at the order's own gate
-     * (legacy:12127). */
+     * (legacy:12127). One frame at a time and never a permanent stop:
+     * the producer count grows on a ratchet as the match runs
+     * (legacy:16254-16266), up to the per-type limit in allowed[]. */
     case AI_ACT_BUILD_FACTORY:
         return s->builders_idle > 0 && s->build_eff >= 70 &&
-               s->factories + s->factories_pending == 0;
+               s->factories_pending == 0;
     case AI_ACT_BUILD_TOWER:
         return s->builders_idle > 0 && s->build_eff >= 70 &&
                s->threat_home > 0;

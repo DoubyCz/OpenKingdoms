@@ -185,43 +185,6 @@ static int ai_def_is_combat_unit(const UnitDef *def) {
     return 0;
 }
 
-static int ai_player_has_pending_combat_production(const Unit *units,
-                                                   int unit_count,
-                                                   int player_id) {
-    for (int i = 0; i < unit_count; i++) {
-        const Unit *u = &units[i];
-        if (u->alive != UNIT_ALIVE_ACTIVE || u->player_id != player_id) continue;
-        if (!u->under_construction) continue;
-        if (ai_def_is_combat_unit(Units_GetDef(u->def_idx))) return 1;
-    }
-    return 0;
-}
-
-static int ai_player_has_production_structure(const Unit *units,
-                                              int unit_count,
-                                              int player_id) {
-    for (int i = 0; i < unit_count; i++) {
-        const Unit *u = &units[i];
-        if (u->alive != UNIT_ALIVE_ACTIVE || u->player_id != player_id) continue;
-        if (u->under_construction) continue;
-        const UnitDef *def = Units_GetDef(u->def_idx);
-        if (!def || !(def->cap_flags & UNIT_CAP_BUILDER)) continue;
-        if (ai_def_is_mana_economy(def)) continue;
-        /* Structures only. A monarch who can summon a mobile fighter
-         * (Lokken's targod under Iron Plague) is not a factory. */
-        if (def->max_velocity > 0.0f) continue;
-        int buildables[32];
-        int n = Units_GetBuildables((int)u->def_idx, buildables,
-                                    (int)(sizeof(buildables) / sizeof(buildables[0])));
-        for (int b = 0; b < n; b++) {
-            if (ai_def_is_combat_unit(Units_GetDef(buildables[b]))) {
-                return 1;
-            }
-        }
-    }
-    return 0;
-}
-
 static int ai_player_has_pending_production_structure(const Unit *units,
                                                       int unit_count,
                                                       int player_id) {
@@ -388,8 +351,10 @@ static int ai_try_start_production_structure_build(const Unit *units,
     const Unit *actor = &units[actor_idx];
     if (!(actor_def->cap_flags & UNIT_CAP_BUILDER)) return 0;
     if (actor->cmd_kind == UNIT_CMD_BUILD || actor->build_target >= 0) return 0;
-    if (ai_player_has_production_structure(units, unit_count,
-                                           actor->player_id)) return 0;
+    /* One structure frame at a time. A producer already standing is no
+     * reason to stop: the original keeps adding producers up to the
+     * profile's limit for the type (legacy:16254-16266), which the
+     * candidate loop below checks. */
     if (ai_player_has_pending_production_structure(units, unit_count,
                                                    actor->player_id)) return 0;
 
@@ -436,11 +401,10 @@ static int ai_try_start_combat_production(const Unit *units,
     const Unit *actor = &units[actor_idx];
     if (!(actor_def->cap_flags & UNIT_CAP_BUILDER)) return 0;
     if (actor->under_construction) return 0;
+    /* One order per producer. The original asks the producer's own
+     * mission list and never the player (legacy:17992-17997), so a
+     * seat with many producers starts many units a pass. */
     if (actor->cmd_kind == UNIT_CMD_BUILD || actor->build_target >= 0) return 0;
-    if (ai_player_has_pending_combat_production(units, unit_count,
-                                                actor->player_id)) {
-        return 0;
-    }
 
     int buildables[32];
     int n = Units_GetBuildables((int)actor->def_idx, buildables,
@@ -744,10 +708,6 @@ int TAK_AI_DebugHostileOrders(int from_player, int to_player, int attacks_only) 
     int n = g_ai_orders[from_player][to_player][0];
     if (!attacks_only) n += g_ai_orders[from_player][to_player][1];
     return n;
-}
-
-int TAK_AI_DebugIsProductionStructure(int def_idx) {
-    return ai_def_is_factory(def_idx);
 }
 
 int TAK_AI_DebugDefenceOrders(int player_id) {
@@ -1240,9 +1200,13 @@ static int ai_def_is_factory(int def_idx) {
     return ai_def_produces_combat(def_idx);
 }
 
+int TAK_AI_DebugIsProductionStructure(int def_idx) {
+    return ai_def_is_factory(def_idx);
+}
+
 /* A walking producer: Zhon summons its whole army from beast handlers
  * and their kin, and priests summon dragons. A monarch never counts,
- * as in ai_player_has_production_structure. */
+ * as in ai_def_is_factory. */
 static int ai_def_is_mobile_producer(int def_idx) {
     const UnitDef *d = Units_GetDef(def_idx);
     if (!d || ai_def_is_mana_economy(d) || d->commander) return 0;
