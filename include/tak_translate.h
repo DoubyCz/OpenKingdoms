@@ -31,6 +31,13 @@ const char *Translate_Lookup(const TranslateTable *t, const char *key);
 /* Run every child's display text and tooltip through the table. */
 void Translate_Dialog(const TranslateTable *t, GUIDialog *dialog);
 
+/* One message from english/translate/messages.tdf, by key. That file
+ * carries text with stray separators that the TDF validator counts,
+ * so it is scanned as text: the [KEY] line, then the English value
+ * inside its braces. A miss leaves the key itself in `out`
+ * (legacy:267931). */
+void Translate_Message(const char *key, char *out, size_t cap);
+
 /* A map's shown name: the table's entry for its .ota base name, else that
  * name with each word capitalised (legacy:167724-167726). */
 void Translate_MapName(const TranslateTable *t, const char *key,
