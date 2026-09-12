@@ -70,4 +70,12 @@ void BattleSetup_SideLabel(int slot, char *out, size_t cap);
 /* 1 when the team-logo badge art for `side` decoded. */
 int  BattleSetup_SideHasBadge(int side);
 
+/* Press a named widget the way a click on it would. The lobby has
+ * widgets that share a name, and this cannot tell those apart, so it
+ * is for the named buttons: Play, Previous, Options, LoadSkirmish. */
+void BattleSetup_Press(const char *name);
+
+/* 1 while the load dialog is up over the lobby. */
+int  BattleSetup_BrowserOpen(void);
+
 #endif /* TAK_BATTLE_SETUP_H */

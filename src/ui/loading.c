@@ -28,6 +28,7 @@
 #include "tak_moveinfo.h"
 #include "tak_util.h"
 #include "tak_sides.h"
+#include "tak_savegame.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <string.h>
@@ -73,6 +74,20 @@ static struct {
     SDL_Rect     bink_rect;        /* AnimatedControl widget rect          */
     int          next_chunk;       // Next terrain chunk idx to load
 } ld;
+
+/* The save a load is coming out of. It is set before Loading_Init runs
+ * and Init clears everything it owns, so this lives outside ld, the way
+ * the F1 menu keeps a restart request outside its own state. */
+static TAK_SaveGame *s_pending_save;
+static char          s_save_refusal[256];
+
+void Loading_SetPendingSave(TAK_SaveGame *sg) {
+    if (s_pending_save && s_pending_save != sg) Save_ReadClose(s_pending_save);
+    s_pending_save = sg;
+    s_save_refusal[0] = '\0';
+}
+
+const char *Loading_SaveRefusal(void) { return s_save_refusal; }
 
 
 void Loading_SetProgress(float f) {
@@ -165,6 +180,8 @@ struct GUIRuntime *Loading_Runtime(void) {
 }
 
 void Loading_Shutdown(void) {
+    /* A load abandoned before the last phase still owns a reader. */
+    if (s_pending_save) { Save_ReadClose(s_pending_save); s_pending_save = NULL; }
     if (!ld.initialized) return;
     if (ld.bg_bink)     BinkPlayer_Close(ld.bg_bink);
     if (ld.rt)          GUIRuntime_Destroy(ld.rt);
@@ -900,6 +917,23 @@ static void loading_advance_step(TAK_Platform *platform) {
                     Fog_Update(world, p);
             }
         }
+        /* A battle coming out of a file takes its world scalars, its
+         * generator and its camera from the save, on top of the world
+         * the phases above built. A definition that moved under the
+         * save is only detectable here, with the registry in memory,
+         * so the refusal is kept for the screen that asked. */
+        if (s_pending_save) {
+            char err[256];
+            err[0] = '\0';
+            if (Save_Apply(s_pending_save, err, sizeof(err)) != 0) {
+                strncpy(s_save_refusal, err, sizeof(s_save_refusal) - 1);
+                s_save_refusal[sizeof(s_save_refusal) - 1] = '\0';
+                fprintf(stderr, "LS_FINALIZE: save refused: %s\n", s_save_refusal);
+            }
+            Save_ReadClose(s_pending_save);
+            s_pending_save = NULL;
+        }
+
         World_MarkLoaded();
         ld.step = LS_DONE;
         break;

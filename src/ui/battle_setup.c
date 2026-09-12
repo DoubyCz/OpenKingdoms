@@ -41,6 +41,9 @@
 #include "tak_gaf.h"
 #include "tak_palette.h"
 #include "tak_world.h"
+#include "tak_save_browser.h"
+#include "tak_savegame.h"
+#include "tak_loading.h"
 #include <SDL.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -97,6 +100,8 @@ typedef struct {
     Font        *font_header;
     BattleConfig cfg;
     int          pending_nextstate;
+    int          browser_open;   /* the load dialog, over the lobby */
+    TAK_Platform *plat;          /* the one Init was given */
 
     /* Team-logo badges. sidedata.tdf names the GAF and the per-side entry
      * (logogaf / logoart, legacy:164796). Each entry ships one frame per
@@ -577,10 +582,10 @@ static void load_team_logos(void) {
 }
 
 int BattleSetup_Init(TAK_Platform *platform) {
-    (void)platform;
     tak_free(bs.map_rows);          /* an Init without a Shutdown */
     memset(&bs, 0, sizeof(bs));
     bs.pending_nextstate = -1;
+    bs.plat = platform;
     BattleConfig_SetDefaults(&bs.cfg);
 
     Palette terrain_palette;
@@ -624,6 +629,7 @@ int BattleSetup_Init(TAK_Platform *platform) {
 }
 
 void BattleSetup_Shutdown(void) {
+    if (bs.browser_open) { SaveBrowser_Close(); bs.browser_open = 0; }
     if (!bs.initialized) return;
     for (int s = 0; s < TAK_SIDES_MAX; s++) {
         for (int c = 0; c < TAK_PLAYER_COLOR_COUNT; c++) {
@@ -836,6 +842,86 @@ static int s_autostart = 0;
 
 void BattleSetup_RequestAutoStart(void) { s_autostart = 1; }
 
+/* What a click on a named widget does. Pulled out of the frame so a
+ * test can press a button by name the way the F1 menu lets one.
+ * `clicked_idx` discriminates the widgets that share a name, and is
+ * -1 when the caller only has a name. */
+static void bs_on_click(const char *clicked, int clicked_idx, int mx,
+                        TAK_Platform *platform) {
+    if      (tak_stricmp(clicked, "Previous") == 0) bs.pending_nextstate = GAMESTATE_MENU;
+    else if (tak_stricmp(clicked, "Play")     == 0) {
+        if (bs.selected_map < 0 || bs.num_maps == 0) {
+
+        } else {
+            /* The one draw of the match. Everything after reads it
+             * from the config, so every machine starts the same. A
+             * battle coming out of a file takes the seed the file
+             * carries instead, which is why this draw is here and
+             * not on the load path. */
+            bs.cfg.seed = (uint32_t)SDL_GetPerformanceCounter();
+            if (World_BeginLoad(platform, &bs.cfg, bs.map_rows[bs.selected_map].key,
+                                bs.map_kingdom) == 0) {
+                bs.pending_nextstate = GAMESTATE_GAME_LOADING;
+            } else {
+                fprintf(stderr, "BattleSetup: Unable to begin world loading\n");
+            }
+        }
+    } else if (tak_stricmp(clicked, "Options")  == 0) bs.pending_nextstate = GAMESTATE_OPTIONS;
+    else if (tak_stricmp(clicked, "LoadSkirmish") == 0) {
+        /* The button is only drawn in skirmish (legacy:136655-136657)
+         * and opens the load dialog (legacy:137474-137477). */
+        if (SaveBrowser_Open(SAVEBROWSER_LOAD) == 0) bs.browser_open = 1;
+    }
+    else if (handle_slot_click(clicked, clicked_idx)) { /* done */ }
+    else if (handle_slider_click(clicked, mx)) { /* done */ }
+    else if (clicked_idx >= 0 && clicked_idx == bs.idx_units_inc) {
+        bs.cfg.units_per_side = clamp_units(
+            bs.cfg.units_per_side + TAK_UNITS_PER_SIDE_STEP);
+    }
+    else if (clicked_idx >= 0 && clicked_idx == bs.idx_units_dec) {
+        bs.cfg.units_per_side = clamp_units(
+            bs.cfg.units_per_side - TAK_UNITS_PER_SIDE_STEP);
+    }
+    else if (clicked_idx >= 0 && clicked_idx == bs.idx_maplist_inc) {
+        /* Top nub scrolls the list up one row. */
+        bs.map_scroll--;
+        clamp_map_scroll();
+    }
+    else if (clicked_idx >= 0 && clicked_idx == bs.idx_maplist_dec) {
+        bs.map_scroll++;
+        clamp_map_scroll();
+    }
+    else {
+        /* Checkbox option */
+        int *v = bs_cfg_field_by_widget(clicked);
+        if (v) *v = !*v;
+    }
+}
+
+/* What the load dialog just did, over the lobby. A chosen save takes
+ * the same two lines the Play button takes: bring up the battle the
+ * save names, then go to the loading screen, which applies the save
+ * on top of the world it builds. -1 means the dialog is still up. */
+static int bs_take_browser_result(SaveBrowserResult r, TAK_Platform *platform) {
+    if (r == SAVEBROWSER_OPEN) return -1;
+    if (r == SAVEBROWSER_LOAD_READY) {
+        TAK_SaveGame *sg = SaveBrowser_TakeLoad();
+        const TAK_SaveInfo *info = sg ? Save_Info(sg) : NULL;
+        if (info && World_BeginLoad(platform, &info->cfg, info->map_name,
+                                    info->map_kingdom) == 0) {
+            Loading_SetPendingSave(sg);
+            SaveBrowser_Close();
+            bs.browser_open = 0;
+            return GAMESTATE_GAME_LOADING;
+        }
+        if (sg) Save_ReadClose(sg);
+        fprintf(stderr, "BattleSetup: could not begin the saved battle\n");
+    }
+    SaveBrowser_Close();
+    bs.browser_open = 0;
+    return -1;
+}
+
 int BattleSetup_Tick(TAK_Platform *platform, float frame_dt) {
     (void)frame_dt;
     if (!bs.initialized) return GAMESTATE_BATTLE_SETUP;
@@ -849,6 +935,18 @@ int BattleSetup_Tick(TAK_Platform *platform, float frame_dt) {
         } else {
             fprintf(stderr, "BattleSetup: autostart could not begin a skirmish (%d maps)\n", bs.num_maps);
         }
+    }
+
+    /* The lobby's Load Game opens the same dialog the F1 menu opens
+     * (legacy:137474-137477), over the lobby rather than over a
+     * battle. It owns the frame while it is up. */
+    if (bs.browser_open) {
+        GUIRuntime_Render(bs.rt);
+        SaveBrowserResult r = SaveBrowser_Tick(platform);
+        int next = bs_take_browser_result(r, platform);
+        UI_Present(platform);
+        if (next >= 0) return next;
+        return GAMESTATE_BATTLE_SETUP;
     }
 
     int wx, wy, mx, my;
@@ -921,51 +1019,7 @@ int BattleSetup_Tick(TAK_Platform *platform, float frame_dt) {
                      : GUIRuntime_UpdateEx(bs.rt, mx, my, mouse_left,
                                              clicked, sizeof(clicked),
                                              &clicked_idx);
-    if (got_click) {
-        if      (tak_stricmp(clicked, "Previous") == 0) bs.pending_nextstate = GAMESTATE_MENU;
-        else if (tak_stricmp(clicked, "Play")     == 0) {
-            if (bs.selected_map < 0 || bs.num_maps == 0) {
-
-            } else {
-                /* The one draw of the match. Everything after reads it
-                 * from the config, so every machine starts the same. */
-                bs.cfg.seed = (uint32_t)SDL_GetPerformanceCounter();
-                if (World_BeginLoad(platform, &bs.cfg, bs.map_rows[bs.selected_map].key,
-                                    bs.map_kingdom) == 0) {
-                    bs.pending_nextstate = GAMESTATE_GAME_LOADING;
-                } else {
-                    fprintf(stderr, "BattleSetup: Unable to begin world loading\n");
-                }
-            }
-        } else if (tak_stricmp(clicked, "Options")  == 0) bs.pending_nextstate = GAMESTATE_OPTIONS;
-        else if (tak_stricmp(clicked, "LoadSkirmish") == 0) {
-            fprintf(stderr, "BattleSetup: Load Game (TODO)\n");
-        }
-        else if (handle_slot_click(clicked, clicked_idx)) { /* done */ }
-        else if (handle_slider_click(clicked, mx)) { /* done */ }
-        else if (clicked_idx == bs.idx_units_inc) {
-            bs.cfg.units_per_side = clamp_units(
-                bs.cfg.units_per_side + TAK_UNITS_PER_SIDE_STEP);
-        }
-        else if (clicked_idx == bs.idx_units_dec) {
-            bs.cfg.units_per_side = clamp_units(
-                bs.cfg.units_per_side - TAK_UNITS_PER_SIDE_STEP);
-        }
-        else if (clicked_idx == bs.idx_maplist_inc) {
-            /* Top nub scrolls the list up one row. */
-            bs.map_scroll--;
-            clamp_map_scroll();
-        }
-        else if (clicked_idx == bs.idx_maplist_dec) {
-            bs.map_scroll++;
-            clamp_map_scroll();
-        }
-        else {
-            /* Checkbox option */
-            int *v = bs_cfg_field_by_widget(clicked);
-            if (v) *v = !*v;
-        }
-    }
+    if (got_click) bs_on_click(clicked, clicked_idx, mx, platform);
 
     /* Map list clicks — detect by rect lookup since the list isn't a
      * simple button widget. */
@@ -1202,3 +1256,10 @@ int BattleSetup_Tick(TAK_Platform *platform, float frame_dt) {
     bs.pending_nextstate = -1;
     return next;
 }
+
+void BattleSetup_Press(const char *name) {
+    if (!bs.initialized || !name) return;
+    bs_on_click(name, -1, 0, bs.plat);
+}
+
+int BattleSetup_BrowserOpen(void) { return bs.initialized && bs.browser_open; }

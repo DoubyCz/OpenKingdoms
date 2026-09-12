@@ -32,6 +32,9 @@
 #include "tak_ingame.h"
 #include "tak_ingame_menu.h"
 #include "tak_chat.h"
+#include "tak_save_browser.h"
+#include "tak_savelist.h"
+#include "tak_paths.h"
 #include "tak_end_screen.h"
 #include "tak_story.h"
 #include "tak_world.h"
@@ -62,6 +65,12 @@
 #include <string.h>
 #include <stdint.h>
 #include <math.h>
+#ifdef _WIN32
+#  include <direct.h>
+#else
+#  include <sys/stat.h>
+#  include <unistd.h>
+#endif
 
 #ifndef TAK_GAME_DIR
 #define TAK_GAME_DIR "C:/GOG Games/Total Annihilation Kingdoms"
@@ -15141,7 +15150,6 @@ TEST(leaving_a_battle_takes_the_exit_submenu) {
     igm_teardown(&platform);
 }
 
-
 /* ── Nowhere to go: a unit wedged on ground it cannot plan from ────
  *
  * Issue #60: a unit must never sit stuck against terrain or another
@@ -16161,6 +16169,483 @@ static void ui_usage(const char *argv0) {
            argv0);
 }
 
+
+/* ── Saving and loading a battle ────────────────────────────────────
+ *
+ * The F1 menu opens the original's own dialogs (legacy:154703-154712
+ * into legacy:158806-158813), the list is the saved game directory
+ * with the extension stripped (legacy:159073-159085), and every
+ * refusal is shown in the shipped ok.gui box rather than swallowed.
+ *
+ * The saves these write go to a scratch directory, never the player's
+ * own, and the directory is emptied before each test. */
+
+#define SB_SCRATCH_DIR "save_screens_scratch"
+
+static void sb_clear_saves(void) {
+    Paths_SetOverride(SB_SCRATCH_DIR);
+    TAK_SaveEntry *list = NULL;
+    int n = SaveList_Scan(&list);
+    for (int i = 0; i < n; i++) remove(list[i].path);
+    SaveList_Free(list);
+}
+
+static void sb_teardown(TAK_Platform *platform) {
+    if (SaveBrowser_IsOpen()) SaveBrowser_Close();
+    sb_clear_saves();
+    Paths_SetOverride(NULL);
+    igm_teardown(platform);
+}
+
+/* Open the F1 menu over a live skirmish and press one of its buttons. */
+static int sb_open_menu_and_press(const char *button) {
+    InGame_DebugToggleMenu();
+    if (!InGameMenu_IsOpen()) return -1;
+    return InGameMenu_Press(button);
+}
+
+/* Save Game brings up the shipped save dialog over the menu, which
+ * stays drawn behind it (legacy:154703-154710). */
+TEST(the_menu_opens_the_save_dialog) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    ASSERT_EQ_INT(1, InGameMenu_BrowserOpen());
+    ASSERT_EQ_INT(1, SaveBrowser_IsOpen());
+    ASSERT_EQ_STR("data/guis/savegame.gui", SaveBrowser_DialogPath());
+    ASSERT_EQ_STR("#Enter#SaveGame#Esc#Cancel", SaveBrowser_Accelerators());
+
+    static const char *const parts[6] = {
+        "GameList", "GameName", "GameNameTemplate", "DeleteGame", "SaveGame", "Cancel"
+    };
+    for (int i = 0; i < 6; i++) {
+        printf("(%s) ", parts[i]);
+        ASSERT_EQ_INT(1, SaveBrowser_HasWidget(parts[i]));
+    }
+
+    /* The menu is still up behind it, and the battle was never left. */
+    ASSERT_EQ_INT(1, InGameMenu_IsOpen());
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGameMenu_Tick(&platform));
+
+    /* Cancel goes back to the menu (legacy:156337-156341 is the same
+     * return). */
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SaveBrowser_Press("Cancel")));
+    ASSERT_EQ_INT(0, InGameMenu_BrowserOpen());
+    ASSERT_EQ_INT(1, InGameMenu_IsOpen());
+
+    sb_teardown(&platform);
+}
+
+/* Load Game brings up the other file, with its own accelerators and no
+ * name field (legacy:158806-158813). */
+TEST(the_menu_opens_the_load_dialog) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    /* One save so the dialog has something to show. */
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    SaveBrowser_SetName("Hill Fight");
+    ASSERT_EQ_INT(SAVEBROWSER_SAVED, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SAVEBROWSER_SAVED));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGameMenu_Press("LoadGame"));
+    ASSERT_EQ_INT(1, InGameMenu_BrowserOpen());
+    ASSERT_EQ_STR("data/guis/loadgame.gui", SaveBrowser_DialogPath());
+    ASSERT_EQ_STR("#Enter#LoadGame#Esc#Cancel", SaveBrowser_Accelerators());
+    ASSERT_EQ_INT(1, SaveBrowser_HasWidget("LoadGame"));
+    ASSERT_EQ_INT(0, SaveBrowser_HasWidget("GameName"));
+
+    sb_teardown(&platform);
+}
+
+/* A saved game shows up in the list by the name the player typed, with
+ * the map and the clock the right hand panel carries
+ * (legacy:159131-159160). */
+TEST(a_saved_game_appears_in_the_load_list) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    /* A minute of battle, so the Game Time column has something to say. */
+    InGame_DebugRunSimTicks(60 * SIM_TICKS_PER_SECOND);
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    SaveBrowser_SetName("Hill Fight");
+    ASSERT_EQ_STR("", SaveBrowser_Message());
+    ASSERT_EQ_INT(SAVEBROWSER_SAVED, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SAVEBROWSER_SAVED));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGameMenu_Press("LoadGame"));
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    ASSERT_EQ_STR("Hill Fight", SaveBrowser_RowName(0));
+    ASSERT_EQ_INT(0, SaveBrowser_SelectedRow());
+    ASSERT_EQ_STR("King of the Hill", SaveBrowser_DetailMap());
+    ASSERT_EQ_STR("00:01:00", SaveBrowser_DetailTime());
+    ASSERT_EQ_STR("Aramon", SaveBrowser_DetailSide());
+
+    sb_teardown(&platform);
+}
+
+/* The whole round trip: save, load, and the battle that comes back is
+ * on the same map, at the same clock, with the camera where it was. */
+TEST(loading_a_save_reaches_a_running_battle) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+    InGame_DebugRunSimTicks(120);
+    world->cam_x += 64;
+    world->cam_y += 32;
+    int want_ticks = world->skirmish_elapsed_ticks;
+    int want_cam_x = world->cam_x;
+    int want_cam_y = world->cam_y;
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    SaveBrowser_SetName("Hill Fight");
+    ASSERT_EQ_INT(SAVEBROWSER_SAVED, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SAVEBROWSER_SAVED));
+
+    /* Run on past the save so the world the loader replaces is not the
+     * world the save holds. The clock only moves with the menu shut
+     * (legacy:145870-145873). */
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGameMenu_Press("Resume"));
+    InGame_DebugRunSimTicks(300);
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("LoadGame"));
+    ASSERT(want_ticks + 300 == World_Get()->skirmish_elapsed_ticks);
+
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    SaveBrowser_SelectRow(0);
+    SaveBrowserResult r = SaveBrowser_Press("LoadGame");
+    ASSERT_EQ_INT(SAVEBROWSER_LOAD_READY, r);
+    ASSERT_EQ_INT(GAMESTATE_GAME_LOADING, InGameMenu_TakeBrowserResult(r));
+    ASSERT_EQ_INT(0, InGameMenu_IsOpen());
+
+    /* What main.c does with that state (main.c:332-345). */
+    BattleConfig again;
+    char again_map[96], again_kingdom[32];
+    ASSERT_EQ_INT(1, InGameMenu_TakeRestart(&again, again_map, sizeof(again_map),
+                                            again_kingdom, sizeof(again_kingdom)));
+    ASSERT_EQ_STR("King of the Hill", again_map);
+    InGame_Shutdown();
+    World_End(&platform);
+    ASSERT_EQ_INT(0, World_BeginLoad(&platform, &again, again_map, again_kingdom));
+    ASSERT_EQ_INT(0, Loading_Init(&platform));
+    int next = GAMESTATE_GAME_LOADING;
+    for (int i = 0; i < 600 && next == GAMESTATE_GAME_LOADING; i++) {
+        next = Loading_Tick(&platform, 1.0f / 60.0f);
+    }
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, next);
+    ASSERT_EQ_STR("", Loading_SaveRefusal());
+    ASSERT_EQ_INT(0, InGame_Init(&platform));
+
+    world = World_Get();
+    ASSERT_NOT_NULL(world);
+    ASSERT_EQ_STR("King of the Hill", world->map_name);
+    ASSERT_EQ_INT(want_ticks, world->skirmish_elapsed_ticks);
+    ASSERT_EQ_INT(want_cam_x, world->cam_x);
+    ASSERT_EQ_INT(want_cam_y, world->cam_y);
+
+    /* And it is a battle, not a frozen screen. */
+    Timer timer;
+    Timer_Init(&timer);
+    timer.max_ticks_per_frame = 30;
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, igm_frame(&platform, &timer));
+    int after_frame = world->skirmish_elapsed_ticks;
+    ASSERT(after_frame > want_ticks);
+    InGame_DebugRunSimTicks(30);
+    ASSERT_EQ_INT(after_frame + 30, world->skirmish_elapsed_ticks);
+
+    sb_teardown(&platform);
+}
+
+/* A name that is empty, and a name that cannot be a file, each get
+ * their own message (legacy:159247-159292). */
+TEST(a_save_name_that_will_not_do_says_which_way) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+
+    SaveBrowser_SetName("");
+    ASSERT_EQ_INT(SAVEBROWSER_OPEN, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_STR("You must enter a game name.", SaveBrowser_Message());
+    ASSERT_EQ_INT(SAVEBROWSER_OPEN, SaveBrowser_DismissMessage());
+    ASSERT_EQ_STR("", SaveBrowser_Message());
+
+    SaveBrowser_SetName("saves/../elsewhere");
+    ASSERT_EQ_INT(SAVEBROWSER_OPEN, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_STR("The file name you have entered is not valid.",
+                  SaveBrowser_Message());
+    ASSERT_EQ_INT(SAVEBROWSER_OPEN, SaveBrowser_DismissMessage());
+
+    /* Nothing was written either way. */
+    ASSERT_EQ_INT(0, SaveBrowser_RowCount());
+
+    sb_teardown(&platform);
+}
+
+/* Saving over a name that is already there replaces it, with nothing
+ * asked: the shipped data carries no overwrite confirmation
+ * (legacy:159247-159292). Clicking the row is how the original offers
+ * it (legacy:159300-159356). */
+TEST(saving_over_a_game_replaces_it_without_asking) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    SaveBrowser_SetName("Hill Fight");
+    ASSERT_EQ_INT(SAVEBROWSER_SAVED, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SAVEBROWSER_SAVED));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGameMenu_Press("Resume"));
+    InGame_DebugRunSimTicks(90);
+
+    /* The dialog comes back up with the row there, and clicking it puts
+     * the name in the edit box. */
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    SaveBrowser_SetName("");
+    SaveBrowser_SelectRow(0);
+    ASSERT_EQ_STR("Hill Fight", SaveBrowser_Name());
+    ASSERT_EQ_INT(SAVEBROWSER_SAVED, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_STR("", SaveBrowser_Message());
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SAVEBROWSER_SAVED));
+
+    /* Still one file, and it is the later battle. */
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGameMenu_Press("LoadGame"));
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    ASSERT_EQ_STR("Hill Fight", SaveBrowser_RowName(0));
+    ASSERT_EQ_STR("00:00:01", SaveBrowser_DetailTime());
+
+    sb_teardown(&platform);
+}
+
+/* Delete takes the file at once, with nothing asked
+ * (legacy:159241-159244). */
+TEST(delete_takes_the_selected_game_at_once) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    SaveBrowser_SetName("Hill Fight");
+    ASSERT_EQ_INT(SAVEBROWSER_SAVED, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SAVEBROWSER_SAVED));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGameMenu_Press("LoadGame"));
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    SaveBrowser_SelectRow(0);
+    ASSERT_EQ_INT(SAVEBROWSER_OPEN, SaveBrowser_Press("DeleteGame"));
+    ASSERT_EQ_STR("", SaveBrowser_Message());
+    ASSERT_EQ_INT(0, SaveBrowser_RowCount());
+
+    sb_teardown(&platform);
+}
+
+/* The load dialog opened over an empty directory says so and goes
+ * (legacy:158733-158758). */
+TEST(with_no_saved_games_the_load_dialog_says_so) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("LoadGame"));
+    ASSERT_EQ_INT(1, InGameMenu_BrowserOpen());
+    ASSERT_EQ_INT(0, SaveBrowser_RowCount());
+    ASSERT_EQ_STR("There are no saved games.", SaveBrowser_Message());
+
+    /* Reading it closes the dialog and the menu is back. */
+    ASSERT_EQ_INT(SAVEBROWSER_CANCELLED, SaveBrowser_DismissMessage());
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SAVEBROWSER_CANCELLED));
+    ASSERT_EQ_INT(0, InGameMenu_BrowserOpen());
+    ASSERT_EQ_INT(1, InGameMenu_IsOpen());
+
+    sb_teardown(&platform);
+}
+
+/* A file that has been scribbled on is refused by the container, and
+ * the reason is what the player is shown. */
+TEST(a_damaged_save_is_refused_with_its_reason) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    SaveBrowser_SetName("Hill Fight");
+    ASSERT_EQ_INT(SAVEBROWSER_SAVED, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SAVEBROWSER_SAVED));
+
+    /* Flip a byte well past the header, where the payload lives. */
+    char path[TAK_SAVE_PATH_MAX];
+    ASSERT_EQ_INT(0, Paths_SaveFile("Hill Fight", path, sizeof(path)));
+    FILE *f = fopen(path, "r+b");
+    ASSERT_NOT_NULL(f);
+    ASSERT_EQ_INT(0, fseek(f, 300, SEEK_SET));
+    int byte = fgetc(f);
+    ASSERT(byte >= 0);
+    ASSERT_EQ_INT(0, fseek(f, 300, SEEK_SET));
+    fputc(byte ^ 0xff, f);
+    fclose(f);
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGameMenu_Press("LoadGame"));
+    /* The row is still listed: the player has to be able to delete it. */
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    ASSERT_EQ_STR("Hill Fight", SaveBrowser_RowName(0));
+    SaveBrowser_SelectRow(0);
+    ASSERT_EQ_INT(SAVEBROWSER_OPEN, SaveBrowser_Press("LoadGame"));
+    ASSERT_EQ_STR("This save is damaged and cannot be loaded.",
+                  SaveBrowser_Message());
+
+    sb_teardown(&platform);
+}
+
+/* A file in the directory that is not a saved game at all is still
+ * listed, because the player has to be able to see it and delete it,
+ * and pressing Load says what is wrong with it.  */
+TEST(a_file_that_is_not_a_saved_game_is_refused_with_its_reason) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    char path[TAK_SAVE_PATH_MAX];
+    ASSERT_EQ_INT(0, Paths_SaveFile("Not A Save", path, sizeof(path)));
+    FILE *f = fopen(path, "wb");
+    ASSERT_NOT_NULL(f);
+    /* Long enough to hold a header, so it is refused for what it is
+     * rather than for being too short. */
+    for (int i = 0; i < 512; i++) fputc("not a save at all"[i % 17], f);
+    fclose(f);
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("LoadGame"));
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    ASSERT_EQ_STR("Not A Save", SaveBrowser_RowName(0));
+    SaveBrowser_SelectRow(0);
+    ASSERT_EQ_INT(SAVEBROWSER_OPEN, SaveBrowser_Press("LoadGame"));
+    ASSERT_EQ_STR("This is not a saved game.", SaveBrowser_Message());
+
+    sb_teardown(&platform);
+}
+
+/* A write that cannot land says so instead of reporting success. The
+ * saved game directory is replaced by a file, so creating the
+ * temporary the container writes through fails. */
+TEST(a_save_that_cannot_be_written_says_so) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    /* A name whose own directory component cannot exist: the container
+     * reports the path it could not open. */
+    SaveBrowser_SetName("Hill Fight");
+    char path[TAK_SAVE_PATH_MAX];
+    ASSERT_EQ_INT(0, Paths_SaveFile("Hill Fight", path, sizeof(path)));
+    /* Put a directory where the temporary file has to go. */
+    char tmp[TAK_SAVE_PATH_MAX + 8];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+#ifdef _WIN32
+    _mkdir(tmp);
+#else
+    mkdir(tmp, 0755);
+#endif
+    ASSERT_EQ_INT(SAVEBROWSER_OPEN, SaveBrowser_Press("SaveGame"));
+    ASSERT(strstr(SaveBrowser_Message(), "Could not") != NULL);
+#ifdef _WIN32
+    _rmdir(tmp);
+#else
+    rmdir(tmp);
+#endif
+
+    sb_teardown(&platform);
+}
+
+/* The skirmish lobby's own Load Game button opens the same dialog
+ * (legacy:137474-137477). */
+TEST(the_lobby_load_button_opens_the_load_dialog) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+
+    ASSERT_EQ_INT(0, BattleSetup_Init(&platform));
+    ASSERT_EQ_INT(0, BattleSetup_BrowserOpen());
+    BattleSetup_Press("LoadSkirmish");
+    ASSERT_EQ_INT(1, BattleSetup_BrowserOpen());
+    ASSERT_EQ_STR("data/guis/loadgame.gui", SaveBrowser_DialogPath());
+    /* Nothing saved yet, so it says so and closes on the first press. */
+    ASSERT_EQ_STR("There are no saved games.", SaveBrowser_Message());
+    ASSERT_EQ_INT(SAVEBROWSER_CANCELLED, SaveBrowser_DismissMessage());
+
+    BattleSetup_Shutdown();
+    ASSERT_EQ_INT(0, SaveBrowser_IsOpen());
+    sb_clear_saves();
+    Paths_SetOverride(NULL);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 int main(int argc, char **argv) {
     int argi;
     TAK_Crash_Install();
@@ -16394,6 +16879,20 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_C, typing_a_chat_line_issues_no_orders);
     RUN_UI_TEST(UI_GROUP_D, escape_closes_the_console_before_the_battle_sees_it);
     RUN_UI_TEST(UI_GROUP_A, the_battle_runs_on_while_the_console_is_open);
+
+    TEST_SUITE("Saving and loading");
+    RUN_UI_TEST(UI_GROUP_A, the_menu_opens_the_save_dialog);
+    RUN_UI_TEST(UI_GROUP_B, the_menu_opens_the_load_dialog);
+    RUN_UI_TEST(UI_GROUP_C, a_saved_game_appears_in_the_load_list);
+    RUN_UI_TEST(UI_GROUP_D, loading_a_save_reaches_a_running_battle);
+    RUN_UI_TEST(UI_GROUP_A, a_save_name_that_will_not_do_says_which_way);
+    RUN_UI_TEST(UI_GROUP_B, saving_over_a_game_replaces_it_without_asking);
+    RUN_UI_TEST(UI_GROUP_C, delete_takes_the_selected_game_at_once);
+    RUN_UI_TEST(UI_GROUP_D, with_no_saved_games_the_load_dialog_says_so);
+    RUN_UI_TEST(UI_GROUP_A, a_damaged_save_is_refused_with_its_reason);
+    RUN_UI_TEST(UI_GROUP_B, a_file_that_is_not_a_saved_game_is_refused_with_its_reason);
+    RUN_UI_TEST(UI_GROUP_C, a_save_that_cannot_be_written_says_so);
+    RUN_UI_TEST(UI_GROUP_D, the_lobby_load_button_opens_the_load_dialog);
 
     ui_report_groups();
     /* --verify-groups runs nothing on purpose, so an empty run there

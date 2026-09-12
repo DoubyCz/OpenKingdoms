@@ -3,6 +3,7 @@
 
 #include "tak_platform.h"
 #include "tak_battle_config.h"
+#include "tak_save_browser.h"
 #include <stddef.h>
 
 /* ── The F1 menu ──────────────────────────────────────────────────────
@@ -15,9 +16,11 @@
  * while it is up, and its root accelerator string "#Enter#Resume#Esc#
  * Resume" says which button Enter and Escape press.
  *
- * Resume closes it (legacy:154721-154726). Game Information, Load Game
- * and Save Game are drawn by the shipped art and do nothing here: we
- * have no save system and no game information screen yet. */
+ * Resume closes it (legacy:154721-154726). Load Game and Save Game
+ * open the original's own dialogs over the menu, which stays drawn
+ * behind them (legacy:154703-154712). Game Information is drawn by
+ * the shipped art and does nothing here: we have no game information
+ * screen yet. */
 
 /* Restart replays the battle the exit submenu was opened over
  * (legacy:156329-156336). Returns 1 when one is waiting, fills in what
@@ -34,6 +37,15 @@ int  InGameMenu_Open(void);
 int  InGameMenu_Tick(TAK_Platform *platform);
 
 void InGameMenu_Close(void);
+
+/* What the save or load dialog just did. GAMESTATE_GAME_LOADING when
+ * a save was chosen and the battle it names is being brought up,
+ * GAMESTATE_IN_GAME otherwise. The menu calls this itself each
+ * frame; it is public so a test can drive the dialog directly. */
+int  InGameMenu_TakeBrowserResult(SaveBrowserResult result);
+
+/* 1 while the save or load dialog is up over the menu. */
+int  InGameMenu_BrowserOpen(void);
 int  InGameMenu_IsOpen(void);
 
 /* ── Introspection (tests) ─────────────────────────────────────────── */
