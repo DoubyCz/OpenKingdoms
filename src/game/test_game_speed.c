@@ -7,7 +7,10 @@
 #include "tak_game_speed.h"
 #include "tak_gameloop.h"
 #include "tak_ingame_keys.h"
+#include "tak_sim_hash.h"
 #include "tak_sim_rand.h"
+#include "tak_unit.h"
+#include "tak_world.h"
 #include "test_framework.h"
 
 #include <SDL.h>
@@ -285,21 +288,69 @@ TEST(the_keys_walk_the_whole_range_and_stop_at_both_ends) {
 
 /* -- determinism ----------------------------------------------------- */
 
-/* A stand-in simulation with the engine's own random stream in it. It
- * has no idea what speed it is running at, which is the whole point. */
-static uint32_t sim_state;
+/* The simulation state sim_hash.c reads. The real ones are file scope
+ * statics inside units.c and ai.c, so this stands in for them the same
+ * way test_sim_hash.c does, and the number that comes out is the engine
+ * composite over a real world, a real unit array and the real random
+ * stream. */
+#define SIM_UNITS 4
 
+static GameWorld  sim_world;
+static Unit       sim_units[SIM_UNITS];
+static uint32_t   sim_ai_state;
+
+GameWorld *World_Get(void) { return &sim_world; }
+
+const Unit *Units_GetActive(int *out_count) {
+    if (out_count) *out_count = SIM_UNITS;
+    return sim_units;
+}
+
+const Projectile *Units_GetProjectiles(int *out_count) {
+    if (out_count) *out_count = 0;
+    return NULL;
+}
+
+uint32_t TAK_SimHash_AI(uint32_t h) { return TAK_HashU32(h, sim_ai_state); }
+
+/* One tick of a battle. It moves units, spends mana and draws from the
+ * simulation generator, and it has no idea what speed it is running at,
+ * which is the whole point. */
 static void sim_tick(void) {
-    sim_state = sim_state * 1664525u + 1013904223u;
-    sim_state ^= World_Rand(1000u);
-    sim_state += World_RandState();
+    for (int i = 0; i < SIM_UNITS; i++) {
+        Unit *u = &sim_units[i];
+        u->world_x += (int32_t)World_Rand(64u) - 32;
+        u->world_y += (int32_t)World_Rand(64u) - 32;
+        u->heading += (float)World_Rand(64u) * 0.01f;
+        u->health -= (int32_t)World_Rand(3u);
+        if (u->health < 0) u->health = 100;
+    }
+    sim_world.economy.players[1].mana += (float)World_Rand(16u);
+    sim_world.skirmish_elapsed_ticks++;
+    sim_ai_state = sim_ai_state * 1664525u + 1013904223u;
+}
+
+static void sim_reset(void) {
+    memset(&sim_world, 0, sizeof(sim_world));
+    memset(sim_units, 0, sizeof(sim_units));
+    for (int i = 0; i < SIM_UNITS; i++) {
+        sim_units[i].stable_id = (uint32_t)(i + 1);
+        sim_units[i].world_x = 100 * (i + 1);
+        sim_units[i].world_y = 50 * (i + 1);
+        sim_units[i].health = 100;
+        sim_units[i].max_health = 100;
+        sim_units[i].alive = UNIT_ALIVE_ACTIVE;
+        sim_units[i].player_id = 1;
+        sim_units[i].target = -1;
+    }
+    sim_ai_state = 0x5eedu;
+    World_SeedRand(0xabcdu);
 }
 
 /* Run the real timer at `speed` until `want` ticks have been simulated,
- * and hand back the simulation's state. */
+ * and hand back the simulation hash. */
 static uint32_t run_battle(double speed, int want) {
-    sim_state = 0x1234u;
-    World_SeedRand(0xabcdu);
+    sim_reset();
     Timer t;
     Timer_Init(&t);
     Timer_SetSpeed(&t, speed);
@@ -313,7 +364,13 @@ static uint32_t run_battle(double speed, int want) {
             ticks++;
         }
     }
-    return sim_state;
+    return TAK_SimHash();
+}
+
+/* The hash has to move with a single tick, or the cases below would
+ * pass on a number that never changes. */
+TEST(one_more_tick_is_a_different_hash) {
+    ASSERT(run_battle(1.0, 900) != run_battle(1.0, 901));
 }
 
 TEST(the_same_battle_hashes_the_same_at_any_speed) {
@@ -374,6 +431,7 @@ int main(int argc, char *argv[]) {
     RUN(the_keys_walk_the_whole_range_and_stop_at_both_ends);
 
     TEST_SUITE("Determinism");
+    RUN(one_more_tick_is_a_different_hash);
     RUN(the_same_battle_hashes_the_same_at_any_speed);
     RUN(a_battle_run_through_the_level_hashes_the_same);
 

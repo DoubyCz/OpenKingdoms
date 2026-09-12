@@ -1550,6 +1550,7 @@ target_compile_definitions(test_savestate PRIVATE
 add_executable(test_game_speed
     game/test_game_speed.c
     game/game_speed.c
+    game/sim_hash.c
     game/sim_rand.c
     core/game_loop.c
     ui/ingame_keys.c
