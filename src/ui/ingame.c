@@ -9,7 +9,10 @@
 #include "tak_ingame.h"
 #include "tak_settings.h"
 #include "tak_gameloop.h"
+#include "tak_game_speed.h"
 #include "tak_ingame_debug.h"
+#include "tak_ingame_keys.h"
+#include "tak_translate.h"
 #include "tak_world.h"
 #include "tak_ai.h"
 #include "tak_terrain.h"
@@ -361,6 +364,28 @@ int InGame_Init(TAK_Platform *platform) {
             world->tnt.width_tiles, world->tnt.height_tiles,
             world->map_pixels_w, world->map_pixels_h,
             world->cam_x, world->cam_y);
+
+    /* Game speed. Every battle starts at normal (legacy:131713-131715).
+     * Skirmish and story have the control, a networked battle does not:
+     * the original broadcast a speed change to its peers
+     * (legacy:131795-131800) and we do not route one through the turn
+     * clock, so it is off there rather than wrong there. */
+    GameSpeed_Reset();
+    GameSpeed_SetAvailable(!world->network_battle);
+    /* How long a message line stays up, the original's option, range
+     * 0 to 20 (legacy:131695). */
+    GameSpeed_SetMessageSeconds((double)Settings_GetInt("TextScrollTime", 5));
+    {
+        /* Both strings are translated (legacy:131766, legacy:131786),
+         * and a lookup that misses hands back the key (legacy:267931),
+         * which is what the module already holds. */
+        TranslateTable tt;
+        memset(&tt, 0, sizeof(tt));
+        Translate_Load(&tt, "english/translate/gui_text.tdf");
+        GameSpeed_SetStrings(Translate_Find(&tt, "Game Speed Normal"),
+                             Translate_Find(&tt, "Game Speed"));
+        Translate_Free(&tt);
+    }
 
     /* The sidebar belongs to the screen's entry, not to the first frame
      * drawn. The original builds <nameprefix>ingame.gui from the local
@@ -832,6 +857,10 @@ static void ig_battle_keys(int has_focus, const GameWorld *world,
     if (has_focus && IG_PRESSED(SDL_SCANCODE_ESCAPE)) ig_cancel();
     int ig_alt = keys[SDL_SCANCODE_LALT] || keys[SDL_SCANCODE_RALT];
 
+    /* Game speed, one step per press (legacy:131808-131825). The
+     * bindings live in ingame_keys.c so a test can press them. */
+    InGame_ApplySpeedKeys(keys, ig.prev_keys);
+
     /* Toggle per-unit health bars on/off (keys.tdf SYMBOL_60 and
      * SYMBOL_7E, ToggleDamageBars, and manual section IV.2). */
     if (IG_PRESSED(SDL_SCANCODE_GRAVE)) {
@@ -960,6 +989,12 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
         sim_ticks++;
     }
     PerfProbe_FrameTicks(sim_ticks, timer->max_ticks_per_frame);
+    /* A frame that spent its whole budget threw simulation time away.
+     * A run of them means the machine cannot hold the speed the player
+     * asked for, and the effective level walks down until it can
+     * (legacy:242401-242416). The number on screen does not move. */
+    GameSpeed_NoteFrame(sim_ticks, timer->max_ticks_per_frame);
+    GameSpeed_AgeMessage(Timer_GetFrameDT(timer));
 
     /* The statistics screen replaces the battle view and owns the
      * input until one of its buttons leaves (legacy:244079-244086).
@@ -991,6 +1026,9 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
     HUD_Draw(platform, world);
     Minimap_Draw(platform);
     InGame_DrawMarquee(platform, world);
+    /* The speed change line, over the play area, for as long as the
+     * message option keeps it (legacy:131758-131789). */
+    HUD_DrawMessageLine(platform, GameSpeed_Message());
     InGame_DrawSkirmishBanner(world);
 
     /* Chat. The block sits in the top left of the whole screen and the

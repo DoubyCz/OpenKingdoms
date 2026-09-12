@@ -196,6 +196,16 @@ typedef struct GameWorld {
     int        fog_w;
     int        fog_h;
     int        fog_cell_px;
+
+    /* 1 when this battle is played over the network. Zero for skirmish
+     * and story, which is every battle today: the multiplayer lobby has
+     * no path into a battle yet. It exists so the one thing that must
+     * not run over the network, the game speed control, has a fact to
+     * test rather than an assumption. Whoever lands the networked
+     * battle sets this. Last in the struct on purpose, so a stale
+     * object file from an incremental build still agrees on where every
+     * other field lives. */
+    int        network_battle;
 } GameWorld;
 
 /* Create a fresh world with the given Battle Setup handoff. Copies cfg

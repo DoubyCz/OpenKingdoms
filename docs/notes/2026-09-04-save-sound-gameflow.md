@@ -417,7 +417,8 @@ when debug logging is on.
 
 The interface options carry a configured level and a current level, both 0..20,
 default 10. `GameSpeed_SetLevel` :131724-131806 clamps the level and enforces a
-**minimum of 1 while in battle**. The OSD prints "Game Speed Normal" at 10 and
+**minimum of 1 in multiplayer only** (:131753-131756 tests
+`Game_GetMode() == 3`). Campaign and skirmish can reach 0, a full stop. The OSD prints "Game Speed Normal" at 10 and
 `"%s %c%d"` with a sign otherwise. The `+` and `-` keys are :131808 / :131819.
 Automatic slow/speed comes from the hysteresis path above. Reset is :131708.
 

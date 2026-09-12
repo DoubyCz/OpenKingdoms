@@ -25,6 +25,7 @@
 #include "tak_platform.h"
 #include "tak_settings.h"
 #include "tak_gameloop.h"
+#include "tak_game_speed.h"
 #include "tak_memory.h"
 #include "tak_hpi.h"
 #include "tak_sound.h"
@@ -174,6 +175,12 @@ static double perf_now_ms(void) {
 
 static void app_frame(AppState *app) {
     double frame_t0 = PerfProbe_Active() ? perf_now_ms() : 0.0;
+    /* The battle runs at the player's chosen speed, every other screen
+     * at normal. Speed scales the wall time going into the simulation
+     * accumulator and nothing else, so a tick keeps its length and its
+     * content and the menus keep their own pace. */
+    Timer_SetSpeed(&app->timer,
+                   app->state == GAMESTATE_IN_GAME ? GameSpeed_Multiplier() : 1.0);
     Timer_Update(&app->timer);
     TAK_Sound_Update();
     TAK_Music_Update();

@@ -781,6 +781,21 @@ int HUD_GetViewportRect(const TAK_Platform *plat, SDL_Rect *out) {
     return 1;
 }
 
+/* The message line. The original keeps a thirty entry ring of them over
+ * the play area, each stamped with the tick it arrived on and aged out
+ * against the TextScrollTime option (legacy:205785-205828,
+ * legacy:131695). We have one line so far, the game speed change, and it
+ * draws where the ring does: top left of the play area, no chime, since
+ * a system message passes the not-a-player id and the arrival sound is
+ * suppressed for it (legacy:205814). */
+void HUD_DrawMessageLine(TAK_Platform *plat, const char *text) {
+    if (!plat || !g_text || !text || !text[0]) return;
+    SDL_Rect vp;
+    if (!HUD_GetViewportRect(plat, &vp)) return;
+    SDL_Color white = { 255, 255, 255, 255 };
+    HUDText_DrawString(plat, g_text, vp.x + 8, vp.y + 8, text, white);
+}
+
 int HUD_GetViewportCanvasRect(SDL_Rect *out) {
     if (!out || !g_rt) return 0;
     *out = g_viewport_dlg;
