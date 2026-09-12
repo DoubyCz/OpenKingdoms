@@ -22,6 +22,9 @@ int  TAK_AI_DebugHostileOrders(int from_player, int to_player,
 int  TAK_AI_DebugDefenceOrders(int player_id);
 int  TAK_AI_DebugAttackPlayer(int player_id);
 int  TAK_AI_DebugWaveTarget(int player_id);   /* unit handle, -1 none */
+/* Whether the AI counts this def as a production structure, so a
+ * census reports what the AI itself sees. */
+int  TAK_AI_DebugIsProductionStructure(int def_idx);
 
 /* A unit slot about to take a new unit: drop any wave target or threat
  * that still names it. Units_Spawn calls this. */

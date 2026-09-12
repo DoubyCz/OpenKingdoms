@@ -74,6 +74,7 @@ static int      g_def_cap    = 0;
 
 static Unit     g_units[TAK_MAX_UNITS];
 static int      g_unit_count = 0;
+static uint32_t g_unit_spawn_fails = 0;
 static uint32_t g_next_stable_unit_id = 1;
 
 /* In-flight projectile pool. Sized for ~10 projectiles per unit on a
@@ -5290,9 +5291,9 @@ void Units_LoadFinish(void) {
 int Units_Spawn(int def_idx, int player_id, int team_color_idx,
                 int32_t world_x, int32_t world_y) {
     if (def_idx < 0 || def_idx >= g_def_count) return -1;
-    if (unit_seat_at_limit(player_id)) return -1;
+    if (unit_seat_at_limit(player_id)) { g_unit_spawn_fails++; return -1; }
     int slot = unit_free_slot();
-    if (slot < 0) return -1;
+    if (slot < 0) { g_unit_spawn_fails++; return -1; }
     if (team_color_idx < 0 || team_color_idx > 11) team_color_idx = 0;
     /* Ensure the per-color mesh variant is baked. Cheap when cached. */
     ensure_mesh_baked(&g_defs[def_idx], team_color_idx);
@@ -5445,6 +5446,8 @@ int Units_Spawn(int def_idx, int player_id, int team_color_idx,
     }
     return slot;
 }
+
+uint32_t Units_DebugSpawnFailures(void) { return g_unit_spawn_fails; }
 
 const Unit *Units_GetActive(int *out_count) {
     if (out_count) *out_count = g_unit_count;
