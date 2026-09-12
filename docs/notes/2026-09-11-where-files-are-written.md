@@ -69,3 +69,48 @@ null, the write hook does nothing, and the session still works with
 settings held in memory. That degrade path is a manual check rather
 than an automated one, because automation would only confirm the happy
 case.
+
+## Saved games in the browser
+
+`Paths_SaveDir` is a subdirectory, `saves/` under the preference
+directory. Both halves of the mirror used to be flat: the restore
+copied only entries whose kind was `file`, and the write back skipped
+anything `FS.isFile` said no to. A saved game written through
+`Paths_SaveFile` landed in memory, never reached storage, and died with
+the tab without an error anywhere. Both halves now walk one level of
+subdirectory, so the desktop layout and the browser layout stay the
+same shape.
+
+Three things follow from saves being large where options.cfg is not.
+
+The write back only copies a file whose size or modification time has
+moved. It used to rewrite every file in the preference directory on
+every notify, which costs nothing for one small settings file and would
+cost a directory of saves on every save press.
+
+A deleted save is removed from storage as well as from memory. Without
+that it would come back on the next reload, which is worse than a
+delete that failed outright.
+
+The page asks for persistence with `navigator.storage.persist()`. Until
+an origin is granted it, its storage is best effort and can be evicted
+under disk pressure. Losing a settings file is cheap and losing a
+campaign is not, so a refusal is shown to the player rather than logged
+and forgotten.
+
+## What the storage limit means for a player with many saves
+
+`navigator.storage.estimate()` is the only figure worth quoting, and
+the page now reads it. The published per browser quotas are folklore
+until that call answers on the machine in front of the player, so the
+page prints what it gets and warns below 32 MB of headroom rather than
+asserting a number.
+
+The order of magnitude on our side is what decides whether this is ever
+a problem. The bulk of a save is the fog layers, one per player at one
+byte per 32 pixel cell, which deflate flattens hard because they are
+mostly uniform, plus the unit records. A save on the order of a few
+hundred kilobytes to low single digit megabytes is the target. No
+browser's quota threatens a few dozen of those. Eviction is the real
+risk, not size, which is why the persistence grant matters more than
+the cap.

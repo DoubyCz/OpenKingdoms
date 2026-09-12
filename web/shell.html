@@ -395,6 +395,7 @@
        packager preloaded the archives, and the dev build is
        exactly the one that takes that return. */
     restorePrefs(FS);
+    askForStorage();
     if (Module.bundledData) return;   /* dev build: data preloaded by the packager */
     Module.addRunDependency('gamefiles');
     tryCache(FS).then(function (n) {
@@ -458,9 +459,26 @@
     var done = function () { Module.removeRunDependency('prefs'); };
     prefsDir(false).then(function (dir) {
       if (!dir) return;
+      /* One level down as well as the root: Paths_SaveDir is a
+         subdirectory of the preference directory, so a flat copy would
+         leave every saved game behind in a filesystem that dies with
+         the tab. */
       var files = [];
+      var subs = [];
       return collect(dir.entries(), function (name, h) {
-        if (h.kind === 'file') files.push({ name: name, handle: h });
+        if (h.kind === 'file') files.push({ rel: name, handle: h });
+        else if (h.kind === 'directory') subs.push({ name: name, handle: h });
+      }).then(function () {
+        var si = 0;
+        function nextSub() {
+          if (si >= subs.length) return;
+          var sub = subs[si++];
+          mkdirp(FS, PREFDIR + '/' + sub.name);
+          return collect(sub.handle.entries(), function (name, h) {
+            if (h.kind === 'file') files.push({ rel: sub.name + '/' + name, handle: h });
+          }).then(nextSub);
+        }
+        return nextSub();
       }).then(function () {
         var i = 0;
         function next() {
@@ -468,17 +486,74 @@
           var f = files[i++];
           return f.handle.getFile().then(function (file) { return file.arrayBuffer(); })
             .then(function (buf) {
-              FS.writeFile(PREFDIR + '/' + f.name, new Uint8Array(buf));
+              FS.writeFile(PREFDIR + '/' + f.rel, new Uint8Array(buf));
+              stamp(FS, f.rel);
               return next();
             });
         }
         return next();
       }).then(function () {
-        if (files.length) console.log('[openkingdoms] restored ' + files.length + ' settings file(s)');
+        if (files.length) console.log('[openkingdoms] restored ' + files.length + ' file(s) from browser storage');
       });
     }).catch(function (e) {
       console.warn('[openkingdoms] settings restore failed', e);
     }).then(done, done);
+  }
+
+  /* What was last copied out, keyed by the path under PREFDIR. The
+     mirror used to rewrite every file on every notify, which is free
+     for one small options.cfg and is not for a directory of saved
+     games, so a file whose size and modification time have not moved
+     is left alone. */
+  var synced = {};
+
+  function stampOf(FS, rel) {
+    try {
+      var st = FS.stat(PREFDIR + '/' + rel);
+      if (!FS.isFile(st.mode)) return null;
+      var t = st.mtime ? st.mtime.getTime() : 0;
+      return st.size + ':' + t;
+    } catch (e) { return null; }
+  }
+
+  function stamp(FS, rel) {
+    var s = stampOf(FS, rel);
+    if (s !== null) synced[rel] = s;
+  }
+
+  /* Every file under PREFDIR, one level of subdirectory deep, as paths
+     relative to PREFDIR. */
+  function prefFiles(FS) {
+    var out = [];
+    var names;
+    try { names = FS.readdir(PREFDIR); } catch (e) { return out; }
+    for (var i = 0; i < names.length; i++) {
+      var name = names[i];
+      if (name === '.' || name === '..') continue;
+      var st;
+      try { st = FS.stat(PREFDIR + '/' + name); } catch (e) { continue; }
+      if (FS.isFile(st.mode)) { out.push(name); continue; }
+      var inner;
+      try { inner = FS.readdir(PREFDIR + '/' + name); } catch (e) { continue; }
+      for (var j = 0; j < inner.length; j++) {
+        var sub = inner[j];
+        if (sub === '.' || sub === '..') continue;
+        var sst;
+        try { sst = FS.stat(PREFDIR + '/' + name + '/' + sub); } catch (e) { continue; }
+        if (FS.isFile(sst.mode)) out.push(name + '/' + sub);
+      }
+    }
+    return out;
+  }
+
+  /* The directory handle a relative path writes into, creating the
+     subdirectory when there is one. */
+  function handleFor(dir, rel) {
+    var cut = rel.indexOf('/');
+    if (cut < 0) return Promise.resolve({ dir: dir, name: rel });
+    var folder = rel.slice(0, cut);
+    return dir.getDirectoryHandle(folder, { create: true })
+      .then(function (d) { return { dir: d, name: rel.slice(cut + 1) }; });
   }
 
   /* Called from C through EM_JS after a write under the preference
@@ -488,31 +563,93 @@
      and the session works. */
   Module.syncPrefs = function () {
     var FS = Module.FS || window.FS;
-    var names;
-    try { names = FS.readdir(PREFDIR); } catch (e) { return; }
+    var rels = prefFiles(FS);
+    var live = {};
+    for (var k = 0; k < rels.length; k++) live[rels[k]] = 1;
     prefsDir(true).then(function (dir) {
       if (!dir) return;
       var i = 0;
       function next() {
-        if (i >= names.length) return;
-        var name = names[i++];
-        if (name === '.' || name === '..') return next();
+        if (i >= rels.length) return dropDeleted(dir, live);
+        var rel = rels[i++];
+        var now = stampOf(FS, rel);
+        if (now === null) return next();
+        if (synced[rel] === now) return next();
         var data;
-        try {
-          var st = FS.stat(PREFDIR + '/' + name);
-          if (!FS.isFile(st.mode)) return next();
-          data = new Uint8Array(FS.readFile(PREFDIR + '/' + name));
-        } catch (e) { return next(); }
-        return dir.getFileHandle(name, { create: true })
+        try { data = new Uint8Array(FS.readFile(PREFDIR + '/' + rel)); }
+        catch (e) { return next(); }
+        return handleFor(dir, rel)
+          .then(function (t) { return t.dir.getFileHandle(t.name, { create: true }); })
           .then(function (h) { return h.createWritable(); })
           .then(function (w) { return w.write(data).then(function () { return w.close(); }); })
+          .then(function () { synced[rel] = now; })
           .then(next);
       }
       return next();
     }).catch(function (e) {
-      console.warn('[openkingdoms] settings could not be kept', e);
+      /* A refusal here is almost always the storage quota, and a save
+         the player believes they made is worse than one that refused,
+         so this is said out loud rather than only logged. */
+      console.warn('[openkingdoms] the browser would not keep this write', e);
+      say('Your browser would not store that. Free some space, or delete '
+          + 'a saved game, and try again.', true);
     });
   };
+
+  /* A saved game the player deleted has to go from storage too, or it
+     comes back on the next reload. */
+  function dropDeleted(dir, live) {
+    var gone = [];
+    for (var rel in synced) {
+      if (Object.prototype.hasOwnProperty.call(synced, rel) && !live[rel]) gone.push(rel);
+    }
+    var i = 0;
+    function next() {
+      if (i >= gone.length) return;
+      var rel = gone[i++];
+      delete synced[rel];
+      return handleFor(dir, rel)
+        .then(function (t) { return t.dir.removeEntry(t.name); })
+        .catch(function () {})
+        .then(next);
+    }
+    return next();
+  }
+
+  /* Origin private storage is best effort until the origin is granted
+     persistence, and an evicted bucket takes the player's saved games
+     with it. Settings are cheap to lose and a campaign is not, so the
+     grant is asked for, and a refusal is said rather than swallowed.
+     estimate() is what the real figure comes from: the published
+     per browser quotas are folklore. */
+  function askForStorage() {
+    if (!navigator.storage) return;
+    var persisted = navigator.storage.persisted
+                    ? navigator.storage.persisted() : Promise.resolve(false);
+    persisted.then(function (already) {
+      if (already) return true;
+      return navigator.storage.persist ? navigator.storage.persist() : false;
+    }).then(function (ok) {
+      if (!ok) {
+        console.warn('[openkingdoms] storage is best effort; saved games may be evicted');
+        say('Your browser has not promised to keep the storage this game '
+            + 'uses. Saved games can be cleared when the disk fills up.');
+      }
+    }).catch(function () {});
+    if (!navigator.storage.estimate) return;
+    navigator.storage.estimate().then(function (est) {
+      if (!est || !est.quota) return;
+      var left = est.quota - (est.usage || 0);
+      console.log('[openkingdoms] storage: ' + Math.round((est.usage || 0) / 1048576)
+                  + ' MB of ' + Math.round(est.quota / 1048576) + ' MB used');
+      /* A save is a few hundred KB to a few MB, so this is roughly
+         "no room for another handful of them". */
+      if (left < 32 * 1048576) {
+        say('Browser storage is nearly full. Delete a saved game before '
+            + 'making another one.', true);
+      }
+    }).catch(function () {});
+  }
 
   /* ---- OPFS cache -------------------------------------------------- */
   function opfsDir(create) {
