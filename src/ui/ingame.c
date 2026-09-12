@@ -9,6 +9,7 @@
 #include "tak_ingame.h"
 #include "tak_settings.h"
 #include "tak_gameloop.h"
+#include "tak_ingame_debug.h"
 #include "tak_world.h"
 #include "tak_ai.h"
 #include "tak_terrain.h"
@@ -824,101 +825,94 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
  * (legacy:242892-242913). */
 static void ig_battle_keys(int has_focus, const GameWorld *world,
                           const Uint8 *keys) {
-    /* M4 debug hotkeys (PHASE_C_3DO.md §6 M4): spawn a monarch with
-     * '3', tune TA_SCALE with '-'/'=', tune TAN_TILT with '['/']'.
-     * Edge-detected so a held key doesn't repeat. Logging both values
-     * on every tweak makes R3 tuning straightforward — read off the
-     * numbers when the model looks right and pin them in units.c.
-     *
-     * Spawn coordinate: camera-center in world space. Drops the
-     * monarch into the middle of the visible viewport so you can
-     * actually see it without scrolling. */
 #define IG_PRESSED(sc) (keys[sc] && !ig.prev_keys[sc])
     /* Escape cancels. It never opens a menu, never pauses and never
      * quits (legacy:242914-242921), and a dialog that is up takes it
      * first (legacy:243003-243004). */
     if (has_focus && IG_PRESSED(SDL_SCANCODE_ESCAPE)) ig_cancel();
-    /* Digit keys are gameplay (control groups); the digit debug
-     * hotkeys below require Alt so the two don't collide. */
     int ig_alt = keys[SDL_SCANCODE_LALT] || keys[SDL_SCANCODE_RALT];
-    if (ig_alt && IG_PRESSED(SDL_SCANCODE_3)) {
-        int32_t wx = world->cam_x + world->viewport_w / 2;
-        int32_t wy = world->cam_y + world->viewport_h / 2;
-        Units_DebugSpawnMonarch("ARA", wx, wy);
-    }
-    /* Phase D M3 debug: 'H' rotates each alive unit's head piece by
-     * 30° per press (5461 in COB fixed-point: 65536 = 360°). Visual
-     * proof that the per-piece transform pipeline works. */
-    if (IG_PRESSED(SDL_SCANCODE_H)) {
-        Units_DebugRotateHead(5461);
-    }
-    /* Phase D M5 debug: 'L' (locomotion) invokes the unit's walk
-     * script, animating legs (and other body parts that walk drives).
-     * Each press spawns a fresh walk thread; unit accumulates multiple
-     * cycling threads until its 16 slots fill. (W is camera scroll.) */
-    if (IG_PRESSED(SDL_SCANCODE_L)) {
-        Units_DebugInvokeScript("walk");
-    }
-    /* Phase D M5b: 'V' bumps unit velocity by 4*65536 (4 unit/sec).
-     * MoveWatcher and walk scripts can poll GET-UNIT-VALUE(5) to drive
-     * leg-cycle timing. */
-    if (IG_PRESSED(SDL_SCANCODE_V)) {
-        Units_DebugBumpVelocity(4 * 65536);
-    }
-    /* Phase D M6: 'K' kills the first alive unit — its Killed script
-     * runs (typically EXPLODE pieces); on completion the unit is
-     * despawned. */
-    if (IG_PRESSED(SDL_SCANCODE_K)) {
-        Units_DebugKillFirst();
-    }
-    /* Toggle per-unit health bars on/off (manual §IV.2: '~' key). */
+
+    /* Toggle per-unit health bars on/off (keys.tdf SYMBOL_60 and
+     * SYMBOL_7E, ToggleDamageBars, and manual section IV.2). */
     if (IG_PRESSED(SDL_SCANCODE_GRAVE)) {
         Units_ToggleHealthBars();
         Settings_SetInt("DisplayDamageBars", Units_GetHealthBarsOn());
         Settings_Save();
-        fprintf(stderr, "Health bars: %s\n",
-                Units_GetHealthBarsOn() ? "ON" : "OFF");
     }
-    /* Sprint 1: 'E' spawns an enemy monarch close to camera center —
-     * within ARAKING's 232-pixel sight radius so auto-acquire fires
-     * immediately. */
-    if (IG_PRESSED(SDL_SCANCODE_E)) {
+
+    /* Development tools. The decoder is compiled out of a shipped build
+     * (tak_ingame_debug.h), so in a normal build this whole block is
+     * gone and there is no key a player can press to reach any of it.
+     * Two of these used to sit on the keys the original binds to the
+     * speed control above. */
+#ifdef TAK_DEBUG
+    InGameDebugAction dbg = InGame_DebugHotkey(keys, ig.prev_keys);
+    switch (dbg) {
+    case IG_DEBUG_SPAWN_MONARCH: {
+        int32_t wx = world->cam_x + world->viewport_w / 2;
+        int32_t wy = world->cam_y + world->viewport_h / 2;
+        Units_DebugSpawnMonarch("ARA", wx, wy);
+        break;
+    }
+    case IG_DEBUG_ROTATE_HEAD:
+        /* 30 degrees per press, 65536 to the turn. */
+        Units_DebugRotateHead(5461);
+        break;
+    case IG_DEBUG_INVOKE_WALK:
+        Units_DebugInvokeScript("walk");
+        break;
+    case IG_DEBUG_BUMP_VELOCITY:
+        Units_DebugBumpVelocity(4 * 65536);
+        break;
+    case IG_DEBUG_KILL_FIRST:
+        Units_DebugKillFirst();
+        break;
+    case IG_DEBUG_SPAWN_ENEMY: {
+        /* Inside ARAKING's 232 pixel sight radius, so auto-acquire
+         * fires straight away. */
         int32_t wx = world->cam_x + world->viewport_w / 2 + 120;
         int32_t wy = world->cam_y + world->viewport_h / 2 + 120;
         Units_DebugSpawnEnemy(wx, wy);
+        break;
     }
-    /* M8 stress test: replace the active array with a grid of N monarchs
-     * of player 1's faction. '4' = 500, '5' = 2000 (the engine's cap). */
-    if (ig_alt && (IG_PRESSED(SDL_SCANCODE_4) || IG_PRESSED(SDL_SCANCODE_5))) {
+    case IG_DEBUG_SPAWN_GRID_500:
+    case IG_DEBUG_SPAWN_GRID_2000: {
         static const char *side_prefixes[] = { "ARA", "TAR", "VER", "ZON" };
         int side = world->cfg.players[0].side;
         const char *prefix = (side >= 0 && side < 4) ? side_prefixes[side] : "ARA";
         int color = world->cfg.players[0].color;
         int32_t cx = world->cam_x + world->viewport_w / 2;
         int32_t cy = world->cam_y + world->viewport_h / 2;
-        int n = IG_PRESSED(SDL_SCANCODE_4) ? 500 : 2000;
+        int n = (dbg == IG_DEBUG_SPAWN_GRID_500) ? 500 : 2000;
         Units_DebugSpawnGrid(n, prefix, 1, color, cx, cy, 64);
+        break;
     }
-    if (IG_PRESSED(SDL_SCANCODE_MINUS)) {
+    case IG_DEBUG_SCALE_DOWN:
         Units_SetTAScale(Units_GetTAScale() * 0.85f);
         fprintf(stderr, "TA_SCALE=%.6f  TAN_TILT=%.4f\n",
                 (double)Units_GetTAScale(), (double)Units_GetTanTilt());
-    }
-    if (IG_PRESSED(SDL_SCANCODE_EQUALS)) {
+        break;
+    case IG_DEBUG_SCALE_UP:
         Units_SetTAScale(Units_GetTAScale() / 0.85f);
         fprintf(stderr, "TA_SCALE=%.6f  TAN_TILT=%.4f\n",
                 (double)Units_GetTAScale(), (double)Units_GetTanTilt());
-    }
-    if (IG_PRESSED(SDL_SCANCODE_LEFTBRACKET)) {
+        break;
+    case IG_DEBUG_TILT_DOWN:
         Units_SetTanTilt(Units_GetTanTilt() - 0.05f);
         fprintf(stderr, "TA_SCALE=%.6f  TAN_TILT=%.4f\n",
                 (double)Units_GetTAScale(), (double)Units_GetTanTilt());
-    }
-    if (IG_PRESSED(SDL_SCANCODE_RIGHTBRACKET)) {
+        break;
+    case IG_DEBUG_TILT_UP:
         Units_SetTanTilt(Units_GetTanTilt() + 0.05f);
         fprintf(stderr, "TA_SCALE=%.6f  TAN_TILT=%.4f\n",
                 (double)Units_GetTAScale(), (double)Units_GetTanTilt());
+        break;
+    case IG_DEBUG_NONE:
+    default:
+        break;
     }
+#endif
+
     /* Control groups: Ctrl+digit assigns the current selection to a
      * group, plain digit recalls it (legacy squad hotkeys). */
     {
