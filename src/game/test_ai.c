@@ -1390,6 +1390,9 @@ static int test_plan_profile_forbids_and_caps(void) {
     s.site_near = 4;
     s.army = 100;
     s.builders_idle = 1;
+    /* The same profile caps the producers, so nothing else is left
+     * for this builder to want. */
+    c.allowed[AI_ACT_BUILD_FACTORY] = 0;
     ASSERT_EQ_INT(0, AI_Plan_GoalPriority(&s, AI_GOAL_ECONOMY));
     /* Free sites do not get past the cap: no expansion plan, and the
      * builder has nothing to do. */
@@ -1423,6 +1426,38 @@ static int test_plan_build_efficiency_gates(void) {
     ASSERT_EQ_INT(AI_ACT_NONE, AI_Plan_NextAction(&s, &c, AI_ACTOR_FACTORY, &goal));
     s.build_eff = 23;
     ASSERT_EQ_INT(AI_ACT_TRAIN, AI_Plan_NextAction(&s, &c, AI_ACTOR_FACTORY, &goal));
+    return 0;
+}
+
+/* An army is never finished. The original draws from a weighted build
+ * list every pass and stops only where a per-type limit bites
+ * (legacy:21281-21294, :21339-21343). */
+static int test_plan_army_is_never_finished(void) {
+    AiPlanState s;
+    AiPlanCosts c;
+    plan_state_basic(&s, &c);
+    s.threat_total = 0;      /* fog: nothing seen, the floor rules */
+    s.army = 32;             /* already past that floor */
+    s.lodestones = 1;        /* economy met, so it masks nothing */
+    s.factories = 1;
+    s.factories_idle = 1;
+    AiGoal goal = AI_GOAL_NONE;
+    ASSERT_TRUE(AI_Plan_GoalPriority(&s, AI_GOAL_ARMY) > 0);
+    ASSERT_EQ_INT(AI_ACT_TRAIN, AI_Plan_NextAction(&s, &c, AI_ACTOR_FACTORY, &goal));
+    ASSERT_EQ_INT(AI_GOAL_ARMY, goal);
+    /* An army that size ranks behind the economy, and still behind a
+     * free site, so it takes nothing away from either. */
+    s.lodestones = 0;
+    ASSERT_TRUE(AI_Plan_GoalPriority(&s, AI_GOAL_ECONOMY) >
+                AI_Plan_GoalPriority(&s, AI_GOAL_ARMY));
+    s.lodestones = 1;
+    s.site_near = 1;
+    s.free_sites = 1;
+    ASSERT_TRUE(AI_Plan_GoalPriority(&s, AI_GOAL_EXPAND) >
+                AI_Plan_GoalPriority(&s, AI_GOAL_ARMY));
+    /* The profile's limit is what ends it: nothing left to train. */
+    c.allowed[AI_ACT_TRAIN] = 0;
+    ASSERT_EQ_INT(AI_ACT_NONE, AI_Plan_NextAction(&s, &c, AI_ACTOR_FACTORY, &goal));
     return 0;
 }
 
@@ -1600,6 +1635,7 @@ int main(void) {
     if (test_plan_threatened_defends_before_expanding() != 0) return 1;
     if (test_plan_profile_forbids_and_caps() != 0) return 1;
     if (test_plan_build_efficiency_gates() != 0) return 1;
+    if (test_plan_army_is_never_finished() != 0) return 1;
     if (test_ai_threatened_builds_a_tower_before_expanding() != 0) return 1;
     if (test_ai_starved_builds_and_trains() != 0) return 1;
     if (test_ai_mobile_producer_trains_the_army() != 0) return 1;

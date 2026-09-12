@@ -24,7 +24,8 @@ static int plan_economy_short(const AiPlanState *s) {
     return s->lodestones + s->lodestones_pending < s->lode_target;
 }
 
-/* Army floor: the seen threat, never below 30 (about four troops). */
+/* Army rank: the seen threat, never below 30 (about four troops).
+ * A rank against the other goals, not a size the army is finished at. */
 static int32_t plan_army_want(const AiPlanState *s) {
     return s->threat_total > 30 ? s->threat_total : 30;
 }
@@ -68,7 +69,11 @@ int AI_Plan_GoalPriority(const AiPlanState *s, AiGoal goal) {
         if (s->exposure <= 0 || !plan_home_short(s)) return 0;
         return 90;
     case AI_GOAL_ARMY:
-        return s->army < plan_army_want(s) ? 60 : 0;
+        /* Never finished. The original draws from a weighted build
+         * list every pass and stops only where a per-type limit bites
+         * (legacy:21281-21294, :21339-21343), which allowed[] carries,
+         * so this is a rank against the other goals and not an end. */
+        return s->army < plan_army_want(s) ? 60 : 35;
     case AI_GOAL_EXPAND:
         if (s->site_near <= 0 || s->exposure > 0) return 0;
         return 50;
