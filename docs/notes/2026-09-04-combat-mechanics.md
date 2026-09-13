@@ -382,13 +382,21 @@ applied after parsing, and we are missing them:**
 ## 10. Healing
 
 **Self-heal** (:236280-236287): requires a non-zero `healtime`, and the unit
-alive, built, unparalyzed and below max HP. It runs **every 8 frames**, healing
-`healtime × 8 ÷ 30` with mana charging **off**, a net rate of `healtime` HP
-per second, free.
+alive, built, unparalyzed and below max HP. It runs **every 8 frames** with
+mana charging **off**, so it costs nothing.
 
-**Worker repair**: `workertime × 1/30` per frame with mana charging **on**, at
-:32674 and :13512, so it is mana-charged and subject to the starvation
-throttle.
+`healtime` is build work per second, not hit points per second. The applicator
+divides it by the target's `buildtime` and multiplies by the target's
+`maxdamage`, so health restored per second is `healtime/buildtime` of the
+maximum and a unit left alone mends fully in `buildtime/healtime` seconds.
+That ratio is a round designed number across the shipped files: all five
+monarchs come to 240 seconds, and so does an ordinary swordsman. A castle
+takes 480, a wall 156, a dragon 900.
+
+**Worker repair**: `workertime × 1/30` per frame against the target's
+`buildtime`, with mana charging **on**, at :32674 and :13512, so it is
+mana-charged and subject to the starvation throttle. It does not read
+`healtime`.
 
 **There are no heal weapons**. The special weapon types are mindcontrol,
 turntostone, lightning, fire and paralyzer.

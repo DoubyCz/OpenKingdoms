@@ -8587,6 +8587,354 @@ TEST(a_monarch_raises_a_corpse_at_a_tenth_of_its_life) {
     corpse_shutdown(&platform);
 }
 
+/* --- Free self repair --------------------------------------------
+ * Every unit and building with a non-zero healtime mends itself, with
+ * nothing to pay and no combat or recency gate, on every eighth frame
+ * of the original's 30 Hz clock and so every sixteenth of our 60 Hz
+ * one (legacy:236281-236286). healtime is build work per second, not
+ * hit points per second: the share of maximum health that comes back
+ * each second is healtime/buildtime, so a unit left alone is whole
+ * again buildtime/healtime seconds later. */
+
+/* How long a def takes to mend itself from nothing, worked out from
+ * the two data keys, so the tests pin the formula and not a number. */
+static int self_heal_full_ticks(const UnitDef *d) {
+    return (int)((d->buildtime / d->heal_time) * 60.0f + 0.5f);
+}
+
+static void self_heal_all_passive(void) {
+    int n = 0;
+    const Unit *units = Units_GetActive(&n);
+    for (int i = 0; i < n; i++) {
+        if (units[i].alive == UNIT_ALIVE_ACTIVE)
+            Units_DebugSetAggro(i, UNIT_AGGRO_PASSIVE);
+    }
+}
+
+/* No setter takes hit points, and these tests need an exact wound. */
+static void self_heal_set_hp(int handle, int hp) {
+    int n = 0;
+    const Unit *units = Units_GetActive(&n);
+    Unit *u = (Unit *)&units[handle];   /* test-only mutation */
+    u->health = hp;
+}
+
+static void self_heal_make_frame(int handle) {
+    int n = 0;
+    const Unit *units = Units_GetActive(&n);
+    Unit *u = (Unit *)&units[handle];   /* test-only mutation */
+    u->under_construction = 1;
+}
+
+static void self_heal_run(int ticks) {
+    for (int t = 0; t < ticks; t++) Units_TickEngines();
+}
+
+static int self_heal_spawn_clear(GameWorld *world, int def_idx,
+                                 int32_t near_x, int32_t near_y) {
+    int32_t cx = 0, cy = 0;
+    if (!corpse_find_clear_ground(world, near_x, near_y, 64, &cx, &cy))
+        return -1;
+    return Units_Spawn(def_idx, 1, 0, cx, cy);
+}
+
+TEST(a_damaged_monarch_heals_itself_in_four_minutes) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int kdef = Units_FindDefByName("ARAKING");
+    ASSERT(kdef >= 0);
+    const UnitDef *kd = Units_GetDef(kdef);
+    ASSERT_NOT_NULL(kd);
+    ASSERT(kd->heal_time > 0.0f);
+    ASSERT(kd->buildtime > 0.0f);
+    /* The shipped monarch is tuned to four minutes, and it is the
+     * pairing of both keys that says so: healtime alone is meaningless
+     * without the buildtime it is a share of. */
+    int full_ticks = self_heal_full_ticks(kd);
+    ASSERT_EQ_INT(240 * 60, full_ticks);
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    ASSERT(unit_count > 0);
+    int k = self_heal_spawn_clear(world, kdef, units[0].world_x + 320,
+                                  units[0].world_y);
+    ASSERT(k >= 0);
+    self_heal_all_passive();
+    units = Units_GetActive(&unit_count);
+    int max_hp = units[k].max_health;
+    ASSERT(max_hp > 0);
+
+    self_heal_set_hp(k, 1);
+    /* Half the health back in half the time: the rate is flat, with no
+     * ramp and no combat gate. */
+    self_heal_run(full_ticks / 2);
+    units = Units_GetActive(&unit_count);
+    ASSERT(abs(units[k].health - max_hp / 2) <= 8);
+    /* Still short with a few seconds to go, so the pace is pinned from
+     * both sides rather than only proven to be fast enough. */
+    self_heal_run(full_ticks - 400 - full_ticks / 2);
+    units = Units_GetActive(&unit_count);
+    ASSERT(units[k].health < max_hp);
+    /* One heal period past the deadline, so the assertion does not sit
+     * on the exact tick the last of them lands. */
+    self_heal_run(400 + 16);
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(max_hp, units[k].health);
+
+    corpse_shutdown(&platform);
+}
+
+TEST(every_unit_self_heals_not_only_monarchs) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int sdef = Units_FindDefByName("ARASWORD");
+    int wdef = Units_FindDefByName("ARAWALL");
+    ASSERT(sdef >= 0 && wdef >= 0);
+    const UnitDef *sd = Units_GetDef(sdef);
+    const UnitDef *wd = Units_GetDef(wdef);
+    ASSERT_NOT_NULL(sd);
+    ASSERT_NOT_NULL(wd);
+    ASSERT(sd->heal_time > 0.0f && wd->heal_time > 0.0f);
+    int sword_ticks = self_heal_full_ticks(sd);
+    int wall_ticks = self_heal_full_ticks(wd);
+    /* A swordsman keeps the monarch's four minutes, a wall has its own
+     * shorter number, so the period is per unit and not a constant. */
+    ASSERT_EQ_INT(240 * 60, sword_ticks);
+    ASSERT_EQ_INT(156 * 60, wall_ticks);
+    ASSERT(wall_ticks < sword_ticks);
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    ASSERT(unit_count > 0);
+    int32_t ax = units[0].world_x, ay = units[0].world_y;
+    int s = self_heal_spawn_clear(world, sdef, ax + 320, ay);
+    int w = self_heal_spawn_clear(world, wdef, ax + 320, ay + 320);
+    ASSERT(s >= 0 && w >= 0);
+    self_heal_all_passive();
+    units = Units_GetActive(&unit_count);
+    int sword_max = units[s].max_health;
+    int wall_max = units[w].max_health;
+    ASSERT(sword_max > 0 && wall_max > 0);
+
+    self_heal_set_hp(s, 1);
+    self_heal_set_hp(w, 1);
+    /* One heal short of the wall's own deadline. */
+    self_heal_run(wall_ticks - 16);
+    units = Units_GetActive(&unit_count);
+    ASSERT(units[w].health < wall_max);
+    ASSERT(units[s].health < sword_max);
+    self_heal_run(32);
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(wall_max, units[w].health);
+    ASSERT(units[s].health < sword_max);
+    self_heal_run(sword_ticks - wall_ticks);
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(sword_max, units[s].health);
+
+    corpse_shutdown(&platform);
+}
+
+TEST(a_unit_with_zero_healtime_never_heals) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int ndef = Units_FindDefByName("ARANULL");
+    ASSERT(ndef >= 0);
+    const UnitDef *nd = Units_GetDef(ndef);
+    ASSERT_NOT_NULL(nd);
+    /* healtime zero, which is what the gods and this one ship with. */
+    ASSERT(nd->heal_time == 0.0f);
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    ASSERT(unit_count > 0);
+    int n = self_heal_spawn_clear(world, ndef, units[0].world_x + 320,
+                                  units[0].world_y);
+    ASSERT(n >= 0);
+    self_heal_all_passive();
+    units = Units_GetActive(&unit_count);
+    int half = units[n].max_health / 2;
+    ASSERT(half > 0);
+    self_heal_set_hp(n, half);
+    self_heal_run(240 * 60);
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(half, units[n].health);
+
+    corpse_shutdown(&platform);
+}
+
+TEST(self_heal_stops_at_maximum) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int sdef = Units_FindDefByName("ARASWORD");
+    ASSERT(sdef >= 0);
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    ASSERT(unit_count > 0);
+    int s = self_heal_spawn_clear(world, sdef, units[0].world_x + 320,
+                                  units[0].world_y);
+    ASSERT(s >= 0);
+    self_heal_all_passive();
+    units = Units_GetActive(&unit_count);
+    int max_hp = units[s].max_health;
+    ASSERT(max_hp > 0);
+
+    /* Whole already: many heals later it is still exactly whole. */
+    self_heal_set_hp(s, max_hp);
+    self_heal_run(600);
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(max_hp, units[s].health);
+
+    /* One hit point short, with two heals due, each worth more than
+     * that: the surplus is dropped, not carried past the maximum. */
+    self_heal_set_hp(s, max_hp - 1);
+    self_heal_run(32);
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(max_hp, units[s].health);
+
+    corpse_shutdown(&platform);
+}
+
+TEST(a_nanoframe_does_not_self_heal) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int bdef = Units_FindDefByName("ARABUILD");
+    ASSERT(bdef >= 0);
+    const UnitDef *bd = Units_GetDef(bdef);
+    ASSERT_NOT_NULL(bd);
+    /* The def does self heal once it stands, so what the frame proves
+     * is the under-construction gate and nothing else. */
+    ASSERT(bd->heal_time > 0.0f);
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    ASSERT(unit_count > 0);
+    int b = self_heal_spawn_clear(world, bdef, units[0].world_x + 320,
+                                  units[0].world_y);
+    ASSERT(b >= 0);
+    self_heal_all_passive();
+    self_heal_make_frame(b);
+    self_heal_set_hp(b, 1);
+    /* Inside the abandoned frame's grace, so nothing decays either. */
+    self_heal_run(300);
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(1, units[b].under_construction);
+    ASSERT_EQ_INT(1, units[b].health);
+
+    corpse_shutdown(&platform);
+}
+
+/* A worker's repair runs off the target's buildtime, the same divisor
+ * the build itself uses, and the builder's workertime is the numerator
+ * (legacy:32674). It is not healtime: healtime is the free self repair
+ * and is a couple of hundred times slower. */
+TEST(a_priest_repairs_a_swordsman_in_its_build_time) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+    world->economy.players[0].max_mana = 1000000;
+    world->economy.players[0].mana = 900000.0f;
+
+    int pdef = Units_FindDefByName("ARAPRIES");
+    int sdef = Units_FindDefByName("ARASWORD");
+    ASSERT(pdef >= 0 && sdef >= 0);
+    const UnitDef *pd = Units_GetDef(pdef);
+    const UnitDef *sd = Units_GetDef(sdef);
+    ASSERT_NOT_NULL(pd);
+    ASSERT_NOT_NULL(sd);
+    ASSERT(pd->worker_time > 0.0f && sd->buildtime > 0.0f);
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    ASSERT(unit_count > 0);
+    int32_t cx = 0, cy = 0;
+    ASSERT(corpse_find_clear_ground(world, units[0].world_x + 320,
+                                    units[0].world_y, 64, &cx, &cy));
+    int s = Units_Spawn(sdef, 1, 0, cx, cy);
+    int p = Units_Spawn(pdef, 1, 0, cx + 48, cy);
+    ASSERT(s >= 0 && p >= 0);
+    self_heal_all_passive();
+    units = Units_GetActive(&unit_count);
+    int max_hp = units[s].max_health;
+    ASSERT(max_hp > 0);
+    self_heal_set_hp(s, 1);
+
+    /* Hit points a tick, from the data: the repair share, plus the
+     * free self repair the same unit is doing on its own. */
+    float repair_per_tick =
+        (float)max_hp * pd->worker_time / (sd->buildtime * 60.0f);
+    float self_per_call =
+        (sd->heal_time * 8.0f / 30.0f) / sd->buildtime * (float)max_hp;
+    float per_tick = repair_per_tick + self_per_call / 16.0f;
+    int expect_ticks = (int)((float)(max_hp - 1) / per_tick);
+    /* A swordsman costs ninety-nine seconds of build work and a priest
+     * brings ten of them a second, so this is about ten seconds. */
+    ASSERT(expect_ticks > 60 && expect_ticks < 60 * 20);
+
+    Units_SelectSingle(p);
+    Units_CommandRepairSelected(s);
+    Units_SelectSingle(-1);
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(UNIT_CMD_REPAIR, units[p].cmd_kind);
+    ASSERT_EQ_INT(s, units[p].target);
+
+    /* It is standing in reach already, so the work starts at once. */
+    int ticks = 0;
+    while (ticks < 300 && units[s].health < 40) {
+        Units_TickEngines();
+        units = Units_GetActive(&unit_count);
+        ticks++;
+    }
+    ASSERT(ticks > 0 && ticks <= 30);
+
+    /* Measure the pace over a window where nothing clamps. */
+    int h0 = units[s].health;
+    self_heal_run(160);
+    ticks += 160;
+    units = Units_GetActive(&unit_count);
+    ASSERT(units[s].health < max_hp);
+    float expect_gain = 160.0f * repair_per_tick + 10.0f * self_per_call;
+    ASSERT(fabsf((float)(units[s].health - h0) - expect_gain) <= 8.0f);
+
+    while (ticks < expect_ticks * 2 && units[s].health < max_hp) {
+        Units_TickEngines();
+        units = Units_GetActive(&unit_count);
+        ticks++;
+    }
+    ASSERT_EQ_INT(max_hp, units[s].health);
+    ASSERT(ticks > expect_ticks - expect_ticks / 8);
+    ASSERT(ticks < expect_ticks + expect_ticks / 8);
+
+    corpse_shutdown(&platform);
+}
+
 /* A raiser beside a fresh body. Spawns the raiser for player 1 and the
  * victim for its own player and colour, kills the victim and ticks until
  * its corpse lies. The raise tests below share it. Returns the corpse
@@ -12263,7 +12611,10 @@ TEST(healing_spends_mana_over_time) {
     ASSERT(units[hurt].health > hp0);
     ASSERT(Economy_GetMana(&world->economy, 1) < mana0);
 
-    /* Empty the purse and the healing stops until it can pay again. */
+    /* Empty the purse and the paid repair stops until it can pay again.
+     * What carries on is the unit mending itself, which is free and
+     * runs whether or not a worker is there (legacy:236281-236286), so
+     * the purse gates the worker's share and not all healing. */
     Economy_SpendAvailable(&world->economy, 1, 1.0e9f);
     units = Units_GetActive(&unit_count);
     int hp_dry = units[hurt].health;
@@ -12272,7 +12623,16 @@ TEST(healing_spends_mana_over_time) {
         ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
         units = Units_GetActive(&unit_count);
     }
-    ASSERT_EQ_INT(hp_dry, units[hurt].health);
+    {
+        const UnitDef *hurt_d = Units_GetDef(hurt_def);
+        ASSERT_NOT_NULL(hurt_d);
+        float self_per_call = (hurt_d->heal_time * 8.0f / 30.0f) /
+                              hurt_d->buildtime *
+                              (float)units[hurt].max_health;
+        int self_only = (int)(self_per_call * (600.0f / 16.0f)) + 2;
+        ASSERT(units[hurt].health >= hp_dry);
+        ASSERT(units[hurt].health <= hp_dry + self_only);
+    }
     Economy_AdjustCaps(&world->economy, 1, 0, (float)regen);
     }
 done:
@@ -18548,6 +18908,12 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_D, swordsman_strikes_an_enemy_standing_beside_it);
     RUN_UI_TEST(UI_GROUP_A, the_sweep_clears_a_corpse_and_keeps_it_from_rotting);
     RUN_UI_TEST(UI_GROUP_C, a_monarch_raises_a_corpse_at_a_tenth_of_its_life);
+    RUN_UI_TEST(UI_GROUP_A, a_damaged_monarch_heals_itself_in_four_minutes);
+    RUN_UI_TEST(UI_GROUP_B, every_unit_self_heals_not_only_monarchs);
+    RUN_UI_TEST(UI_GROUP_C, a_unit_with_zero_healtime_never_heals);
+    RUN_UI_TEST(UI_GROUP_D, self_heal_stops_at_maximum);
+    RUN_UI_TEST(UI_GROUP_A, a_nanoframe_does_not_self_heal);
+    RUN_UI_TEST(UI_GROUP_B, a_priest_repairs_a_swordsman_in_its_build_time);
     RUN_UI_TEST(UI_GROUP_B, a_raised_enemy_joins_the_raiser);
     RUN_UI_TEST(UI_GROUP_C, a_raise_that_cannot_spawn_leaves_the_body);
     RUN_UI_TEST(UI_GROUP_B, a_raised_unit_stands_as_the_body_lay);

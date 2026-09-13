@@ -303,7 +303,11 @@ typedef struct UnitDef {
     int      build_cost;        /* mana spent to construct this unit  */
     float    worker_time;       /* builder work rate from FBI workertime */
     int32_t  build_distance;    /* builddistance — reach to the build site */
-    float    heal_time;         /* healtime; seconds to restore this unit */
+    /* `healtime`: build work per second of free self repair, not hit
+     * points per second. Health restored each second is
+     * heal_time/buildtime of the maximum, so a unit left alone mends
+     * fully in buildtime/heal_time seconds. */
+    float    heal_time;
     /* `experiencepoints` from FBI — when this unit dies, the killer
      * gains this many XP (legacy legacy:162918, default
      * 0x29a = 666). Drives the veteran-rank system. */
@@ -645,6 +649,10 @@ typedef struct Unit {
     uint8_t    occ_fx;
     uint8_t    occ_fz;
     float      build_hp_accum;  /* fractional construction HP fed by builders */
+    /* Free self repair carry, one byte of 1/256 hit points. Kept apart
+     * from the builders' accumulator above, which build and repair own
+     * between them (legacy:39571-39574). */
+    uint8_t    heal_frac_256;
     /* Ticks since a builder last fed this nanoframe. Past a 10s grace
      * an abandoned frame decays at half build rate, refunding mana
      * proportionally (legacy :9629-9657 + :39510-39524). */
