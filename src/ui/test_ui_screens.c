@@ -2117,6 +2117,11 @@ TEST(mp_room_leaving_goes_back_to_the_game_list) {
 
 /* Only your own row is yours to change, which is the server's rule as
  * well as the screen's. A press on someone else's row sends nothing. */
+/* Defined with the other lookups further down. Named here because
+ * the room cases above them use it, and clang and gcc refuse an
+ * implicit declaration that MSVC lets through. */
+static int widget_index_named(GUIRuntime *rt, const char *name);
+
 /* A room where we are the host, in seat 0, with the rules and the cap
  * the server would carry. mp_encode_room above seats us second. */
 static size_t mp_encode_room_hosted(uint8_t *out, size_t cap, uint32_t revision,
