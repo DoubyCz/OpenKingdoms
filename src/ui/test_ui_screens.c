@@ -12603,7 +12603,9 @@ TEST(healing_spends_mana_over_time) {
     Units_SelectSingle(king);
     Units_CommandRepairSelected(hurt);
     Units_SelectSingle(-1);
-    for (int i = 0; i < 1800 && units[hurt].health <= hp0; i++) {
+    /* The unit mends itself for free meanwhile, so the purse is what
+     * says the priest has started. */
+    for (int i = 0; i < 1800 && Economy_GetMana(&world->economy, 1) >= mana0; i++) {
         timer.accumulator = timer.sim_dt;
         ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
         units = Units_GetActive(&unit_count);

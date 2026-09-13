@@ -253,7 +253,10 @@ _Static_assert(DEFS_HASH + 8u == TAK_DEFS_RECORD_BYTES,
 #define U_FOG_Y         (U_FOG_X + 4u)
 #define U_FOG_SIGHT     (U_FOG_X + 8u)
 #define U_FOG_LIT       (U_FOG_X + 10u)
-#define U_END           (U_FOG_X + 12u)
+/* The free self repair carry, one byte, at the end so a file written
+ * before it reads back with the carry at zero. */
+#define U_HEAL_FRAC     (U_FOG_X + 12u)
+#define U_END           (U_FOG_X + 13u)
 _Static_assert(U_END == TAK_UNIT_RECORD_BYTES, "UNIT layout and width disagree");
 
 /* PROJ, one record per pool slot. The pool recycles slots and its
@@ -1003,6 +1006,7 @@ static void encode_unit(uint8_t *r, const Unit *u, const DefOrdinals *o) {
     tak_put_u8(r + U_COB_STANCE, u->cob_build_stance);
     tak_put_u8(r + U_COB_YARD, u->cob_yard_open);
     tak_put_u8(r + U_COB_BUGGER, u->cob_bugger_off);
+    tak_put_u8(r + U_HEAL_FRAC, u->heal_frac_256);
     tak_put_u8(r + U_FLYING, u->flying);
     tak_put_u8(r + U_SFX_OCCUPY, u->sfx_occupy);
     tak_put_u8(r + U_ATTACK_EXPL, u->attack_explicit);
@@ -1184,6 +1188,7 @@ static int decode_unit(Unit *u, const uint8_t *r, const TAK_SaveGame *sg,
     u->cob_build_stance = tak_get_u8(r + U_COB_STANCE);
     u->cob_yard_open = tak_get_u8(r + U_COB_YARD);
     u->cob_bugger_off = tak_get_u8(r + U_COB_BUGGER);
+    u->heal_frac_256 = tak_get_u8(r + U_HEAL_FRAC);
     u->flying = tak_get_u8(r + U_FLYING);
     u->sfx_occupy = tak_get_u8(r + U_SFX_OCCUPY);
     u->attack_explicit = tak_get_u8(r + U_ATTACK_EXPL);
