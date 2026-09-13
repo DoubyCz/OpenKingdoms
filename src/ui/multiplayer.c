@@ -322,9 +322,8 @@ static int mp_on_click(SimpleScreen *s, const char *name, int widget_index) {
             if (!uw || uw->rect.y > 240) return 0;
             if (!mp_is_host()) { mp_say("Only the host sets the unit limit."); return 1; }
             int cap = (int)c->room.unit_cap;
-            int wx = 0, wy = 0, mx = -1, my = -1;
-            SDL_GetMouseState(&wx, &wy);
-            (void)TAK_Platform_MapMouseToCanvas(mp_platform, wx, wy, &mx, &my);
+            int mx = -1, my = -1;
+            (void)TAK_Platform_MouseThisFrame(mp_platform, &mx, &my);
             /* The nubs sit on the bar and the bar is what the runtime
              * reports, so a press is checked against the nubs first. */
             int on_inc = 0, on_dec = 0;
@@ -1126,12 +1125,7 @@ int Multiplayer_MapChooserTick(TAK_Platform *platform, float dt) {
     if (!mc.open || !mc.rt) return GAMESTATE_MULTIPLAYER;
 
     int mx = -1, my = -1, mouse_down = 0;
-    if (platform && platform->has_focus) {
-        int wx = 0, wy = 0;
-        uint32_t b = SDL_GetMouseState(&wx, &wy);
-        mouse_down = (b & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-        if (!TAK_Platform_MapMouseToCanvas(platform, wx, wy, &mx, &my)) { mx = -1; my = -1; }
-    }
+    if (platform && platform->has_focus) mouse_down = TAK_Platform_MouseThisFrame(platform, &mx, &my);
     const Uint8 *keys = SDL_GetKeyboardState(NULL);
     if (platform && platform->has_focus &&
         (keys[SDL_SCANCODE_ESCAPE] || platform->pressed_escape)) {
