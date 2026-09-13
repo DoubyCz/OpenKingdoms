@@ -35,6 +35,13 @@ typedef struct TAK_Platform {
      * cannot be matched to its renderer by pointer alone. Zero means
      * nobody claimed a generation, and a cache must then keep nothing. */
     uint32_t       renderer_gen;
+
+    /* Keys pressed since the last pump, whether or not they are still
+     * down. A press that went down and up between two frames is in
+     * here and nowhere else. Cleared by the next pump. */
+    uint8_t  pressed_enter;
+    uint8_t  pressed_escape;
+    uint8_t  pressed_backspace;
     SDL_Texture   *canvas_tex;    /* streaming, canvas_w × canvas_h, RGBA  */
 
     int            window_w;      /* current window size (updates on resize) */

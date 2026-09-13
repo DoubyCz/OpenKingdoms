@@ -190,6 +190,9 @@ int TAK_Platform_PumpEvents(TAK_Platform *plat) {
      * change from arriving somewhere it does not belong. */
     plat->text_in[0] = '\0';
     plat->text_in_len = 0;
+    plat->pressed_enter = 0;
+    plat->pressed_escape = 0;
+    plat->pressed_backspace = 0;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
@@ -214,6 +217,15 @@ int TAK_Platform_PumpEvents(TAK_Platform *plat) {
             if (ev.key.keysym.sym == SDLK_RETURN &&
                 (ev.key.keysym.mod & KMOD_ALT)) {
                 TAK_Platform_ToggleFullscreen(plat);
+                break;
+            }
+            if (ev.key.repeat) break;
+            switch (ev.key.keysym.scancode) {
+            case SDL_SCANCODE_RETURN:
+            case SDL_SCANCODE_KP_ENTER:  plat->pressed_enter = 1; break;
+            case SDL_SCANCODE_ESCAPE:    plat->pressed_escape = 1; break;
+            case SDL_SCANCODE_BACKSPACE: plat->pressed_backspace = 1; break;
+            default: break;
             }
             break;
 

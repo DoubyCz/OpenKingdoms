@@ -90,16 +90,29 @@ void TAK_NetLink_WebMessage(const uint8_t *data, int len) {
  * threw on an undefined Module.HEAPU8. The allocator is the same trap
  * one level down, so nothing here calls it. The socket is parked on
  * Module because it has to outlive one call. */
+/* Every callback checks the socket it was made for is still the one
+ * the game is using. A reconnect closes the old socket and opens a new
+ * one in the same call, and the old socket's close event arrives a
+ * moment later, after the new one is up. Without the check that late
+ * event marked the new link closed, which is how typing a name in the
+ * lobby, which reconnects, produced "the connection closed" on a link
+ * that was fine. */
 EM_JS(int, web_open, (const char *url), {
     try {
-        if (Module.okSocket) { try { Module.okSocket.close(); } catch (e) {} }
+        if (Module.okSocket) {
+            var old = Module.okSocket;
+            Module.okSocket = null;
+            old.onopen = old.onclose = old.onerror = old.onmessage = null;
+            try { old.close(); } catch (e) {}
+        }
         var s = new WebSocket(UTF8ToString(url));
         s.binaryType = 'arraybuffer';
         Module.okSocket = s;
-        s.onopen = function () { _TAK_NetLink_WebOpened(); };
-        s.onclose = function () { _TAK_NetLink_WebClosed(); };
-        s.onerror = function () { _TAK_NetLink_WebClosed(); };
+        s.onopen = function () { if (Module.okSocket === s) _TAK_NetLink_WebOpened(); };
+        s.onclose = function () { if (Module.okSocket === s) _TAK_NetLink_WebClosed(); };
+        s.onerror = function () { if (Module.okSocket === s) _TAK_NetLink_WebClosed(); };
         s.onmessage = function (e) {
+            if (Module.okSocket !== s) return;
             var bytes = new Uint8Array(e.data);
             if (bytes.length > _TAK_NetLink_WebStageCap()) {
                 _TAK_NetLink_WebOverflow();
@@ -131,7 +144,10 @@ EM_JS(int, web_send, (const uint8_t *data, int len), {
 EM_JS(void, web_close, (void), {
     var s = Module.okSocket;
     Module.okSocket = null;
-    if (s) { try { s.close(); } catch (e) {} }
+    if (s) {
+        s.onopen = s.onclose = s.onerror = s.onmessage = null;
+        try { s.close(); } catch (e) {}
+    }
 });
 
 int TAK_NetLink_Open(const char *url) {

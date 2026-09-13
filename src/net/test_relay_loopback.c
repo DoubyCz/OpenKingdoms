@@ -772,6 +772,52 @@ TEST(a_resigning_player_leaves_the_game_and_keeps_watching) {
     ASSERT(traces_agree() >= 15);
 }
 
+static int rooms_in_use(void) {
+    int n = 0;
+    for (int i = 0; i < TAK_RELAY_ROOMS_MAX; i++) n += relay.room[i].in_use ? 1 : 0;
+    return n;
+}
+
+static int clients_in_use(void) {
+    int n = 0;
+    for (int i = 0; i < TAK_RELAY_CLIENTS_MAX; i++) n += relay.client[i].in_use ? 1 : 0;
+    return n;
+}
+
+/* A client that stops answering is dropped, and the room it was alone
+ * in goes with it.
+ *
+ * The relay pinged every two seconds and never looked at the replies,
+ * so a tab that closed behind a proxy the relay had not heard from
+ * kept its seat and its room until the socket happened to close,
+ * which can be never. The next person in saw a ghost in a seat and a
+ * game nobody could start, and when they came back they were a new
+ * client whose seat no longer matched their row. */
+TEST(a_client_that_goes_silent_is_dropped_and_its_room_freed) {
+    setup(20, 10, 31);
+    Client *h = new_client(0);
+    ASSERT(create_room(h, 0, 60));
+    run_for(500);
+    ASSERT_EQ_INT(1, rooms_in_use());
+    ASSERT_EQ_INT(1, clients_in_use());
+
+    /* The tab dies without closing its socket: every frame from it
+     * stops, the heartbeat replies included. */
+    h->mute_at = g_now + 10;
+    run_for(TAK_RELAY_SILENT_MS + 3 * TAK_RELAY_PING_MS);
+
+    if (rooms_in_use()) printf("(the ghost's room is still there) ");
+    ASSERT_EQ_INT(0, rooms_in_use());
+    ASSERT_EQ_INT(0, clients_in_use());
+
+    /* And a client that answers is not touched by the same clock. */
+    Client *k = new_client(0);
+    run_for(500);
+    ASSERT(k->session != 0);
+    run_for(TAK_RELAY_SILENT_MS + 3 * TAK_RELAY_PING_MS);
+    ASSERT_EQ_INT(1, clients_in_use());
+}
+
 TEST(a_malformed_frame_closes_only_its_sender) {
     static uint8_t junk[70000];
     setup(20, 10, 29);
@@ -825,6 +871,7 @@ int main(void) {
     RUN(the_host_role_moves_in_the_lobby_and_in_game);
     RUN(a_spectator_joins_mid_game_and_catches_up_without_a_pause);
     RUN(a_resigning_player_leaves_the_game_and_keeps_watching);
+    RUN(a_client_that_goes_silent_is_dropped_and_its_room_freed);
     RUN(a_malformed_frame_closes_only_its_sender);
     TAK_FakeNet_Free(&net);
     for (int i = 0; i < N_MAX; i++) { free(cl[i].inbox.p); free(cl[i].rec.p); }

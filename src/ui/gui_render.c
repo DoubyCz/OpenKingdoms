@@ -570,6 +570,16 @@ void GUIRuntime_SetFillFractionAt(GUIRuntime *rt, int index, float fraction) {
     rt->caches[index].fill = fraction;
 }
 
+int GUIRuntime_FrameOverrideAt(const GUIRuntime *rt, int index) {
+    if (!rt || index < 0 || index >= rt->dialog->num_children) return -1;
+    return rt->caches[index].frame_override;
+}
+
+void GUIRuntime_SetFrameOverrideAt(GUIRuntime *rt, int index, int frame_index) {
+    if (!rt || index < 0 || index >= rt->dialog->num_children) return;
+    rt->caches[index].frame_override = frame_index;
+}
+
 void GUIRuntime_SetFrameOverride(GUIRuntime *rt, const char *name, int frame_index) {
     if (!rt || !name) return;
     for (int i = 0; i < rt->dialog->num_children; i++) {

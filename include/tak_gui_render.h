@@ -74,6 +74,11 @@ void GUIRuntime_DrawTextAt(GUIRuntime *rt, int index);
 /* Set a per-widget override frame (e.g. "display the checkbox's 'on'
  * frame regardless of hover"). frame_index of -1 clears the override. */
 void GUIRuntime_SetFrameOverride(GUIRuntime *rt, const char *name, int frame_index);
+/* The same for one widget by index, for a dialog that authors eight
+ * rows of cells under one name each. */
+void GUIRuntime_SetFrameOverrideAt(GUIRuntime *rt, int index, int frame_index);
+/* The override in force for a widget, -1 when none. For the tests. */
+int  GUIRuntime_FrameOverrideAt(const GUIRuntime *rt, int index);
 
 /* Progress bars (the sidebar gauges): the widget's strip is drawn up to
  * this fraction of its width, the way the original clips its gauge
