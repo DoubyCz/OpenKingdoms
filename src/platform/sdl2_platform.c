@@ -193,6 +193,7 @@ int TAK_Platform_PumpEvents(TAK_Platform *plat) {
     plat->pressed_enter = 0;
     plat->pressed_escape = 0;
     plat->pressed_backspace = 0;
+    plat->pressed_mouse_left = 0;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
@@ -226,6 +227,14 @@ int TAK_Platform_PumpEvents(TAK_Platform *plat) {
             case SDL_SCANCODE_ESCAPE:    plat->pressed_escape = 1; break;
             case SDL_SCANCODE_BACKSPACE: plat->pressed_backspace = 1; break;
             default: break;
+            }
+            break;
+
+        case SDL_MOUSEBUTTONDOWN:
+            if (ev.button.button == SDL_BUTTON_LEFT) {
+                plat->pressed_mouse_left = 1;
+                plat->press_x = ev.button.x;
+                plat->press_y = ev.button.y;
             }
             break;
 
@@ -300,6 +309,24 @@ void TAK_Platform_Present(TAK_Platform *plat) {
         SDL_RenderCopy(plat->renderer, plat->canvas_tex, NULL, NULL);
     }
     SDL_RenderPresent(plat->renderer);
+}
+
+int TAK_Platform_MouseThisFrame(const TAK_Platform *plat, int *out_cx, int *out_cy) {
+    int wx = 0, wy = 0;
+    uint32_t held = SDL_GetMouseState(&wx, &wy) & SDL_BUTTON(SDL_BUTTON_LEFT);
+    int down = held ? 1 : 0;
+    if (plat && plat->pressed_mouse_left && !held) {
+        /* Down and up inside one frame: the press is the event, and
+         * where it landed is the position that matters. */
+        down = 1;
+        wx = plat->press_x;
+        wy = plat->press_y;
+    }
+    int cx = -1, cy = -1;
+    if (!TAK_Platform_MapMouseToCanvas(plat, wx, wy, &cx, &cy)) { cx = -1; cy = -1; }
+    if (out_cx) *out_cx = cx;
+    if (out_cy) *out_cy = cy;
+    return down;
 }
 
 int TAK_Platform_MapMouseToCanvas(const TAK_Platform *plat,

@@ -582,14 +582,7 @@ int SelectGame_Tick(TAK_Platform *platform, float dt) {
     sg.prev_back = back;
 
     int mx = -1, my = -1, mouse_down = 0;
-    if (focus) {
-        int wx = 0, wy = 0;
-        uint32_t buttons = SDL_GetMouseState(&wx, &wy);
-        mouse_down = (buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-        if (!TAK_Platform_MapMouseToCanvas(platform, wx, wy, &mx, &my)) {
-            mx = -1; my = -1;
-        }
-    }
+    if (focus) mouse_down = TAK_Platform_MouseThisFrame(platform, &mx, &my);
 
     /* The screen's own keys, which the .gui names: Enter joins and
      * Escape goes back to the main menu. */

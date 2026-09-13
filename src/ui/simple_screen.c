@@ -63,12 +63,8 @@ int SimpleScreen_Tick(SimpleScreen *s, TAK_Platform *platform, float dt) {
     (void)dt;
     if (!s || !s->initialized) return s ? s->self_state : 0;
 
-    int wx, wy, mx, my;
-    SDL_GetMouseState(&wx, &wy);
-    if (!TAK_Platform_MapMouseToCanvas(platform, wx, wy, &mx, &my)) {
-        mx = -1; my = -1;
-    }
-    int mouse_down = SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT);
+    int mx, my;
+    int mouse_down = TAK_Platform_MouseThisFrame(platform, &mx, &my);
 
     char clicked[64];
     int got = GUIRuntime_Update(s->rt, mx, my, mouse_down, clicked, sizeof(clicked));
