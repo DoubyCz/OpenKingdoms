@@ -184,7 +184,6 @@ static const HUDButtonBinding g_button_bindings[] = {
     { "UNLOAD",          HUD_CMD_UNLOAD,      16 /* CursorUnload */ },
     { "HEAL",            HUD_CMD_HEAL,        15 /* cursorrepair */ },
     { "CLEAR",           HUD_CMD_CLEAR,       22 /* Cursorreclamate */ },
-    { "SpecialWeapon",   HUD_CMD_W_SPECIAL,    0 /* CursorAttack */ },
     /* Immediate (no cursor swap; click executes order on selection). */
     { "STOP",            HUD_CMD_STOP,        -1 },
     { "Offensive",       HUD_CMD_AGGRO_OFF,   -1 },
@@ -192,6 +191,9 @@ static const HUDButtonBinding g_button_bindings[] = {
     { "Passive",         HUD_CMD_AGGRO_PAS,   -1 },
     { "PrimaryWeapon",   HUD_CMD_W_PRIMARY,   -1 },
     { "SecondaryWeapon", HUD_CMD_W_SECONDARY, -1 },
+    /* Three radio buttons, one per slot, and a click on any of them
+     * is the whole order (legacy:151481-151530, legacy:153147-153180). */
+    { "SpecialWeapon",   HUD_CMD_W_SET_SPEC,  -1 },
     { "CloakOn",         HUD_CMD_CLOAK_ON,    -1 },
     { "CloakOff",        HUD_CMD_CLOAK_OFF,   -1 },
     { "Active",          HUD_CMD_ACTIVATE,    -1 },
@@ -821,6 +823,27 @@ static SDL_Rect dialog_to_window(TAK_Platform *plat, SDL_Rect r) {
     return TAK_Platform_CanvasRectToWindow(plat, r);
 }
 
+/* A magic button as the original draws it: gone when the unit has no
+ * such weapon, disabled when its mana is short of that weapon's cost,
+ * down when the slot is the current weapon, up otherwise
+ * (legacy:151820-151900). */
+static int hud_weapon_button_state(int slot) {
+    if (slot < 0 || slot >= HUD_NUM_WEAPON_WIDGETS) return -1;
+    const UnitDef *def = hud_selection_is_own() ? Units_GetSelectedDef() : NULL;
+    if (!def || slot >= def->num_weapons) return -1;
+    int n = 0;
+    const int *sel = Units_GetSelection(&n);
+    if (!sel || n <= 0) return -1;
+    float mana = 0.0f, mana_max = 0.0f;
+    Units_GetMana(sel[0], &mana, &mana_max);
+    if (mana < (float)def->weapons[slot].mana_per_shot) return 0;
+    return Units_GetSelectedWeaponSlot() == slot ? 1 : 2;
+}
+
+int HUD_WeaponButtonState(int slot) {
+    return hud_weapon_button_state(slot);
+}
+
 static void fill_rect_canvas(SDL_Rect rc, SDL_Color c) {
     SDL_Surface *off = UI_Offscreen();
     if (!off) return;
@@ -1099,15 +1122,17 @@ void HUD_Draw(TAK_Platform *plat, const GameWorld *world) {
         /* A foreign unit's weapons are not shown. */
         const UnitDef *seldef = hud_selection_is_own() ? Units_GetSelectedDef()
                                                        : NULL;
-        int          wslot    = Units_GetSelectedWeaponSlot();
         SDL_Surface *off      = UI_Offscreen();
         for (int i = 0; i < HUD_NUM_WEAPON_WIDGETS; i++) {
             const char *wname = g_weapon_widgets[i];
-            int active = (wslot == i);
-            if (!seldef || i >= seldef->num_weapons) continue;
+            int state = hud_weapon_button_state(i);
+            if (state < 0 || !seldef) continue;
+            int active = (state == 1);
 
             const UnitWeapon *wp = &seldef->weapons[i];
-            const char *icon_name = active ? wp->icon_selected : wp->icon_up;
+            const char *icon_name = state == 0 ? wp->icon_disabled
+                                  : active     ? wp->icon_selected
+                                               : wp->icon_up;
             if (!icon_name || !icon_name[0]) icon_name = wp->icon_up;
             if (!icon_name || !icon_name[0]) continue;
 
@@ -1350,7 +1375,6 @@ int HUD_IsTargetingMode(int mode) {
         case HUD_CMD_UNLOAD:
         case HUD_CMD_HEAL:
         case HUD_CMD_CLEAR:
-        case HUD_CMD_W_SPECIAL:
         case HUD_CMD_PLACE_BUILD:
             return 1;
         default:
@@ -1498,6 +1522,12 @@ int HUD_HandleSidebarClick(int win_x, int win_y, TAK_Platform *plat) {
         const HUDActionSlot *s = &g_action_slots[i];
         if (win_x < s->rect.x || win_x >= s->rect.x + s->rect.w) continue;
         if (win_y < s->rect.y || win_y >= s->rect.y + s->rect.h) continue;
+
+        /* A disabled button takes no input (legacy:329637-329640). */
+        if ((s->mode == HUD_CMD_W_PRIMARY || s->mode == HUD_CMD_W_SECONDARY ||
+             s->mode == HUD_CMD_W_SET_SPEC) &&
+            hud_weapon_button_state(s->mode - HUD_CMD_W_PRIMARY) == 0)
+            return 1;
 
         hud_play_widget_sound(s->widget_name);
 

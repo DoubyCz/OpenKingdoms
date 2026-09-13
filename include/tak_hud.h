@@ -45,7 +45,6 @@ typedef enum {
     HUD_CMD_UNLOAD      = 6,    /* drop transport at point          */
     HUD_CMD_HEAL        = 7,    /* repair/heal target               */
     HUD_CMD_CLEAR       = 8,    /* clear/reclaim feature            */
-    HUD_CMD_W_SPECIAL   = 9,    /* fire Special-slot weapon at point */
     /* Immediate (non-targeting) commands — fire on click, no cursor swap. */
     HUD_CMD_STOP        = 100,
     HUD_CMD_AGGRO_OFF   = 101,  /* set selection to UNIT_AGGRO_OFFENSIVE */
@@ -53,7 +52,7 @@ typedef enum {
     HUD_CMD_AGGRO_PAS   = 103,
     HUD_CMD_W_PRIMARY   = 110,  /* set weapon slot 0                */
     HUD_CMD_W_SECONDARY = 111,  /* set weapon slot 1                */
-    HUD_CMD_W_SET_SPEC  = 112,  /* set weapon slot 2 (no cursor swap) */
+    HUD_CMD_W_SET_SPEC  = 112,  /* set weapon slot 2                */
     HUD_CMD_CLOAK_ON    = 120,
     HUD_CMD_CLOAK_OFF   = 121,
     HUD_CMD_ACTIVATE    = 122,  /* Active button: open the gate  (legacy:151449) */
@@ -176,6 +175,10 @@ void HUD_GetGaugeFractions(float *out_health, float *out_mana, float *out_pool);
  * command mode, as laid out by the last HUD_Draw. 0 when the current
  * selection shows no such button. */
 int  HUD_GetActionButtonRect(int mode, SDL_Rect *out);
+/* One magic button as the original draws it: -1 not shown, 0 disabled
+ * because the unit cannot pay for that weapon, 1 down because that slot
+ * is the current weapon, 2 up (legacy:151820-151900). */
+int  HUD_WeaponButtonState(int slot);
 /* Build buttons as laid out by the last HUD_Draw, in dialog space. */
 int  HUD_BuildSlotCount(void);
 /* 1 when the in-game dialog has a widget of that name and it shows. */

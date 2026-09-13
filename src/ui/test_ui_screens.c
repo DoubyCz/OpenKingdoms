@@ -15116,6 +15116,151 @@ TEST(hud_static_art_fits_its_cell) {
     VFS_Shutdown();
 }
 
+/* Issue #112. The three magic buttons are radio buttons, one per
+ * weapon slot, and a click anywhere on one makes that slot the current
+ * weapon at once (legacy:151481-151530, legacy:153147-153180). The
+ * third was bound to a targeting cursor instead, so a click on it
+ * armed a world click and never selected the weapon. */
+TEST(hud_magic_buttons_select_their_weapon_anywhere_on_the_art) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
+    GameWorld *world = NULL;
+    ASSERT_EQ_INT(0, end_load_skirmish(&platform, &cfg, &world));
+    int hero = end_find_monarch(1);
+    ASSERT(hero >= 0);
+    int n = 0;
+    const Unit *u = Units_GetActive(&n);
+    const UnitDef *hd = Units_GetDef(u[hero].def_idx);
+    ASSERT_NOT_NULL(hd);
+    ASSERT_EQ_INT(3, hd->num_weapons);
+    ASSERT(hd->cap_flags & UNIT_CAP_W_SWITCH);
+    /* A caster's reserve is set up on its first tick. */
+    Units_TickEngines();
+    float mana = 0.0f, mana_max = 0.0f;
+    ASSERT_EQ_INT(1, Units_GetMana(hero, &mana, &mana_max));
+    ASSERT(mana_max >= (float)hd->weapons[2].mana_per_shot);
+    Units_DebugSetMana(hero, mana_max);
+    ASSERT_EQ_INT(0, InGame_Init(&platform));
+    Timer timer;
+    Timer_Init(&timer);
+    Units_SelectSingle(hero);
+    timer.accumulator = 0.0;
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
+
+    GUIRuntime *rt = HUD_DebugRuntime();
+    ASSERT_NOT_NULL(rt);
+    static const char *const names[3] = {
+        "PrimaryWeapon", "SecondaryWeapon", "SpecialWeapon"
+    };
+    static const int modes[3] = {
+        HUD_CMD_W_PRIMARY, HUD_CMD_W_SECONDARY, HUD_CMD_W_SET_SPEC
+    };
+    for (int i = 2; i >= 0; i--) {
+        const GUIWidget *w = GUIRuntime_WidgetByName(rt, names[i]);
+        ASSERT_NOT_NULL(w);
+        /* The sensitive rect is the drawn art, nothing beside it. */
+        SDL_Rect art = TAK_Platform_CanvasRectToWindow(&platform, w->rect);
+        SDL_Rect btn;
+        ASSERT_EQ_INT(1, HUD_GetActionButtonRect(modes[i], &btn));
+        ASSERT_EQ_INT(art.x, btn.x);
+        ASSERT_EQ_INT(art.y, btn.y);
+        ASSERT_EQ_INT(art.w, btn.w);
+        ASSERT_EQ_INT(art.h, btn.h);
+        const int px[5] = { art.x + 1, art.x + art.w - 2, art.x + 1,
+                            art.x + art.w - 2, art.x + art.w / 2 };
+        const int py[5] = { art.y + 1, art.y + 1, art.y + art.h - 2,
+                            art.y + art.h - 2, art.y + art.h / 2 };
+        for (int k = 0; k < 5; k++) {
+            /* Start on another slot so every click proves itself. */
+            ASSERT_EQ_INT(1, Units_OrderSetWeaponSlot(hero, (i + 1) % 3));
+            ASSERT_EQ_INT(1, HUD_HandleSidebarClick(px[k], py[k], &platform));
+            TAK_CmdQueue_Run();
+            ASSERT_EQ_INT(i, Units_GetSelectedWeaponSlot());
+            /* No cursor is armed: the button is the whole order. */
+            ASSERT_EQ_INT(HUD_CMD_NONE, HUD_GetCommandMode());
+        }
+        timer.accumulator = 0.0;
+        ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
+        for (int j = 0; j < 3; j++)
+            ASSERT_EQ_INT(j == i ? 1 : 2, HUD_WeaponButtonState(j));
+    }
+
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* A magic the unit cannot pay for is drawn disabled and its button
+ * takes no click (legacy:151820-151900, legacy:329637-329640). */
+TEST(hud_magic_button_the_unit_cannot_pay_for_is_greyed_and_dead) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
+    GameWorld *world = NULL;
+    ASSERT_EQ_INT(0, end_load_skirmish(&platform, &cfg, &world));
+    int hero = end_find_monarch(1);
+    ASSERT(hero >= 0);
+    int n = 0;
+    const Unit *u = Units_GetActive(&n);
+    const UnitDef *hd = Units_GetDef(u[hero].def_idx);
+    ASSERT_NOT_NULL(hd);
+    ASSERT_EQ_INT(3, hd->num_weapons);
+    /* The first magic is free and the third is not. */
+    ASSERT_EQ_INT(0, (int)hd->weapons[0].mana_per_shot);
+    ASSERT(hd->weapons[2].mana_per_shot > 0);
+    /* A caster's reserve is set up on its first tick. */
+    Units_TickEngines();
+    float mana = 0.0f, mana_max = 0.0f;
+    ASSERT_EQ_INT(1, Units_GetMana(hero, &mana, &mana_max));
+    ASSERT(mana_max >= (float)hd->weapons[2].mana_per_shot);
+    Units_DebugSetMana(hero, 0.0f);
+    ASSERT_EQ_INT(0, InGame_Init(&platform));
+    Timer timer;
+    Timer_Init(&timer);
+    Units_SelectSingle(hero);
+    timer.accumulator = 0.0;
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
+
+    ASSERT_EQ_INT(1, HUD_WeaponButtonState(0));
+    ASSERT_EQ_INT(0, HUD_WeaponButtonState(2));
+    SDL_Rect btn;
+    ASSERT_EQ_INT(1, HUD_GetActionButtonRect(HUD_CMD_W_SET_SPEC, &btn));
+    int cx = btn.x + btn.w / 2, cy = btn.y + btn.h / 2;
+    /* The click lands on the sidebar and does nothing. */
+    ASSERT_EQ_INT(1, HUD_HandleSidebarClick(cx, cy, &platform));
+    TAK_CmdQueue_Run();
+    ASSERT_EQ_INT(0, Units_GetSelectedWeaponSlot());
+    ASSERT_EQ_INT(HUD_CMD_NONE, HUD_GetCommandMode());
+
+    /* With the mana there it wakes. */
+    Units_DebugSetMana(hero, mana_max);
+    timer.accumulator = 0.0;
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
+    ASSERT_EQ_INT(2, HUD_WeaponButtonState(2));
+    ASSERT_EQ_INT(1, HUD_HandleSidebarClick(cx, cy, &platform));
+    TAK_CmdQueue_Run();
+    ASSERT_EQ_INT(2, Units_GetSelectedWeaponSlot());
+
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 TEST(hud_kill_count_follows_the_selected_units_kills) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -18849,6 +18994,8 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_B, mp_room_offers_no_creon_in_the_base_game);
     RUN_UI_TEST(UI_GROUP_A, battle_screens_column_headers_keep_a_gap);
     RUN_UI_TEST(UI_GROUP_A, hud_static_art_fits_its_cell);
+    RUN_UI_TEST(UI_GROUP_B, hud_magic_buttons_select_their_weapon_anywhere_on_the_art);
+    RUN_UI_TEST(UI_GROUP_C, hud_magic_button_the_unit_cannot_pay_for_is_greyed_and_dead);
     RUN_UI_TEST(UI_GROUP_A, battle_room_button_art_keeps_its_authored_size);
     RUN_UI_TEST(UI_GROUP_B, battle_room_units_bar_does_not_cover_its_value);
     RUN_UI_TEST(UI_GROUP_A, battle_screens_help_strip_starts_empty);
