@@ -760,12 +760,6 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
                 TAK_Cmd_EmitSelection(TAK_CMD_UNLOAD, world_x, world_y,
                                       -1, 0, 0);
                 break;
-            case HUD_CMD_W_SPECIAL:
-                /* Special-weapon shot: slot 2, then an attack at
-                 * the click target or a walk to the spot. */
-                TAK_Cmd_EmitSelection(TAK_CMD_SPECIAL_WEAPON,
-                                      world_x, world_y, hit, 0, 0);
-                break;
             case HUD_CMD_PLACE_BUILD: {
                 /* Building placement: spawn the building at
                  * 1 HP and issue the selected builder a BUILD

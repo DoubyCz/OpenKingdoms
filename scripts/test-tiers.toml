@@ -153,7 +153,7 @@ name = "hud"
 paths = ["src/ui/hud.c", "src/ui/hud_text.c", "src/render/minimap.c"]
 ctest = "^(test_command_pipeline|test_movement|test_render_cache|test_savestate|test_unit_stall)$"
 ui = [
-  ["hud_", 4],
+  ["hud_", 6],
   ["render_probe_lodestone_covers_pad", 1],
   ["patrol_from_the_sidebar_loops_until_a_new_order", 1],
   ["caster_reserve_recharges_and_gates_shots", 1],
@@ -216,6 +216,7 @@ ui = [
   ["mp_room", 20],
   ["select_game", 8],
   ["hud_static_art_fits_its_cell", 1],
+  ["hud_magic_buttons_select_their_weapon_anywhere_on_the_art", 1],
   ["loading_backdrop_is_the_arch_and_its_glass", 1],
   ["a_skirmish_still_starts_the_moment_its_world_is_built", 1],
   ["end_screen_shows_defeat_dialog_and_proceeds_to_the_lobby", 1],
