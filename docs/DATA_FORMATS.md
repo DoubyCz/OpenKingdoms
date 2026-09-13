@@ -494,7 +494,7 @@ meteor, and earthen wave spells, plus mana costs, nimbus effects, etc.)
 | buildcost | int | Mogrium cost to build |
 | buildtime | int | Time in game ticks to build |
 | experiencepoints | int | XP value when killed |
-| healtime | float | Seconds per HP of natural healing (lower = faster) |
+| healtime | float | Build work per second of free self repair. Health restored each second is healtime/buildtime of the maximum, so a unit mends fully in buildtime/healtime seconds |
 | maxmana | int | Maximum mana pool |
 | manarechargerate | int | Mana regeneration per tick |
 | damagecategory | string | Damage type (Human, Monarch, factory, etc.) |

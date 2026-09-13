@@ -111,6 +111,7 @@ paths = ["src/game/pathing.c", "src/game/occupancy.c", "src/game/moveinfo.c"]
 ctest = "^(test_command_pipeline|test_moveinfo|test_movement|test_pathing|test_render_cache|test_savegame|test_savegame_no_data|test_savestate|test_unit_stall)$"
 ui = [
   ["live_skirmish_units_actually_move", 1],
+  ["a_priest_repairs_a_swordsman_in_its_build_time", 1],
   ["units_navigate_to_distant_goals", 1],
   ["a_refused_step_banks_no_distance", 1],
   ["a_column_gets_past_a_stuck_unit_in_its_way", 1],

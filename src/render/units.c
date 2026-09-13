@@ -1104,6 +1104,12 @@ static void play_projectile_hit_sound(const Projectile *p, const Unit *victim) {
     }
 }
 
+/* The simulation's own frame count, shared so the free self repair
+ * lands on the same frame for every unit the way the original's does.
+ * Not a wall clock and not local view state: it advances once per
+ * simulation tick and identically on every client. */
+static uint32_t g_sim_tick;
+
 /* Alarm cues for the local player (legacy:15218-15235). A unit of the
  * viewer hit by another player raises the kingdom's underattack_sound
  * from sidedata, held off for underattack_delay seconds after each
@@ -2981,6 +2987,7 @@ int Units_BeginBuilding(int building_def_idx,
     bu->health = (bd->max_health > 0) ? 1 : 1;
     bu->under_construction = 1;
     bu->build_hp_accum = 0.0f;
+    bu->heal_frac_256 = 0;
     /* Buildings start passive — they shouldn't auto-target their way
      * out of construction. */
     bu->aggro_mode = UNIT_AGGRO_PASSIVE;
@@ -3063,6 +3070,7 @@ int Units_BeginBuildingForUnit(int builder_handle,
     bu->health = (bd->max_health > 0) ? 1 : 1;
     bu->under_construction = 1;
     bu->build_hp_accum = 0.0f;
+    bu->heal_frac_256 = 0;
     bu->aggro_mode = UNIT_AGGRO_PASSIVE;
 
     u->cmd_kind = UNIT_CMD_BUILD;
@@ -4919,6 +4927,7 @@ void Units_ClearInstances(void) {
     g_proj_effect_count = 0;
     g_next_stable_unit_id = 1;
     g_transport_sounds[0] = g_transport_sounds[1] = 0;
+    g_sim_tick = 0;
     g_sound_tick = 0;
     g_alarm_next_tick = 0;
     g_alarm_mon_next_tick = 0;
@@ -5227,6 +5236,7 @@ int Units_Spawn(int def_idx, int player_id, int team_color_idx,
     u->carry_next = 0;
     u->under_construction = 0;
     u->build_hp_accum = 0.0f;
+    u->heal_frac_256 = 0;
     u->cob_yard_open = 0;
     u->cob_bugger_off = 0;
     u->occ_on = 0;
@@ -7852,6 +7862,41 @@ static void caster_mana_tick(Unit *u, const UnitDef *def) {
     if (u->mana > u->mana_max) u->mana = u->mana_max;
 }
 
+/* Free self repair (legacy:236281-236286). Every unit and building with
+ * a non-zero healtime mends itself, charged nothing, with no combat or
+ * recency gate, on every eighth frame of the original's 30 Hz clock and
+ * so every sixteenth of our 60 Hz one.
+ *
+ * healtime is build work per second, not hit points per second. The
+ * applicator divides it by the target's buildtime and multiplies by the
+ * target's maximum health, so what comes back each second is
+ * healtime/buildtime of the whole and a unit left alone mends fully in
+ * buildtime/healtime seconds. Every shipped monarch is tuned to 240
+ * seconds, and so is an ordinary swordsman.
+ *
+ * The rule is not monarch specific. The commander flag is parsed
+ * (legacy:163074) and no health code reads it.
+ *
+ * The original runs this inside a gate on the owner's kind
+ * (legacy:236270-236272) and broadcasts for remote owners. That gate is
+ * deliberately not ported: under lockstep every client simulates every
+ * unit. */
+static void self_heal_tick(Unit *u, const UnitDef *def) {
+    if (def->heal_time <= 0.0f || def->buildtime <= 0.0f) return;
+    if (u->health >= u->max_health) return;
+    if ((g_sim_tick & 15u) != 0u) return;
+    float frac = (def->heal_time * 8.0f / 30.0f) / def->buildtime;
+    float hp = frac * (float)u->max_health;
+    /* The original sums in 16.16, keeps the remainder in one byte of
+     * 1/256 hit points and drops the low eight bits each call
+     * (legacy:39571-39574). Worth a byte to reproduce, far too small to
+     * matter to balance. */
+    int32_t acc = (int32_t)u->heal_frac_256 * 256 + (int32_t)(hp * 65536.0f);
+    u->health += acc >> 16;
+    u->heal_frac_256 = (uint8_t)((acc >> 8) & 0xff);
+    if (u->health > u->max_health) u->health = u->max_health;
+}
+
 int Units_GetMana(int handle, float *out_cur, float *out_max) {
     if (handle < 0 || handle >= g_unit_count) return 0;
     const Unit *u = &g_units[handle];
@@ -8220,6 +8265,11 @@ static void Units_TickCombat(void) {
                 u->alive = UNIT_ALIVE_ACTIVE;
                 u->carried_by = -1;
             }
+            /* A carried unit gets no free self repair here. Whether the
+             * original keeps mending a passenger is unestablished: the
+             * attach does not clear the flag the heal gate reads
+             * (legacy:234562-234566), but the update loop was not
+             * traced. */
             continue;
         }
         if (u->alive != UNIT_ALIVE_ACTIVE && u->alive != UNIT_ALIVE_DYING) continue;
@@ -8231,6 +8281,7 @@ static void Units_TickCombat(void) {
         if (u->alive == UNIT_ALIVE_ACTIVE) {
             flight_tick(u, def, flight_world);
             caster_mana_tick(u, def);
+            self_heal_tick(u, def);
         }
 
         /* Per-weapon cooldown decrements every tick regardless of state. */
@@ -8773,17 +8824,19 @@ static void Units_TickCombat(void) {
                     float worker = (def && def->worker_time > 0.0f)
                                  ? def->worker_time : 1.0f;
                     if (u->cmd_kind == UNIT_CMD_REPAIR) {
-                        float heal_time = (rtd && rtd->heal_time > 0.0f)
-                                        ? rtd->heal_time : 1.0f;
+                        float repair_time = (rtd && rtd->buildtime > 0.0f)
+                                          ? rtd->buildtime : 100.0f;
                         float hp_per_tick_f =
-                            ((float)hp_max * worker) / (heal_time * 60.0f);
-                        /* Healing is paid for. The original charges
-                         * the target's cost spread over its build
-                         * time, takes whatever the treasury holds and
-                         * heals proportionally slower when it is short
-                         * (legacy:39546-39562). The rate of repair
-                         * comes from healtime, the price from
-                         * buildtime and buildcost. */
+                            ((float)hp_max * worker) / (repair_time * 60.0f);
+                        /* A worker mends at its own workertime against
+                         * the target's buildtime, the same divisor the
+                         * build itself uses (legacy:32674). healtime is
+                         * the unit's free self repair and is hundreds
+                         * of times slower. Repair is paid for: the
+                         * original charges the target's cost spread
+                         * over its build time, takes whatever the
+                         * treasury holds and mends proportionally
+                         * slower when it is short. */
                         if (rtd && rtd->build_cost > 0 &&
                             rtd->buildtime > 0.0f) {
                             float cost_per_tick_f =
@@ -9261,6 +9314,7 @@ void Units_ToggleSelectedGate(void) {
 }
 
 void Units_TickEngines(void) {
+    g_sim_tick++;
     g_sound_tick++;
     /* Sprint 1: per-tick simulation step.
      *   1. Combat: auto-target + damage + movement.
