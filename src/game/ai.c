@@ -1040,6 +1040,8 @@ static void ai_pick_wave_target(const GameWorld *world, const Unit *units,
         if (!ai_valid_player(world, q) || !Units_PlayersAreEnemies(p, q)) continue;
         const UnitDef *td = Units_GetDef(t->def_idx);
         if (!td) continue;
+        /* A wall scores nothing (legacy:20042). */
+        if (td->is_feature) continue;
         uint32_t d1 = (uint32_t)ai_approx_dist((int64_t)t->world_x - cx,
                                                (int64_t)t->world_y - cy);
         uint32_t d2 = (uint32_t)ai_approx_dist((int64_t)t->world_x - rx,

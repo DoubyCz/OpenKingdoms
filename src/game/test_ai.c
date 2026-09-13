@@ -613,6 +613,35 @@ static int test_ai_wave_targets_follow_the_teams(void) {
     return 0;
 }
 
+/* Issue #107. A wall scores nothing in the wave pick (legacy:20042),
+ * however close it stands. */
+#define HF_WALL 4
+static int test_ai_waves_never_pick_a_wall(void) {
+    GameWorld w;
+    static const int loner[5] = { 0, 2, 0, 2, 2 };
+    setup_hostility_fixture(&w, loner);
+    g_visible = 1;
+    strcpy(g_defs[HF_WALL].unitname, "ARAWALL");
+    strcpy(g_defs[HF_WALL].category, "ARA");
+    g_defs[HF_WALL].is_feature = 1;
+    /* The human's wall stands beside AI 2's troop, nearer than anything
+     * of the human's. */
+    int troop = hf_troop(2);
+    int wall = hf_add_unit(1, HF_WALL, g_units[troop].world_x + 24,
+                           g_units[troop].world_y);
+    int picks = 0;
+    for (int k = 0; k < 60; k++) {
+        w.skirmish_elapsed_ticks = 60 * (k + 1);
+        TAK_AI_TickSkirmish(&w);
+        int target = TAK_AI_DebugWaveTarget(2);
+        if (target >= 0) picks++;
+        ASSERT_TRUE(target != wall);
+        g_units[troop].cmd_kind = UNIT_CMD_NONE;
+    }
+    ASSERT_TRUE(picks > 0);
+    return 0;
+}
+
 /* A dead target is replaced by another enemy's unit. */
 static int test_ai_wave_target_moves_on_when_it_dies(void) {
     GameWorld w;
@@ -1553,6 +1582,7 @@ int main(void) {
     if (test_ai_builds_lodestone_on_sacred_pad() != 0) return 1;
     if (test_ai_wave_targets_follow_the_teams() != 0) return 1;
     if (test_ai_wave_target_moves_on_when_it_dies() != 0) return 1;
+    if (test_ai_waves_never_pick_a_wall() != 0) return 1;
     if (test_ai_defends_its_base_when_hit() != 0) return 1;
     if (test_ai_helps_an_allied_base() != 0) return 1;
     if (test_ai_helps_a_human_ally() != 0) return 1;
