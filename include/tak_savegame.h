@@ -29,6 +29,19 @@
 #define TAK_SECT_CFGB TAK_SAVE_ID('C', 'F', 'G', 'B')
 #define TAK_SECT_WRLD TAK_SAVE_ID('W', 'R', 'L', 'D')
 #define TAK_SECT_CAMR TAK_SAVE_ID('C', 'A', 'M', 'R')
+
+/* The battle as a picture, for the load dialog's RadarView panel. The
+ * original keeps a radar image in the save's Summary and paints it
+ * there (legacy:164966-164975). It is local view state like the
+ * camera, so it is optional: a reader that does not know it steps over
+ * it, and a save written before this existed simply has none. */
+#define TAK_SECT_THMB TAK_SAVE_ID('T', 'H', 'M', 'B')
+/* The panel loadgame.gui authors is 127 by 127. */
+#define TAK_THMB_W 128u
+#define TAK_THMB_H 128u
+/* u16 width, u16 height, u8 bytes per pixel, u8 pad. The size travels
+ * in the payload so changing it later needs no version bump. */
+#define TAK_THMB_HEADER_BYTES 6u
 /* The battle itself. Every one of these is required: each carries
  * simulation state the hash covers, so a reader that skipped one
  * would bring a battle up that is not the one that was saved. */
@@ -102,6 +115,20 @@ typedef struct TAK_SaveGame TAK_SaveGame;
  * since it was written, is refused by the map's name. Returns NULL
  * with a reason in `err` on any refusal. */
 TAK_SaveGame *Save_Read(const char *path, char *err, size_t err_cap);
+
+/* The picture of the battle this save carries, three bytes per pixel,
+ * row major, with its own size through `w` and `h`. NULL when the save
+ * has none, which every save written before the section existed does.
+ * The bytes belong to the save and die with Save_ReadClose. */
+const uint8_t *Save_Thumbnail(TAK_SaveGame *sg, int *w, int *h);
+
+/* The picture to put in the next save, three bytes per pixel, or NULL
+ * for none. The container knows about bytes and nothing about maps,
+ * and the thing that can draw one lives in the UI lane, so whoever
+ * presses Save hands it over rather than the writer reaching for it.
+ * Copied here, and cleared by the next Save_Write whether or not that
+ * save used it. */
+void Save_SetThumbnail(const uint8_t *rgb, int w, int h);
 
 const TAK_SaveInfo *Save_Info(const TAK_SaveGame *sg);
 

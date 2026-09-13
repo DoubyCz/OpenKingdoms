@@ -24,6 +24,17 @@ int  Minimap_Init(TAK_Platform *plat);
  * TAK_Platform_Present on the same frame. */
 void Minimap_Draw(TAK_Platform *plat);
 
+/* The same picture, drawn on the CPU into `out_rgb` at `tw` by `th`,
+ * three bytes per pixel. No window and no renderer, because a save is
+ * written from wherever the player pressed the button and the GPU
+ * surface behind the dialog is not it.
+ *
+ * Terrain, then fog as the viewer has it, then one dot per unit the
+ * viewer can see: the three the sidebar radar composites. Returns 0,
+ * or -1 when there is no world or no overview image to draw from, in
+ * which case `out_rgb` is untouched. */
+int Minimap_RenderThumbnail(uint8_t *out_rgb, int tw, int th);
+
 /* Click-and-drag camera jump. ingame.c calls this every tick with
  * the current window-space mouse state. If the left mouse button is
  * held AND the cursor is over the minimap, out_cam_x/out_cam_y are

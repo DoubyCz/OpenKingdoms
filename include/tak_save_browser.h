@@ -66,6 +66,14 @@ const char *SaveBrowser_RowName(int row);
 int         SaveBrowser_SelectedRow(void);
 void        SaveBrowser_SelectRow(int row);
 
+/* Where the load dialog paints the saved battle. 0 when the dialog
+ * does not author the panel, which the save dialog does not. */
+int         SaveBrowser_RadarViewRect(SDL_Rect *out);
+
+/* Where the load dialog paints the saved battle. 0 when the dialog
+ * does not author the panel, which the save dialog does not. */
+int         SaveBrowser_RadarViewRect(SDL_Rect *out);
+
 const char *SaveBrowser_DetailSide(void);
 const char *SaveBrowser_DetailMap(void);
 const char *SaveBrowser_DetailTime(void);
