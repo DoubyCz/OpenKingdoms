@@ -37,4 +37,24 @@ int  Multiplayer_HostSide(void);
  * mouse would have to be. Returns 1 when the room consumed it. */
 int  Multiplayer_HandleClick(const char *name, int widget_index);
 
+/* The map chooser, choosemap.gui for the host and viewmap.gui for
+ * everyone else (legacy:136832-136851). It sits over the room, takes
+ * the frame while it is up, and OK on the host's tells the server the
+ * map and its fingerprint. */
+void Multiplayer_OpenMapChooser(int as_host);
+int  Multiplayer_MapChooserOpen(void);
+int  Multiplayer_MapChooserTick(TAK_Platform *platform, float dt);
+void Multiplayer_CloseMapChooser(void);
+/* The chat, for the tests: the line being typed, sending it, and the
+ * log as the room shows it. */
+const char *Multiplayer_ChatTyping(void);
+void        Multiplayer_ChatSend(void);
+int         Multiplayer_ChatLineCount(void);
+const char *Multiplayer_ChatLine(int index);
+/* For the tests: the rows and the selection, and OK by name. */
+int         Multiplayer_MapChooserRowCount(void);
+const char *Multiplayer_MapChooserRowKey(int row);
+void        Multiplayer_MapChooserSelect(int row);
+void        Multiplayer_MapChooserPress(const char *name);
+
 #endif

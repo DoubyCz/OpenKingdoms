@@ -574,9 +574,9 @@ int SelectGame_Tick(TAK_Platform *platform, float dt) {
     int enter = focus && (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER]);
     int esc   = focus && keys[SDL_SCANCODE_ESCAPE];
     int back  = focus && keys[SDL_SCANCODE_BACKSPACE];
-    int enter_edge = enter && !sg.prev_enter;
-    int esc_edge   = esc && !sg.prev_esc;
-    int back_edge  = back && !sg.prev_back;
+    int enter_edge = (enter && !sg.prev_enter) || (focus && platform->pressed_enter);
+    int esc_edge   = (esc && !sg.prev_esc)     || (focus && platform->pressed_escape);
+    int back_edge  = (back && !sg.prev_back)   || (focus && platform->pressed_backspace);
     sg.prev_enter = enter;
     sg.prev_esc = esc;
     sg.prev_back = back;

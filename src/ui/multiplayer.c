@@ -23,6 +23,13 @@
 #include "tak_map_fingerprint.h"
 #include "tak_net_session.h"
 #include "tak_net_room.h"
+#include "tak_blit.h"
+#include "tak_gaf.h"
+#include "tak_hpi.h"
+#include "tak_palette.h"
+#include "tak_tdf.h"
+#include "tak_tnt.h"
+#include "tak_settings.h"
 #include "tak_tdf.h"
 #include "tak_unit.h"
 #include "tak_world.h"
@@ -39,6 +46,7 @@
 #define MP_TABLE_X   400
 
 static SimpleScreen   mp;
+static TAK_Platform  *mp_platform;
 static TranslateTable mp_tt;
 static Font          *mp_font;
 /* The host's side and its Allow Creon choice. Creon needs both that
@@ -49,6 +57,192 @@ static int            mp_allow_creon = 0;
 static const SimpleScreenClick mp_routes[] = {
     { NULL, 0 }
 };
+
+/* The room's chat, as the original keeps it: the last lines, newest at
+ * the bottom, and one line being typed under them (legacy:136856). */
+#define MP_CHAT_LINES 32
+static struct {
+    char lines[MP_CHAT_LINES][TAK_NET_NAME_MAX + TAK_NET_CHAT_MAX + 4];
+    int  count, head;
+    char typing[TAK_NET_CHAT_MAX];
+} mp_chat;
+
+/* The rule checkboxes, each to the bit it carries on the wire. The
+ * names are the widget names battlemenumulti.gui authors. */
+static const struct { const char *widget; uint32_t bit; } mp_rules[] = {
+    { "LineOfSight",    TAK_ROOMOPT_LINE_OF_SIGHT },
+    { "Mapping",        TAK_ROOMOPT_MAP_REVEALED },
+    { "MonarchDeath",   TAK_ROOMOPT_MONARCH_EXPEND },
+    { "StartLocations", TAK_ROOMOPT_RANDOM_STARTS },
+    { "CheatCodes",     TAK_ROOMOPT_POWER_CODES },
+    { "SlowGame",       TAK_ROOMOPT_SLOW_GAME },
+    { "Crusades",       TAK_ROOMOPT_CRUSADES_BALANCE },
+};
+#define MP_RULES ((int)(sizeof mp_rules / sizeof mp_rules[0]))
+
+static const TAK_MsgRoomState *mp_room_state(void);
+static int mp_row_of(const GUIWidget *w);
+
+/* The side's team logo sheet, one frame per colour, decoded once.
+ * Loaded the way the skirmish screen loads it. */
+static struct {
+    GAFFile  *gaf;
+    uint32_t  rgba[256];
+    uint32_t *frame[TAK_SIDES_MAX][TAK_PLAYER_COLOR_COUNT];
+    int       w[TAK_SIDES_MAX][TAK_PLAYER_COLOR_COUNT];
+    int       h[TAK_SIDES_MAX][TAK_PLAYER_COLOR_COUNT];
+    int       loaded;
+} mp_logo;
+
+static void mp_art_path(const char *stem, const char *ext, char *out, size_t cap) {
+    snprintf(out, cap, "anims/%s.%s", stem, ext);
+    if (VFS_FileExists(out) != 0) snprintf(out, cap, "data/anims/%s.%s", stem, ext);
+}
+
+static void mp_load_logos(void) {
+    if (mp_logo.loaded) return;
+    mp_logo.loaded = 1;
+    int count = Sides_Count();
+    if (count > TAK_SIDES_MAX) count = TAK_SIDES_MAX;
+    char stem[64] = "colorlogos2";
+    for (int s = 0; s < count; s++) {
+        const TakSideInfo *si = Sides_Get(s);
+        if (si && si->logogaf[0]) snprintf(stem, sizeof stem, "%s", si->logogaf);
+    }
+    char gaf_path[128], pcx_path[128];
+    mp_art_path(stem, "gaf", gaf_path, sizeof gaf_path);
+    mp_art_path(stem, "pcx", pcx_path, sizeof pcx_path);
+    if (UI_LoadGAFWithPalette(gaf_path, pcx_path, &mp_logo.gaf, mp_logo.rgba) != 0) {
+        mp_logo.gaf = NULL;
+        return;
+    }
+    for (int s = 0; s < count; s++) {
+        const TakSideInfo *si = Sides_Get(s);
+        if (!si || !si->commander[0]) continue;
+        int off = si->logoart[0] ? GAF_FindSequence(mp_logo.gaf, si->logoart) : -1;
+        if (off < 0 && s < (int)mp_logo.gaf->num_entries &&
+            12u + (uint32_t)(s + 1) * 4u <= mp_logo.gaf->data_size) {
+            off = (int)*(uint32_t *)(mp_logo.gaf->data + 12 + s * 4);
+        }
+        if (off < 0 || (uint32_t)off + sizeof(EntryHeader) > mp_logo.gaf->data_size) continue;
+        EntryHeader *eh = (EntryHeader *)(mp_logo.gaf->data + off);
+        int nframes = (int)eh->num_frames;
+        /* The twelve frame sheets lead with two greyed states, so the
+         * colour index starts at frame 2 there (legacy:136390). */
+        int base = (nframes >= TAK_PLAYER_COLOR_COUNT + 2) ? 2 : 0;
+        for (int c = 0; c < TAK_PLAYER_COLOR_COUNT; c++) {
+            if (base + c >= nframes) break;
+            mp_logo.frame[s][c] = UI_DecodeFrame(mp_logo.gaf, off, base + c, mp_logo.rgba,
+                                                 &mp_logo.w[s][c], &mp_logo.h[s][c]);
+        }
+    }
+}
+
+static void mp_free_logos(void) {
+    for (int s = 0; s < TAK_SIDES_MAX; s++)
+        for (int c = 0; c < TAK_PLAYER_COLOR_COUNT; c++) {
+            tak_free(mp_logo.frame[s][c]);
+            mp_logo.frame[s][c] = NULL;
+        }
+    if (mp_logo.gaf) GAF_Close(mp_logo.gaf);
+    memset(&mp_logo, 0, sizeof mp_logo);
+}
+
+static void mp_draw_badge(SDL_Surface *off, int cx, int cy, int colour, int side) {
+    if (colour < 0) colour = 0;
+    colour %= TAK_PLAYER_COLOR_COUNT;
+    if (side < 0 || side >= TAK_SIDES_MAX) side = 0;
+    uint32_t *px = mp_logo.frame[side][colour];
+    int w = mp_logo.w[side][colour], h = mp_logo.h[side][colour];
+    if (!px || w <= 0 || h <= 0) {
+        const TakPlayerColor *pc = BattleConfig_PlayerColor(colour);
+        SDL_Rect r = { cx - 6, cy - 6, 12, 12 };
+        SDL_FillRect(off, &r, SDL_MapRGBA(off->format, pc->r, pc->g, pc->b, 255));
+        return;
+    }
+    Blit_RGBA(off, cx - w / 2, cy - h / 2, px, w, h);
+}
+
+/* Over every taken row: the badge in the colour cell and the team in
+ * the team cell, both from the server's snapshot. */
+static void mp_draw_cells(void) {
+    SDL_Surface *off = UI_Offscreen();
+    const TAK_MsgRoomState *rs = mp_room_state();
+    if (!off || !rs) return;
+    mp_load_logos();
+    for (int i = 0; i < mp.dialog.num_children; i++) {
+        const GUIWidget *w = &mp.dialog.children[i];
+        int row = mp_row_of(w);
+        if (row < 0) continue;
+        const TAK_NetSlot *slot = &rs->slot[row];
+        if (slot->kind == 0) continue;
+        if (tak_stricmp(w->name, "PlayerColor") == 0) {
+            mp_draw_badge(off, w->rect.x + w->rect.w / 2, w->rect.y + w->rect.h / 2,
+                          slot->colour, slot->side);
+        } else if (tak_stricmp(w->name, "PlayerTeam") == 0 && slot->team && mp_font) {
+            char team[8];
+            snprintf(team, sizeof team, "%u", (unsigned)slot->team);
+            Font_DrawString(mp_font, off, w->rect.x + 4, w->rect.y + 2, team);
+        }
+    }
+}
+
+static int mp_is_host(void) {
+    TAK_NetClient *c = NetSession_Client();
+    return c && c->room.room_id != 0 && c->room.host_client_id == c->session_id;
+}
+
+/* One line on the help strip, which is where the original puts what a
+ * player needs to read. A refusal from the server lands here too, so a
+ * Play that the server would not allow says why rather than nothing. */
+static void mp_say(const char *text) {
+    if (mp.rt) GUIRuntime_SetWidgetText(mp.rt, "HelpText", text ? text : "");
+}
+
+/* An edit the host makes to the room's own fields. Anyone else's press
+ * on them is ignored, which is the original's rule (legacy:136832). */
+static void mp_edit_room(uint8_t field, uint32_t value) {
+    TAK_NetClient *c = NetSession_Client();
+    if (!c || !mp_is_host()) return;
+    TAK_MsgRoomEdit e;
+    memset(&e, 0, sizeof e);
+    e.field = field;
+    e.seat = TAK_NET_SEAT_NONE;
+    e.value = value;
+    (void)TAK_NetClient_EditRoom(c, &e);
+}
+
+static void mp_chat_push(const char *who, const char *text) {
+    char *slot = mp_chat.lines[(mp_chat.head + mp_chat.count) % MP_CHAT_LINES];
+    if (who && who[0]) snprintf(slot, sizeof mp_chat.lines[0], "%s: %s", who, text);
+    else               snprintf(slot, sizeof mp_chat.lines[0], "%s", text);
+    if (mp_chat.count < MP_CHAT_LINES) mp_chat.count++;
+    else mp_chat.head = (mp_chat.head + 1) % MP_CHAT_LINES;
+}
+
+const char *Multiplayer_ChatTyping(void)  { return mp_chat.typing; }
+int         Multiplayer_ChatLineCount(void) { return mp_chat.count; }
+const char *Multiplayer_ChatLine(int index) {
+    if (index < 0 || index >= mp_chat.count) return "";
+    return mp_chat.lines[(mp_chat.head + index) % MP_CHAT_LINES];
+}
+static void mp_chat_send(void);
+void Multiplayer_ChatSend(void) { mp_chat_send(); }
+
+static void mp_chat_send(void) {
+    TAK_NetClient *c = NetSession_Client();
+    if (!mp_chat.typing[0]) return;
+    if (c && c->room.room_id != 0) {
+        TAK_MsgChat m;
+        memset(&m, 0, sizeof m);
+        m.scope = TAK_CHAT_ROOM;
+        m.from_seat = c->seat;
+        m.to_seat = TAK_NET_SEAT_NONE;
+        snprintf(m.text, sizeof m.text, "%s", mp_chat.typing);
+        (void)TAK_NetClient_Chat(c, &m);
+    }
+    mp_chat.typing[0] = '\0';
+}
 
 static int mp_row_of(const GUIWidget *w);
 
@@ -110,6 +304,58 @@ static int mp_on_click(SimpleScreen *s, const char *name, int widget_index) {
         }
         if (tak_stricmp(name, "Previous") == 0) {
             (void)TAK_NetClient_LeaveRoom(c);
+            return 1;
+        }
+        /* The room's own fields. The host changes them and everyone
+         * else sees the result arrive in the next snapshot. */
+        for (int i = 0; i < MP_RULES; i++) {
+            if (tak_stricmp(name, mp_rules[i].widget) != 0) continue;
+            if (!mp_is_host()) { mp_say("Only the host changes the rules."); return 1; }
+            mp_edit_room(TAK_EDIT_OPTIONS, c->room.options ^ mp_rules[i].bit);
+            return 1;
+        }
+        if (tak_stricmp(name, "MaxUnits") == 0 ||
+            tak_stricmp(name, "incbutton") == 0 ||
+            tak_stricmp(name, "decbutton") == 0) {
+            const GUIWidget *uw = GUIRuntime_WidgetAt(mp.rt, widget_index);
+            /* The chat list has nubs of the same name lower down. */
+            if (!uw || uw->rect.y > 240) return 0;
+            if (!mp_is_host()) { mp_say("Only the host sets the unit limit."); return 1; }
+            int cap = (int)c->room.unit_cap;
+            int wx = 0, wy = 0, mx = -1, my = -1;
+            SDL_GetMouseState(&wx, &wy);
+            (void)TAK_Platform_MapMouseToCanvas(mp_platform, wx, wy, &mx, &my);
+            /* The nubs sit on the bar and the bar is what the runtime
+             * reports, so a press is checked against the nubs first. */
+            int on_inc = 0, on_dec = 0;
+            for (int i = 0; i < mp.dialog.num_children; i++) {
+                const GUIWidget *nw = &mp.dialog.children[i];
+                if (nw->rect.y > 240) continue;
+                SDL_Point pt = { mx, my };
+                if (!SDL_PointInRect(&pt, &nw->rect)) continue;
+                if (tak_stricmp(nw->name, "incbutton") == 0) on_inc = 1;
+                if (tak_stricmp(nw->name, "decbutton") == 0) on_dec = 1;
+            }
+            if (on_inc || tak_stricmp(name, "incbutton") == 0) cap += TAK_UNITS_PER_SIDE_STEP;
+            else if (on_dec || tak_stricmp(name, "decbutton") == 0) cap -= TAK_UNITS_PER_SIDE_STEP;
+            else {
+                /* A press on the bar sets the value where it landed. */
+                if (mx >= 0 && uw->rect.w > 0) {
+                    int rel = mx - uw->rect.x;
+                    if (rel < 0) rel = 0;
+                    if (rel > uw->rect.w) rel = uw->rect.w;
+                    cap = TAK_UNITS_PER_SIDE_MIN +
+                          (int)((int64_t)rel * (TAK_UNITS_PER_SIDE_MAX - TAK_UNITS_PER_SIDE_MIN) / uw->rect.w);
+                    cap = (cap / TAK_UNITS_PER_SIDE_STEP) * TAK_UNITS_PER_SIDE_STEP;
+                }
+            }
+            if (cap < TAK_UNITS_PER_SIDE_MIN) cap = TAK_UNITS_PER_SIDE_MIN;
+            if (cap > TAK_UNITS_PER_SIDE_MAX) cap = TAK_UNITS_PER_SIDE_MAX;
+            mp_edit_room(TAK_EDIT_UNIT_CAP, (uint32_t)cap);
+            return 1;
+        }
+        if (tak_stricmp(name, "Map") == 0 || tak_stricmp(name, "ViewMap") == 0) {
+            Multiplayer_OpenMapChooser(mp_is_host());
             return 1;
         }
         const GUIWidget *w = GUIRuntime_WidgetAt(mp.rt, widget_index);
@@ -199,14 +445,49 @@ static void mp_fill_row_from_slot(int widget, const GUIWidget *w,
          * ping, which is how the original showed one waiting. */
         GUIRuntime_SetWidgetVisibleAt(mp.rt, widget,
                                       taken && slot->connected);
-    } else if (tak_stricmp(w->name, "PlayerReady") == 0 ||
-               tak_stricmp(w->name, "PlayerColor") == 0 ||
-               tak_stricmp(w->name, "PlayerTeam") == 0) {
+    } else if (tak_stricmp(w->name, "PlayerReady") == 0) {
+        /* 3 is the empty box and 4 the ticked one on the five frame
+         * sheet (legacy:139330). */
+        GUIRuntime_SetWidgetVisibleAt(mp.rt, widget, taken);
+        GUIRuntime_SetFrameOverrideAt(mp.rt, widget, slot->ready ? 4 : 3);
+    } else if (tak_stricmp(w->name, "PlayerColor") == 0) {
+        /* The twelve frame sheet leads with two greyed states, so the
+         * colour index starts at frame 2 (legacy:136390). */
+        GUIRuntime_SetWidgetVisibleAt(mp.rt, widget, taken);
+    } else if (tak_stricmp(w->name, "PlayerTeam") == 0) {
+        char team[8] = "";
+        if (taken && slot->team) snprintf(team, sizeof team, "%u", (unsigned)slot->team);
+        GUIRuntime_SetWidgetTextAt(mp.rt, widget, team);
         GUIRuntime_SetWidgetVisibleAt(mp.rt, widget, taken);
     }
 }
 
+/* The room's own fields, from the snapshot: the rule boxes, the unit
+ * limit and the map name. Drawn for everyone, changed by the host. */
+static void mp_fill_room_fields(void) {
+    const TAK_MsgRoomState *rs = mp_room_state();
+    if (!rs || !mp.rt) return;
+    for (int i = 0; i < MP_RULES; i++) {
+        GUIRuntime_SetFrameOverride(mp.rt, mp_rules[i].widget,
+                                    (rs->options & mp_rules[i].bit) ? 4 : 3);
+    }
+    char units[16];
+    snprintf(units, sizeof units, "%u", (unsigned)rs->unit_cap);
+    GUIRuntime_SetWidgetText(mp.rt, "NumberOfUnits", units);
+    if (rs->map_name[0]) {
+        char shown[128];
+        Translate_MapName(&mp_tt, rs->map_name, shown, sizeof shown);
+        GUIRuntime_SetWidgetText(mp.rt, "MapName", shown);
+    }
+    /* The host picks the map, anyone else only views it
+     * (legacy:136832-136851). */
+    int host = mp_is_host();
+    GUIRuntime_SetWidgetVisible(mp.rt, "Map", host);
+    GUIRuntime_SetWidgetVisible(mp.rt, "ViewMap", !host);
+}
+
 static void mp_fill_rows(void) {
+    mp_fill_room_fields();
     const TAK_MsgRoomState *rs = mp_room_state();
     char side_name[32];
     Sides_DisplayName(mp_host_side, side_name, sizeof(side_name));
@@ -245,7 +526,14 @@ static void mp_fill_rows(void) {
 /* Buttons draw their state's text as well as their art
  * (legacy:329670-329705). The runtime draws label text only, so the
  * table's text buttons are drawn here, from the rect origin like a label. */
+static void mp_draw_chat(SimpleScreen *s);
+static void mp_draw_button_text_only(SimpleScreen *s);
 static void mp_draw_button_text(SimpleScreen *s) {
+    mp_draw_button_text_only(s);
+    mp_draw_cells();
+    mp_draw_chat(s);
+}
+static void mp_draw_button_text_only(SimpleScreen *s) {
     SDL_Surface *off = UI_Offscreen();
     if (!mp_font || !off) return;
     for (int i = 0; i < s->dialog.num_children; i++) {
@@ -309,6 +597,8 @@ int Multiplayer_Init(TAK_Platform *platform) {
                              Multiplayer_CreonAllowed());
     mp_fill_rows();
     mp_pick_first_map();
+    memset(&mp_chat, 0, sizeof mp_chat);
+    SDL_StartTextInput();
     return 0;
 }
 
@@ -400,6 +690,16 @@ static int mp_take_events(TAK_Platform *platform) {
             }
             mp_report_have_map();
             break;
+        case TAK_NC_EV_REFUSED:
+            /* The server said no to something this screen asked. Play
+             * with a seat not ready, a map someone lacks, everyone on
+             * one team: each has words, and the strip is where they go.
+             * Silence here is what made Go look broken. */
+            mp_say(c->reject.text[0] ? c->reject.text : "The server said no.");
+            break;
+        case TAK_NC_EV_CHAT:
+            mp_chat_push(c->chat.name, c->chat.text);
+            break;
         case TAK_NC_EV_START_GAME:
             /* Every client builds the same world from the same seed,
              * so the loading screen takes it from here. Building it is
@@ -429,14 +729,69 @@ static int mp_take_events(TAK_Platform *platform) {
     return next;
 }
 
+/* The chat line. The original has no separate box: what is typed
+ * appears under the last line and Enter sends it (legacy:136856). Text
+ * input is on for the whole of the room so a player can just type. */
+static void mp_chat_keys(TAK_Platform *platform) {
+    static int prev_enter, prev_back;
+    const Uint8 *keys = SDL_GetKeyboardState(NULL);
+    int focus = platform && platform->has_focus;
+    int enter = focus && (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER]);
+    int back  = focus && keys[SDL_SCANCODE_BACKSPACE];
+    if ((back && !prev_back) || (focus && platform->pressed_backspace)) {
+        size_t n = strlen(mp_chat.typing);
+        if (n) mp_chat.typing[n - 1] = '\0';
+    }
+    if (platform && platform->text_in_len > 0) {
+        for (int i = 0; i < platform->text_in_len; i++) {
+            size_t n = strlen(mp_chat.typing);
+            if (n + 1 >= sizeof mp_chat.typing) break;
+            mp_chat.typing[n] = platform->text_in[i];
+            mp_chat.typing[n + 1] = '\0';
+        }
+    }
+    if ((enter && !prev_enter) || (focus && platform->pressed_enter)) mp_chat_send();
+    prev_enter = enter;
+    prev_back = back;
+}
+
+static void mp_draw_chat(SimpleScreen *s) {
+    (void)s;
+    SDL_Surface *off = UI_Offscreen();
+    const GUIWidget *box = GUIDialog_FindByName(&mp.dialog, "UserChat");
+    if (!off || !box || !mp_font) return;
+    int lh = Font_LineHeight(mp_font);
+    if (lh <= 0) lh = 12;
+    SDL_Rect r = box->rect;
+    /* The line being typed sits at the bottom, the history above it. */
+    int y = r.y + r.h - lh - 2;
+    char typed[TAK_NET_CHAT_MAX + 2];
+    snprintf(typed, sizeof typed, "%s_", mp_chat.typing);
+    Font_DrawString(mp_font, off, r.x + 4, y, typed);
+    y -= lh;
+    for (int i = mp_chat.count - 1; i >= 0 && y >= r.y; i--) {
+        const char *line = mp_chat.lines[(mp_chat.head + i) % MP_CHAT_LINES];
+        Font_DrawString(mp_font, off, r.x + 4, y, line);
+        y -= lh;
+    }
+}
+
 int Multiplayer_Tick(TAK_Platform *platform, float frame_dt) {
+    mp_platform = platform;
     NetSession_Tick(SDL_GetTicks64());
     int next = mp_take_events(platform);
     if (next != GAMESTATE_MULTIPLAYER) return next;
+    if (Multiplayer_MapChooserOpen()) {
+        return Multiplayer_MapChooserTick(platform, frame_dt);
+    }
+    mp_chat_keys(platform);
     return SimpleScreen_Tick(&mp, platform, frame_dt);
 }
 
 void Multiplayer_Shutdown(void) {
+    SDL_StopTextInput();
+    Multiplayer_CloseMapChooser();
+    mp_free_logos();
     SimpleScreen_Shutdown(&mp);
     Translate_Free(&mp_tt);
     if (mp_font) Font_Free(mp_font);
@@ -488,4 +843,333 @@ int Multiplayer_SelectMap(const char *key) {
     Translate_MapName(&mp_tt, key, shown, sizeof(shown));
     GUIRuntime_SetWidgetText(mp.rt, "MapName", shown);
     return 0;
+}
+
+
+/* ── The map chooser ──────────────────────────────────────────────────
+ *
+ * The host presses Map and gets choosemap.gui: a list of every map the
+ * install offers, a preview, the map's own description, OK and Cancel.
+ * Anyone else presses View Map and gets viewmap.gui, which is the same
+ * panel with no list and no Cancel (legacy:136832-136851). OK on the
+ * host's sends the server the map's name and fingerprint in one edit,
+ * so the room's map is what this install has under that name and not
+ * a name two installs might disagree about.
+ *
+ * It owns its own dialog and runtime, the way the save browser does,
+ * and takes the whole frame while it is up. */
+
+typedef struct MpMapRow { char key[96]; char display[128]; } MpMapRow;
+
+static struct {
+    int         open, host;
+    GUIDialog   dialog;
+    int         has_dialog;
+    GUIRuntime *rt;
+    MpMapRow   *rows;
+    int         count, selected, scroll;
+    int         idx_list;
+    int         prev_mouse;
+    /* The selected map's picture and words. */
+    TNTFile     tnt;
+    int         have_tnt;
+    char        desc[512];
+} mc;
+
+static int mc_row_cmp(const void *a, const void *b) {
+    return tak_stricmp(((const MpMapRow *)a)->display, ((const MpMapRow *)b)->display);
+}
+
+static int mc_row_height(void) {
+    const GUIWidget *t = GUIDialog_FindByName(&mc.dialog, "MapNameEntryTemplate");
+    return (t && t->rect.h > 0) ? t->rect.h : 19;
+}
+
+static SDL_Rect mc_list_rect(void) {
+    SDL_Rect r = { 0, 0, 0, 0 };
+    if (mc.idx_list >= 0) r = mc.dialog.children[mc.idx_list].rect;
+    return r;
+}
+
+static int mc_rows_visible(void) {
+    SDL_Rect r = mc_list_rect();
+    int h = mc_row_height();
+    return (h > 0 && r.h > 0) ? r.h / h : 1;
+}
+
+static void mc_clamp_scroll(void) {
+    int m = mc.count - mc_rows_visible();
+    if (m < 0) m = 0;
+    if (mc.scroll > m) mc.scroll = m;
+    if (mc.scroll < 0) mc.scroll = 0;
+}
+
+/* Picture and words for the selected map. The picture is the map's
+ * own minimap through the map's own palette, cropped to its content
+ * the way the skirmish preview crops it (see battle_setup.c). */
+static void mc_load_selected(void) {
+    if (mc.have_tnt) { TNT_Close(&mc.tnt); mc.have_tnt = 0; }
+    mc.desc[0] = '\0';
+    if (mc.selected < 0 || mc.selected >= mc.count) return;
+    const char *key = mc.rows[mc.selected].key;
+
+    char kingdom[32];
+    mp_map_kingdom(key, kingdom, sizeof kingdom);
+    uint32_t rgba[256];
+    int have_pal = 0;
+    if (kingdom[0]) {
+        char pcx[128];
+        snprintf(pcx, sizeof pcx, "data/palettes/%s.pcx", kingdom);
+        Palette pal;
+        if (Palette_LoadPCX(&pal, pcx) == 0) {
+            Palette_BuildRGBATable(&pal, UI_RGBAFormat(), rgba, 0);
+            have_pal = 1;
+        }
+    }
+    char path[512];
+    if (have_pal && TAK_Maps_FindFile(key, "tnt", path, sizeof path) == 0 &&
+        TNT_Load(&mc.tnt, path, rgba) == 0) {
+        mc.have_tnt = 1;
+    }
+
+    if (TAK_Maps_FindFile(key, "ota", path, sizeof path) == 0) {
+        TDFFile *tdf = TDF_Open(path);
+        if (tdf && TDF_Load(tdf) == 0 && TDF_PushSection(tdf, "GlobalHeader") == 0) {
+            const char *raw = TDF_ReadString(tdf, "missiondescription", "");
+            snprintf(mc.desc, sizeof mc.desc, "%s", Translate_Lookup(&mp_tt, raw ? raw : ""));
+        }
+        if (tdf) TDF_Close(tdf);
+    }
+    if (mc.rt) {
+        GUIRuntime_SetWidgetText(mc.rt, "MapName", mc.rows[mc.selected].display);
+        GUIRuntime_SetWidgetText(mc.rt, "HelpText", "");
+    }
+}
+
+void Multiplayer_MapChooserSelect(int row) {
+    if (row < 0 || row >= mc.count) return;
+    mc.selected = row;
+    if (row < mc.scroll) mc.scroll = row;
+    if (row >= mc.scroll + mc_rows_visible()) mc.scroll = row - mc_rows_visible() + 1;
+    mc_clamp_scroll();
+    mc_load_selected();
+}
+
+int         Multiplayer_MapChooserOpen(void)      { return mc.open; }
+int         Multiplayer_MapChooserRowCount(void)  { return mc.count; }
+const char *Multiplayer_MapChooserRowKey(int row) {
+    return (row >= 0 && row < mc.count) ? mc.rows[row].key : NULL;
+}
+
+void Multiplayer_CloseMapChooser(void) {
+    if (mc.have_tnt) TNT_Close(&mc.tnt);
+    if (mc.rt) GUIRuntime_Destroy(mc.rt);
+    if (mc.has_dialog) GUIDialog_Free(&mc.dialog);
+    tak_free(mc.rows);
+    memset(&mc, 0, sizeof mc);
+    mc.selected = -1;
+    mc.idx_list = -1;
+}
+
+void Multiplayer_OpenMapChooser(int as_host) {
+    Multiplayer_CloseMapChooser();
+    const char *file = as_host ? "data/guis/choosemap.gui" : "data/guis/viewmap.gui";
+    if (GUIDialog_Load(&mc.dialog, file) != 0) {
+        fprintf(stderr, "Multiplayer: failed to load %s\n", file);
+        return;
+    }
+    mc.has_dialog = 1;
+    mc.rt = GUIRuntime_Create(&mc.dialog);
+    if (!mc.rt) { GUIDialog_Free(&mc.dialog); mc.has_dialog = 0; return; }
+    Translate_Dialog(&mp_tt, &mc.dialog);
+    mc.host = as_host;
+    mc.selected = -1;
+    mc.idx_list = -1;
+    for (int i = 0; i < mc.dialog.num_children; i++) {
+        if (tak_stricmp(mc.dialog.children[i].name, "MapList") == 0) mc.idx_list = i;
+    }
+    /* The row template and its label are art the list draws over. */
+    GUIRuntime_SetWidgetVisible(mc.rt, "MapNameEntryTemplate", 0);
+    GUIRuntime_SetWidgetVisible(mc.rt, "LineTemplate", 0);
+    GUIRuntime_SetWidgetVisible(mc.rt, "TextLine", 0);
+
+    TAK_MapEntry *found = NULL;
+    int n = 0;
+    if (TAK_Maps_Scan(&found, &n) == 0 && n > 0) {
+        mc.rows = (MpMapRow *)tak_malloc(sizeof(MpMapRow) * (size_t)n);
+        if (mc.rows) {
+            for (int i = 0; i < n; i++) {
+                snprintf(mc.rows[i].key, sizeof mc.rows[i].key, "%s", found[i].key);
+                Translate_MapName(&mp_tt, found[i].key, mc.rows[i].display,
+                                  sizeof mc.rows[i].display);
+            }
+            mc.count = n;
+            qsort(mc.rows, (size_t)n, sizeof(MpMapRow), mc_row_cmp);
+        }
+    }
+    TAK_Maps_Free(found);
+
+    /* Open on the room's current map, which is what a viewer came to
+     * see and what the host is most likely changing from. */
+    const TAK_MsgRoomState *rs = mp_room_state();
+    int start = 0;
+    if (rs && rs->map_name[0]) {
+        for (int i = 0; i < mc.count; i++) {
+            if (tak_stricmp(mc.rows[i].key, rs->map_name) == 0) { start = i; break; }
+        }
+    }
+    mc.open = 1;
+    if (mc.count > 0) Multiplayer_MapChooserSelect(start);
+}
+
+/* OK on the host's chooser is the whole point: the map and the
+ * fingerprint this install computed for it, in one edit. Cancel, and
+ * OK on a viewer's, only close. */
+void Multiplayer_MapChooserPress(const char *name) {
+    if (!mc.open || !name) return;
+    if (tak_stricmp(name, "OK") == 0) {
+        if (mc.host && mc.selected >= 0 && mc.selected < mc.count) {
+            TAK_NetClient *c = NetSession_Client();
+            if (c) {
+                TAK_MsgRoomEdit e;
+                memset(&e, 0, sizeof e);
+                e.field = TAK_EDIT_MAP;
+                e.seat = TAK_NET_SEAT_NONE;
+                snprintf(e.text, sizeof e.text, "%s", mc.rows[mc.selected].key);
+                (void)TAK_MapFingerprint_FromName(mc.rows[mc.selected].key, e.fingerprint);
+                (void)TAK_NetClient_EditRoom(c, &e);
+            }
+        }
+        Multiplayer_CloseMapChooser();
+    } else if (tak_stricmp(name, "Cancel") == 0) {
+        Multiplayer_CloseMapChooser();
+    }
+}
+
+static void mc_draw_rows(SDL_Surface *off) {
+    if (mc.idx_list < 0 || !mp_font) return;
+    SDL_Rect lr = mc_list_rect();
+    int h = mc_row_height();
+    int vis = mc_rows_visible();
+    for (int i = 0; i < vis; i++) {
+        int row = mc.scroll + i;
+        if (row >= mc.count) break;
+        SDL_Rect r = { lr.x, lr.y + i * h, lr.w, h };
+        if (row == mc.selected) {
+            SDL_FillRect(off, &r, SDL_MapRGBA(off->format, 90, 70, 40, 255));
+        }
+        Font_DrawString(mp_font, off, r.x + 10, r.y + 2, mc.rows[row].display);
+    }
+}
+
+static void mc_draw_preview(SDL_Surface *off) {
+    const GUIWidget *v = GUIDialog_FindByName(&mc.dialog, "MapView");
+    if (!v) return;
+    SDL_Rect p = v->rect;
+    SDL_FillRect(off, &p, SDL_MapRGBA(off->format, 0, 0, 0, 255));
+    if (!mc.have_tnt || !mc.tnt.minimap_rgba) return;
+    int mw = mc.tnt.minimap_w, mh = mc.tnt.minimap_h;
+    int map_w = mc.tnt.width_tiles  > 0 ? mc.tnt.width_tiles  : mw;
+    int map_h = mc.tnt.height_tiles > 0 ? mc.tnt.height_tiles : mh;
+    int cw, ch;
+    if (map_w >= map_h) { cw = mw; ch = (mh * map_h + map_w / 2) / map_w; }
+    else                { cw = (mw * map_w + map_h / 2) / map_h; ch = mh; }
+    if (cw < 1) cw = 1; if (ch < 1) ch = 1;
+    if (cw > mw) cw = mw; if (ch > mh) ch = mh;
+    int fw, fh;
+    if (cw * p.h >= ch * p.w) { fw = p.w; fh = (ch * p.w + cw / 2) / cw; }
+    else                      { fh = p.h; fw = (cw * p.h + ch / 2) / ch; }
+    if (fw < 1) fw = 1; if (fh < 1) fh = 1;
+    int ox = (p.w - fw) / 2, oy = (p.h - fh) / 2;
+    for (int y = 0; y < fh; y++) {
+        int sy = y * ch / fh;
+        for (int x = 0; x < fw; x++) {
+            int sx = x * cw / fw;
+            SDL_Rect px = { p.x + ox + x, p.y + oy + y, 1, 1 };
+            SDL_FillRect(off, &px, mc.tnt.minimap_rgba[sy * mw + sx]);
+        }
+    }
+}
+
+/* The description, wrapped to the panel by words. */
+static void mc_draw_desc(SDL_Surface *off) {
+    const GUIWidget *box = GUIDialog_FindByName(&mc.dialog, "MapInfo");
+    if (!box || !mp_font || !mc.desc[0]) return;
+    int lh = Font_LineHeight(mp_font);
+    if (lh <= 0) lh = 12;
+    /* About six characters per pixel column of text is a fair width
+     * for this font. Words that do not fit go to the next line. */
+    int max_chars = box->rect.w / 6;
+    if (max_chars < 16) max_chars = 16;
+    int y = box->rect.y + 2;
+    const char *p = mc.desc;
+    char line[160];
+    while (*p && y + lh <= box->rect.y + box->rect.h) {
+        int n = 0;
+        int last_space = -1;
+        while (p[n] && n < max_chars && n < (int)sizeof line - 1) {
+            if (p[n] == ' ') last_space = n;
+            n++;
+        }
+        if (p[n] && last_space > 0) n = last_space;
+        memcpy(line, p, (size_t)n);
+        line[n] = '\0';
+        Font_DrawString(mp_font, off, box->rect.x + 8, y, line);
+        y += lh;
+        p += n;
+        while (*p == ' ') p++;
+    }
+}
+
+int Multiplayer_MapChooserTick(TAK_Platform *platform, float dt) {
+    (void)dt;
+    if (!mc.open || !mc.rt) return GAMESTATE_MULTIPLAYER;
+
+    int mx = -1, my = -1, mouse_down = 0;
+    if (platform && platform->has_focus) {
+        int wx = 0, wy = 0;
+        uint32_t b = SDL_GetMouseState(&wx, &wy);
+        mouse_down = (b & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+        if (!TAK_Platform_MapMouseToCanvas(platform, wx, wy, &mx, &my)) { mx = -1; my = -1; }
+    }
+    const Uint8 *keys = SDL_GetKeyboardState(NULL);
+    if (platform && platform->has_focus &&
+        (keys[SDL_SCANCODE_ESCAPE] || platform->pressed_escape)) {
+        Multiplayer_CloseMapChooser();
+        return GAMESTATE_MULTIPLAYER;
+    }
+
+    /* A press in the list picks a row. */
+    if (mouse_down && !mc.prev_mouse && mx >= 0 && mc.idx_list >= 0) {
+        SDL_Rect lr = mc_list_rect();
+        SDL_Point pt = { mx, my };
+        if (SDL_PointInRect(&pt, &lr)) {
+            int row = mc.scroll + (my - lr.y) / mc_row_height();
+            if (row >= 0 && row < mc.count) Multiplayer_MapChooserSelect(row);
+        }
+    }
+    mc.prev_mouse = mouse_down;
+
+    char clicked[64];
+    clicked[0] = '\0';
+    (void)GUIRuntime_Update(mc.rt, mx, my, mouse_down, clicked, sizeof clicked);
+    if (clicked[0]) {
+        if (tak_stricmp(clicked, "incbutton") == 0) { mc.scroll--; mc_clamp_scroll(); }
+        else if (tak_stricmp(clicked, "decbutton") == 0) { mc.scroll++; mc_clamp_scroll(); }
+        else Multiplayer_MapChooserPress(clicked);
+        if (!mc.open) return GAMESTATE_MULTIPLAYER;
+    }
+
+    /* The room stays under it, as the original draws the chooser over
+     * the battle menu. */
+    GUIRuntime_Render(mp.rt);
+    GUIRuntime_Render(mc.rt);
+    SDL_Surface *off = UI_Offscreen();
+    if (off) {
+        mc_draw_rows(off);
+        mc_draw_preview(off);
+        mc_draw_desc(off);
+    }
+    UI_Present(platform);
+    return GAMESTATE_MULTIPLAYER;
 }

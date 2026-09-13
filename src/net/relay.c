@@ -97,6 +97,8 @@ static void clock_send(void *user, int sim, const uint8_t *f, size_t n) {
 
 /* ── Leaving and closing ──────────────────────────────────────────────── */
 
+static void tell_lobby(TAK_Relay *r);
+
 static void free_room(TAK_Relay *r, TAK_RelayRoom *rr, uint8_t tell) {
     int idx = room_index(r, rr);
     for (int i = 0; i < TAK_RELAY_CLIENTS_MAX; i++) {
@@ -106,6 +108,7 @@ static void free_room(TAK_Relay *r, TAK_RelayRoom *rr, uint8_t tell) {
         cl->room = -1;
     }
     rr->in_use = 0;
+    tell_lobby(r);
 }
 
 static void leave_room(TAK_Relay *r, TAK_RelayClient *cl, int on_purpose) {
@@ -188,6 +191,7 @@ void TAK_Relay_OnConnect(TAK_Relay *r, TAK_ConnId conn, uint64_t now_ms) {
         cl->conn = conn;
         cl->room = -1;
         cl->opened_ms = now_ms;
+        cl->heard_ms = now_ms;
         return;
     }
     r->tx.close(r->tx.ctx, conn);   /* full */
@@ -376,6 +380,20 @@ static void on_hello(TAK_Relay *r, TAK_RelayClient *cl, const TAK_MsgHello *h) {
     }
 }
 
+static void on_list(TAK_Relay *r, TAK_RelayClient *cl);
+
+/* Everyone in the lobby gets a fresh list. Sent when a room appears,
+ * fills, starts or goes, so a phantom game leaves every screen the
+ * moment the relay lets go of it rather than the next time someone
+ * presses Update. */
+static void tell_lobby(TAK_Relay *r) {
+    for (int i = 0; i < TAK_RELAY_CLIENTS_MAX; i++) {
+        TAK_RelayClient *cl = &r->client[i];
+        if (!cl->in_use || !cl->welcomed || cl->room >= 0) continue;
+        on_list(r, cl);
+    }
+}
+
 static void on_list(TAK_Relay *r, TAK_RelayClient *cl) {
     TAK_MsgRoomList m;
     memset(&m, 0, sizeof(m));
@@ -434,6 +452,7 @@ static void on_create(TAK_Relay *r, TAK_RelayClient *cl, const TAK_MsgCreateRoom
     memcpy(rr->group_hash, cl->hello.group_hash, sizeof(rr->group_hash));
     cl->room = room_index(r, rr);
     send_room_state(r, rr);
+    tell_lobby(r);
 }
 
 static TAK_RelayRoom *room_by_code(TAK_Relay *r, const char *code) {
@@ -567,6 +586,7 @@ static void on_start(TAK_Relay *r, TAK_RelayClient *cl) {
     if (rc) { send_reject(r, cl, (uint8_t)rc, 0); return; }
     send_room_state(r, rr);
     begin_match(r, rr);
+    tell_lobby(r);
 }
 
 static void on_load_progress(TAK_Relay *r, TAK_RelayClient *cl, uint8_t percent) {
@@ -643,7 +663,9 @@ void TAK_Relay_OnFrame(TAK_Relay *r, TAK_ConnId conn,
         return;
     }
 
-    /* Anything at all from a player in a match counts as being heard. */
+    /* Anything at all counts as being heard, in a match and out of
+     * one. This is what the silence check reads. */
+    cl->heard_ms = now_ms;
     int sim = -1;
     TAK_RelayRoom *mr = cl->welcomed ? match_of(r, cl, &sim) : NULL;
     if (mr) TAK_TurnClock_Heard(&mr->clock, sim, now_ms);
@@ -783,6 +805,14 @@ void TAK_Relay_Tick(TAK_Relay *r, uint64_t now_ms) {
             if (!cl->in_use) continue;
             if (!cl->welcomed) {
                 if (now_ms - cl->opened_ms >= TAK_RELAY_HELLO_MS) drop_client(r, cl);
+                continue;
+            }
+            /* Silent for four heartbeats is gone. The socket may still
+             * say open, behind a proxy that has not noticed the tab
+             * close, and a ghost holding a seat blocks a room that a
+             * dropped player would only have left. */
+            if (now_ms - cl->heard_ms >= TAK_RELAY_SILENT_MS) {
+                drop_client(r, cl);
                 continue;
             }
             TAK_MsgPing m;

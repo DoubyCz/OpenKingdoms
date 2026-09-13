@@ -25,6 +25,12 @@
 #define TAK_RELAY_ROOMS_MAX    8
 #define TAK_RELAY_PING_MS      2000u    /* the original's heartbeat cadence */
 #define TAK_RELAY_HELLO_MS     10000u   /* a connection that never says hello */
+/* A welcomed client that has said nothing at all for this long is gone,
+ * whatever its socket claims. Four heartbeats: one lost reply is a
+ * hiccup, four in a row is a tab that closed behind a proxy that has
+ * not noticed. A ghost in a seat is worse than a player dropped a few
+ * seconds early, because the ghost holds the seat and the room. */
+#define TAK_RELAY_SILENT_MS    (4u * TAK_RELAY_PING_MS)
 
 typedef struct TAK_RelayCfg {
     char     server_name[TAK_NET_SERVER_NAME_MAX];
@@ -42,6 +48,7 @@ typedef struct TAK_RelayClient {
     uint32_t     id;              /* the session id, adopted again on rejoin */
     int          room;            /* index into rooms, -1 for none */
     uint64_t     opened_ms;
+    uint64_t     heard_ms;        /* the last frame of any kind from it */
     uint32_t     ping_seq;
     TAK_MsgHello hello;
 } TAK_RelayClient;

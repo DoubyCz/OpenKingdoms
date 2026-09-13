@@ -2117,6 +2117,310 @@ TEST(mp_room_leaving_goes_back_to_the_game_list) {
 
 /* Only your own row is yours to change, which is the server's rule as
  * well as the screen's. A press on someone else's row sends nothing. */
+/* Defined with the other lookups further down. Named here because
+ * the room cases above them use it, and clang and gcc refuse an
+ * implicit declaration that MSVC lets through. */
+static int widget_index_named(GUIRuntime *rt, const char *name);
+
+/* A room where we are the host, in seat 0, with the rules and the cap
+ * the server would carry. mp_encode_room above seats us second. */
+static size_t mp_encode_room_hosted(uint8_t *out, size_t cap, uint32_t revision,
+                                    uint32_t our_id, uint32_t options,
+                                    uint16_t unit_cap, int ready0) {
+    TAK_MsgRoomState rs;
+    memset(&rs, 0, sizeof rs);
+    rs.room_id = 9;
+    rs.revision = revision;
+    rs.seat_count = TAK_NET_SEATS;
+    rs.host_client_id = our_id;
+    rs.options = options;
+    rs.unit_cap = unit_cap;
+    memcpy(rs.name, "the room", 9);
+    memcpy(rs.map_name, "two castles", 12);
+    for (int i = 0; i < 2; i++) {
+        rs.slot[i].kind = 1;
+        rs.slot[i].connected = 1;
+        rs.slot[i].side = (uint8_t)i;
+        rs.slot[i].team = (uint8_t)(i + 1);
+        rs.slot[i].colour = (uint8_t)(i * 3);
+        rs.slot[i].client_id = (uint32_t)(100 + i);
+        snprintf(rs.slot[i].name, sizeof rs.slot[i].name, "player %d", i + 1);
+    }
+    rs.slot[0].client_id = our_id;
+    rs.slot[0].ready = (uint8_t)ready0;
+    return TAK_Msg_RoomStateEncode(&rs, out, cap);
+}
+
+/* The index of the widget called `name` on row `row` of the table. */
+static int mp_row_widget(const char *name, int row) {
+    GUIRuntime *rt = Multiplayer_Runtime();
+    for (int i = 0; i < GUIRuntime_NumWidgets(rt); i++) {
+        const GUIWidget *w = GUIRuntime_WidgetAt(rt, i);
+        if (!w || tak_stricmp(w->name, name) != 0) continue;
+        if (w->rect.x >= 400 || w->rect.y < 58) continue;
+        if ((w->rect.y - 58) / 22 == row) return i;
+    }
+    return -1;
+}
+
+static const char *mp_help_text(void) {
+    GUIRuntime *rt = Multiplayer_Runtime();
+    for (int i = 0; i < GUIRuntime_NumWidgets(rt); i++) {
+        const GUIWidget *w = GUIRuntime_WidgetAt(rt, i);
+        if (w && tak_stricmp(w->name, "HelpText") == 0) return w->display_text;
+    }
+    return "";
+}
+
+/* One room edit off the queue, or -1 when nothing went out. */
+static int mp_take_edit(TAK_NetClient *c, TAK_MsgRoomEdit *e) {
+    uint8_t out[TAK_NET_FRAME_MAX];
+    size_t sent = TAK_NetClient_TakeMessage(c, out, sizeof out);
+    if (!sent) return -1;
+    TAK_NetFrame f;
+    if (TAK_Net_Split(out, sent, &f) != 0 || f.type != TAK_MSG_ROOM_EDIT) return -1;
+    return TAK_Msg_RoomEditDecode(e, f.payload, f.payload_len);
+}
+
+static void mp_drain(TAK_NetClient *c) {
+    uint8_t out[TAK_NET_FRAME_MAX];
+    while (TAK_NetClient_TakeMessage(c, out, sizeof out) > 0) { }
+}
+
+/* The Go box draws what the server says. It never did: the press went
+ * out, the snapshot came back with the seat ready, and the box stayed
+ * empty, so nobody could tell a press that landed from one that did
+ * not. 3 is the empty box and 4 the ticked one. */
+TEST(mp_room_draws_a_seat_that_is_ready) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, Multiplayer_Init(&platform));
+    NetSession_BeginWithoutLink("Player");
+    TAK_NetClient *c = NetSession_Client();
+    uint8_t msg[TAK_NET_FRAME_MAX];
+    size_t n = sg_encode_welcome(msg, sizeof msg, 700);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1000);
+    n = mp_encode_room_hosted(msg, sizeof msg, 1, 700, 0, 500, 0);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1100);
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+    int box = mp_row_widget("PlayerReady", 0);
+    ASSERT(box >= 0);
+    ASSERT_EQ_INT(3, GUIRuntime_FrameOverrideAt(Multiplayer_Runtime(), box));
+
+    n = mp_encode_room_hosted(msg, sizeof msg, 2, 700, 0, 500, 1);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1200);
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+    int frame = GUIRuntime_FrameOverrideAt(Multiplayer_Runtime(), box);
+    if (frame != 4) printf("(the ready box draws frame %d) ", frame);
+    ASSERT_EQ_INT(4, frame);
+
+    /* The team cell follows the snapshot too. The colour cell is
+     * painted, not framed: its authored frames are empty. */
+    int team = mp_row_widget("PlayerTeam", 1);
+    ASSERT(team >= 0);
+    ASSERT_EQ_STR("2", GUIRuntime_WidgetAt(Multiplayer_Runtime(), team)->display_text);
+
+    Multiplayer_Shutdown();
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* A refusal from the server lands on the help strip. It landed nowhere,
+ * so Play with a seat not ready did nothing anyone could see. */
+TEST(mp_room_shows_why_the_server_said_no) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, Multiplayer_Init(&platform));
+    NetSession_BeginWithoutLink("Player");
+    TAK_NetClient *c = NetSession_Client();
+    uint8_t msg[TAK_NET_FRAME_MAX];
+    size_t n = sg_encode_welcome(msg, sizeof msg, 701);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1000);
+    n = mp_encode_room_hosted(msg, sizeof msg, 1, 701, 0, 500, 0);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1100);
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+
+    TAK_MsgReject rj;
+    memset(&rj, 0, sizeof rj);
+    rj.reason = TAK_REJECT_NOT_READY;
+    memcpy(rj.text, "Not everyone is ready.", 23);
+    n = TAK_Msg_RejectEncode(&rj, msg, sizeof msg);
+    ASSERT(n > 0);
+    ASSERT_EQ_INT(0, TAK_NetClient_OnMessage(c, msg, n, 1200));
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+    if (!mp_help_text()[0]) printf("(the strip is empty) ");
+    ASSERT_EQ_STR("Not everyone is ready.", mp_help_text());
+
+    Multiplayer_Shutdown();
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* The host changes a rule and the unit limit and the map, and each is
+ * one edit to the server, which owns the room. A guest pressing the
+ * same box sends nothing and is told whose it is. */
+TEST(mp_room_host_sets_the_rules_the_cap_and_the_map) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, Multiplayer_Init(&platform));
+    NetSession_BeginWithoutLink("Player");
+    TAK_NetClient *c = NetSession_Client();
+    uint8_t msg[TAK_NET_FRAME_MAX];
+    size_t n = sg_encode_welcome(msg, sizeof msg, 702);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1000);
+    n = mp_encode_room_hosted(msg, sizeof msg, 1, 702,
+                              TAK_ROOMOPT_LINE_OF_SIGHT, 500, 0);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1100);
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+    mp_drain(c);
+
+    /* The boxes draw the room's rules: line of sight on, the rest off. */
+    GUIRuntime *rt = Multiplayer_Runtime();
+    ASSERT_EQ_INT(4, GUIRuntime_FrameOverrideAt(rt, widget_index_named(rt, "LineOfSight")));
+    ASSERT_EQ_INT(3, GUIRuntime_FrameOverrideAt(rt, widget_index_named(rt, "Mapping")));
+
+    /* A rule box: the bit flips in one edit. */
+    TAK_MsgRoomEdit e;
+    (void)Multiplayer_HandleClick("Mapping", widget_index_named(rt, "Mapping"));
+    ASSERT_EQ_INT(0, mp_take_edit(c, &e));
+    ASSERT_EQ_INT(TAK_EDIT_OPTIONS, (int)e.field);
+    ASSERT_EQ_INT((int)(TAK_ROOMOPT_LINE_OF_SIGHT | TAK_ROOMOPT_MAP_REVEALED), (int)e.value);
+
+    /* The unit limit, one step up. */
+    int inc = -1;
+    for (int i = 0; i < GUIRuntime_NumWidgets(rt); i++) {
+        const GUIWidget *w = GUIRuntime_WidgetAt(rt, i);
+        if (w && tak_stricmp(w->name, "incbutton") == 0 && w->rect.y < 240) inc = i;
+    }
+    ASSERT(inc >= 0);
+    (void)Multiplayer_HandleClick("incbutton", inc);
+    ASSERT_EQ_INT(0, mp_take_edit(c, &e));
+    ASSERT_EQ_INT(TAK_EDIT_UNIT_CAP, (int)e.field);
+    ASSERT_EQ_INT(500 + TAK_UNITS_PER_SIDE_STEP, (int)e.value);
+
+    /* The map: the chooser opens, lists what the install has, and OK
+     * sends the name with the fingerprint this install computed. */
+    (void)Multiplayer_HandleClick("Map", widget_index_named(rt, "Map"));
+    ASSERT_EQ_INT(1, Multiplayer_MapChooserOpen());
+    ASSERT(Multiplayer_MapChooserRowCount() > 1);
+    Multiplayer_MapChooserSelect(1);
+    char picked[96];
+    snprintf(picked, sizeof picked, "%s", Multiplayer_MapChooserRowKey(1));
+    Multiplayer_MapChooserPress("OK");
+    ASSERT_EQ_INT(0, Multiplayer_MapChooserOpen());
+    ASSERT_EQ_INT(0, mp_take_edit(c, &e));
+    ASSERT_EQ_INT(TAK_EDIT_MAP, (int)e.field);
+    ASSERT_EQ_STR(picked, e.text);
+    int any = 0;
+    for (int i = 0; i < TAK_NET_FINGERPRINT_BYTES; i++) any |= e.fingerprint[i];
+    if (!any) printf("(the map went out with no fingerprint) ");
+    ASSERT(any);
+
+    Multiplayer_Shutdown();
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+TEST(mp_room_a_guest_cannot_change_the_rules) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, Multiplayer_Init(&platform));
+    NetSession_BeginWithoutLink("Player");
+    TAK_NetClient *c = NetSession_Client();
+    uint8_t msg[TAK_NET_FRAME_MAX];
+    size_t n = sg_encode_welcome(msg, sizeof msg, 703);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1000);
+    n = mp_encode_room(msg, sizeof msg, 1, 2, 703);   /* seat 1, not the host */
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1100);
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+    mp_drain(c);
+
+    GUIRuntime *rt = Multiplayer_Runtime();
+    (void)Multiplayer_HandleClick("LineOfSight", widget_index_named(rt, "LineOfSight"));
+    TAK_MsgRoomEdit e;
+    ASSERT_EQ_INT(-1, mp_take_edit(c, &e));
+    ASSERT(mp_help_text()[0] != '\0');
+
+    Multiplayer_Shutdown();
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* Chat: what is typed goes to the room on Enter, and a line from the
+ * server lands in the log. */
+TEST(mp_room_chat_goes_out_and_comes_in) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, Multiplayer_Init(&platform));
+    NetSession_BeginWithoutLink("Player");
+    TAK_NetClient *c = NetSession_Client();
+    uint8_t msg[TAK_NET_FRAME_MAX];
+    size_t n = sg_encode_welcome(msg, sizeof msg, 704);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1000);
+    n = mp_encode_room(msg, sizeof msg, 1, 2, 704);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1100);
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+    mp_drain(c);
+
+    /* Text input is on for the room, so a player can just type. */
+    ASSERT_EQ_INT(1, (int)SDL_IsTextInputActive());
+    snprintf(platform.text_in, sizeof platform.text_in, "%s", "hello");
+    platform.text_in_len = 5;
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+    platform.text_in_len = 0;
+    platform.text_in[0] = '\0';
+    ASSERT_EQ_STR("hello", Multiplayer_ChatTyping());
+    Multiplayer_ChatSend();
+    uint8_t out[TAK_NET_FRAME_MAX];
+    size_t sent = TAK_NetClient_TakeMessage(c, out, sizeof out);
+    ASSERT(sent > 0);
+    TAK_NetFrame f;
+    ASSERT_EQ_INT(0, TAK_Net_Split(out, sent, &f));
+    ASSERT_EQ_INT(TAK_MSG_CHAT, f.type);
+    TAK_MsgChat cm;
+    ASSERT_EQ_INT(0, TAK_Msg_ChatDecode(&cm, f.payload, f.payload_len));
+    ASSERT_EQ_STR("hello", cm.text);
+    ASSERT_EQ_INT(TAK_CHAT_ROOM, (int)cm.scope);
+    ASSERT_EQ_STR("", Multiplayer_ChatTyping());
+
+    /* A line from someone else, as the server relays it. */
+    memset(&cm, 0, sizeof cm);
+    cm.scope = TAK_CHAT_ROOM;
+    cm.from_seat = 0;
+    memcpy(cm.name, "player 1", 9);
+    memcpy(cm.text, "welcome", 8);
+    n = TAK_Msg_ChatEncode(&cm, msg, sizeof msg);
+    ASSERT_EQ_INT(0, TAK_NetClient_OnMessage(c, msg, n, 1300));
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+    ASSERT_EQ_INT(1, Multiplayer_ChatLineCount());
+    ASSERT_EQ_STR("player 1: welcome", Multiplayer_ChatLine(0));
+
+    Multiplayer_Shutdown();
+    ASSERT_EQ_INT(0, (int)SDL_IsTextInputActive());
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 TEST(mp_room_a_press_on_another_players_row_sends_nothing) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -17926,6 +18230,11 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_C, mp_room_builds_the_world_the_server_described);
     RUN_UI_TEST(UI_GROUP_D, mp_room_leaving_goes_back_to_the_game_list);
     RUN_UI_TEST(UI_GROUP_D, mp_room_a_press_on_another_players_row_sends_nothing);
+    RUN_UI_TEST(UI_GROUP_A, mp_room_draws_a_seat_that_is_ready);
+    RUN_UI_TEST(UI_GROUP_B, mp_room_shows_why_the_server_said_no);
+    RUN_UI_TEST(UI_GROUP_C, mp_room_host_sets_the_rules_the_cap_and_the_map);
+    RUN_UI_TEST(UI_GROUP_D, mp_room_a_guest_cannot_change_the_rules);
+    RUN_UI_TEST(UI_GROUP_A, mp_room_chat_goes_out_and_comes_in);
     RUN_UI_TEST(UI_GROUP_A, select_game_draws_the_widgets_the_shipped_file_authors);
     RUN_UI_TEST(UI_GROUP_A, select_game_lists_the_rooms_a_server_offers);
     RUN_UI_TEST(UI_GROUP_A, select_game_hosting_a_game_gives_it_a_map);
