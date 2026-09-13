@@ -8087,6 +8087,73 @@ TEST(a_dead_unit_leaves_its_corpse_when_the_death_finishes) {
  * since the steering change, so a sword's 30 px has to reach the
  * body and not the centre. Reported with a Taros Black Knight and a
  * Veruna Warrior. */
+/* Issue #107. A wall is made carrying the flag that keeps a unit out
+ * of every target scan (legacy:39435-39437, legacy:233996), so nothing
+ * picks one on its own, and the AI's wave scoring gives it nothing
+ * (legacy:20042). An order to attack one is still carried out: the
+ * order check lets a wall past the liveness test (legacy:12363). */
+TEST(a_wall_is_never_picked_but_falls_when_ordered) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int sword_def = Units_FindDefByName("ARASWORD");
+    int wall_def = Units_FindDefByName("ARAWALL");
+    ASSERT(sword_def >= 0 && wall_def >= 0);
+    const UnitDef *sd = Units_GetDef(sword_def);
+    const UnitDef *wd = Units_GetDef(wall_def);
+    ASSERT_NOT_NULL(sd);
+    ASSERT_NOT_NULL(wd);
+    ASSERT_EQ_INT(1, wd->is_feature);
+    /* The foe stands inside the sword's sight and the wall closer
+     * still, so a scan that took walls would take this one. */
+    int32_t far = sd->sight_distance - 30;
+    ASSERT(far > 100);
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    int32_t sx = 0, sy = 0;
+    ASSERT(corpse_find_clear_ground(world, units[0].world_x + 256,
+                                    units[0].world_y, 160, &sx, &sy));
+    int sword = Units_Spawn(sword_def, 1, 0, sx, sy);
+    int wall = Units_Spawn(wall_def, 2, 1, sx + 48, sy + 48);
+    int foe = Units_Spawn(sword_def, 2, 1, sx + far, sy);
+    ASSERT(sword >= 0 && wall >= 0 && foe >= 0);
+    Units_DebugSetAggro(foe, UNIT_AGGRO_PASSIVE);
+    units = Units_GetActive(&unit_count);
+    int wall_hp = units[wall].health;
+    ASSERT(wall_hp > 0);
+
+    int picked = -1;
+    for (int t = 0; t < 180; t++) {
+        tick_with_sight(world, t);
+        units = Units_GetActive(&unit_count);
+        if (units[sword].target >= 0) {
+            ASSERT_EQ_INT(foe, (int)units[sword].target);
+            picked = units[sword].target;
+        }
+    }
+    ASSERT_EQ_INT(foe, picked);
+    ASSERT_EQ_INT(wall_hp, units[wall].health);
+
+    /* Ordered onto the wall, the sword goes and hits it. */
+    Units_CommandAttackUnit(sword, wall);
+    int t = 0;
+    for (; t < 900; t++) {
+        tick_with_sight(world, t);
+        units = Units_GetActive(&unit_count);
+        if (units[wall].health < wall_hp) break;
+    }
+    printf("[wall hit after %d ticks] ", t);
+    ASSERT(units[wall].health < wall_hp);
+    ASSERT_EQ_INT(wall, (int)units[sword].target);
+
+    corpse_shutdown(&platform);
+}
+
 TEST(swordsman_strikes_an_enemy_standing_beside_it) {
     TAK_Platform platform;
     int boot_rc = corpse_boot(&platform);
@@ -19055,6 +19122,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_A, reclaim_clears_feature_and_pays_mana);
     RUN_UI_TEST(UI_GROUP_A, a_dead_unit_leaves_its_corpse_when_the_death_finishes);
     RUN_UI_TEST(UI_GROUP_D, swordsman_strikes_an_enemy_standing_beside_it);
+    RUN_UI_TEST(UI_GROUP_A, a_wall_is_never_picked_but_falls_when_ordered);
     RUN_UI_TEST(UI_GROUP_A, the_sweep_clears_a_corpse_and_keeps_it_from_rotting);
     RUN_UI_TEST(UI_GROUP_C, a_monarch_raises_a_corpse_at_a_tenth_of_its_life);
     RUN_UI_TEST(UI_GROUP_A, a_damaged_monarch_heals_itself_in_four_minutes);

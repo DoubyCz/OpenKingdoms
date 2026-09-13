@@ -133,6 +133,13 @@ static int ugrid_nearest_enemy(const Unit *u, int self_idx, int64_t radius,
                 if (j == self_idx || t->alive != 1) continue;
                 if (!unit_players_are_enemies(u->player_id, t->player_id))
                     continue;
+                /* A wall is made carrying the flag that keeps a unit out
+                 * of every scan (legacy:39435-39437, legacy:233996). Only
+                 * an order reaches it. */
+                {
+                    const UnitDef *td = Units_GetDef(t->def_idx);
+                    if (td && td->is_feature) continue;
+                }
                 if (wp && !weapon_can_target_unit(wp, t))
                     continue;
                 int64_t dx = (int64_t)(t->world_x - u->world_x);
