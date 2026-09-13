@@ -1158,6 +1158,12 @@ int               Units_RecallControlGroup(int group);
 /* Find the alive unit closest to (world_x, world_y) within radius pixels.
  * Returns the unit's slot handle, or -1 if no unit is in range. */
 int               Units_PickAt(int32_t world_x, int32_t world_y, int radius);
+/* The ground under a pointer read flat off the screen. Terrain draws
+ * lifted by its height times the tilt, so the world point under the
+ * pointer sits further down the map than the flat reading, and a near
+ * face hides a far one (legacy:212277). */
+void              Units_GroundUnderPoint(int32_t flat_x, int32_t flat_y,
+                                         int32_t *out_x, int32_t *out_y);
 /* Put any visible unit in the selection so the sidebar can show it.
  * Returns 1 when it took. */
 int               Units_SelectForInspect(int handle);

@@ -1666,6 +1666,22 @@ int g_units_get_def_idx(int handle) {
     return (int)g_units[handle].def_idx;
 }
 
+void Units_GroundUnderPoint(int32_t flat_x, int32_t flat_y,
+                            int32_t *out_x, int32_t *out_y) {
+    const GameWorld *world = World_Get();
+    if (out_x) *out_x = flat_x;
+    if (out_y) *out_y = flat_y;
+    if (!world || !out_y) return;
+    /* Walk from the nearest candidate back: the first point that
+     * projects onto the pointer is the face in front. */
+    int32_t span = (int32_t)(255.0f * g_tan_tilt) + 2;
+    for (int32_t wy = flat_y + span; wy > flat_y; wy -= 2) {
+        int32_t sy = wy - (int32_t)((float)Terrain_SampleHeight(
+                              world, flat_x, wy) * g_tan_tilt);
+        if (sy <= flat_y) { *out_y = wy; return; }
+    }
+}
+
 int Units_PickAt(int32_t world_x, int32_t world_y, int radius) {
     const GameWorld *world = World_Get();
     /* Pass 1: point-inside-footprint. Centre-distance alone can never

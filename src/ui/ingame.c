@@ -543,7 +543,11 @@ int InGame_HoverCursorAt(int32_t world_x, int32_t world_y) {
             return HUD_CMD_ATTACK;
         return HUD_CUR_SELECT;
     }
-    if (Units_SelectionRaiseModeAt(world_x, world_y) >= 0)
+    /* Bodies are looked up on the ground under the pointer, which the
+     * terrain lift puts further down the map than the flat reading. */
+    int32_t gx = world_x, gy = world_y;
+    Units_GroundUnderPoint(world_x, world_y, &gx, &gy);
+    if (Units_SelectionRaiseModeAt(gx, gy) >= 0)
         return HUD_CUR_REVIVE;
     return HUD_CUR_NORMAL;
 }
@@ -551,8 +555,9 @@ int InGame_HoverCursorAt(int32_t world_x, int32_t world_y) {
 /* The cursor an armed command shows: the sweep cursor turns to revive
  * over a body the selection would raise instead of sweep. */
 int InGame_CommandCursorAt(int mode, int32_t world_x, int32_t world_y) {
-    if (mode == HUD_CMD_CLEAR &&
-        Units_SelectionRaiseModeAt(world_x, world_y) >= 0)
+    int32_t gx = world_x, gy = world_y;
+    Units_GroundUnderPoint(world_x, world_y, &gx, &gy);
+    if (mode == HUD_CMD_CLEAR && Units_SelectionRaiseModeAt(gx, gy) >= 0)
         return HUD_CUR_REVIVE;
     return mode;
 }
@@ -706,6 +711,10 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
     if (!world || !world->loaded) return;
     int cmd = HUD_GetCommandMode();
     int hit = Units_PickAt(world_x, world_y, 48);
+    /* The orders that resolve on a map cell take the ground under the
+     * pointer, as the cursor over a body does. */
+    int32_t gx = world_x, gy = world_y;
+    Units_GroundUnderPoint(world_x, world_y, &gx, &gy);
     int n_sel = 0;
     Units_GetSelection(&n_sel);
     if (HUD_IsTargetingMode(cmd)) {
@@ -749,7 +758,7 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
                  * cell first and falls back to the unit on the
                  * tick. */
                 TAK_Cmd_EmitSelection(TAK_CMD_RECLAIM_FEATURE,
-                                      world_x, world_y, hit, 0, 0);
+                                      gx, gy, hit, 0, 0);
                 break;
             case HUD_CMD_GUARD:
                 if (hit >= 0 && g_units_get_player(hit) == Units_LocalPlayer())
@@ -842,15 +851,15 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
             TAK_Cmd_EmitSelection(TAK_CMD_ATTACK, world_x, world_y, hit, 0, 0);
             ig_play_order_ack(world, "attack");
             fprintf(stderr, "Attack -> unit %d\n", hit);
-        } else if (Units_SelectionRaiseModeAt(world_x, world_y) >= 0) {
+        } else if (Units_SelectionRaiseModeAt(gx, gy) >= 0) {
             /* A click on a body the selection can raise raises it.
              * The revive cursor is drawn from the same local test,
              * so the screen sends the order and the tick that runs
              * it decides which unit takes the body. */
             TAK_Cmd_EmitSelection(TAK_CMD_RESURRECT_FEATURE,
-                                  world_x, world_y, -1, 0, 0);
+                                  gx, gy, -1, 0, 0);
             ig_play_order_ack(world, "default");
-            fprintf(stderr, "Raise -> (%d,%d)\n", world_x, world_y);
+            fprintf(stderr, "Raise -> (%d,%d)\n", gx, gy);
         } else {
             TAK_Cmd_EmitSelection(TAK_CMD_MOVE, world_x, world_y, -1, 0, 0);
             ig_play_order_ack(world, "Move");
