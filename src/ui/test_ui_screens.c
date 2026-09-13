@@ -8154,6 +8154,91 @@ TEST(a_wall_is_never_picked_but_falls_when_ordered) {
     corpse_shutdown(&platform);
 }
 
+/* Issue #109. A unit killed mid fight stops fighting the instant it
+ * dies. The original raises its dying flag on the lethal hit
+ * (legacy:227258), the update returns early for a unit carrying it
+ * (legacy:233748), and nothing picks such a unit as a target
+ * (legacy:233996). Ours ran the whole combat pipeline for a dying
+ * unit: it took its killer back as a target, walked after it, and the
+ * walk thread it re-armed every tick kept the death from finishing, so
+ * the body stood in its colours and swung. */
+TEST(a_dying_unit_stops_fighting_and_leaves_its_corpse) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int sdef = Units_FindDefByName("ARASWORD");
+    ASSERT(sdef >= 0);
+    const UnitDef *sd = Units_GetDef(sdef);
+    ASSERT_NOT_NULL(sd);
+    ASSERT(sd->max_velocity > 0.0f);
+    ASSERT(sd->num_weapons >= 1);
+    int cdef = Features_FindByName(sd->corpse);
+    ASSERT(cdef >= 0);
+    /* Out of the sword's reach but inside its sight when the data
+     * allows it, so a body that still fought would have to walk, which
+     * is the case that never finished dying. Otherwise in reach, which
+     * is the case that kept swinging. */
+    int32_t range = sd->weapons[0].range;
+    int32_t gap = sd->sight_distance > range + 40 ? sd->sight_distance - 20
+                                                   : range - 8;
+    printf("[sight %d range %d gap %d] ", (int)sd->sight_distance,
+           (int)range, (int)gap);
+    ASSERT(gap > 24);
+
+    int n = 0;
+    const Unit *units = Units_GetActive(&n);
+    int32_t cx = 0, cy = 0;
+    ASSERT(corpse_find_clear_ground(world, units[0].world_x + 256,
+                                    units[0].world_y, 40, &cx, &cy));
+    int victim = Units_Spawn(sdef, 1, 3, cx, cy);
+    ASSERT(victim >= 0);
+    int foe = Units_Spawn(sdef, 2, 5, cx + gap, cy);
+    ASSERT(foe >= 0);
+    Units_DebugSetAggro(foe, UNIT_AGGRO_PASSIVE);
+    ASSERT(Units_OrderAttack(victim, foe));
+
+    for (int t = 0; t < 30; t++) Units_TickEngines();
+    units = Units_GetActive(&n);
+    ASSERT_EQ_INT(foe, units[victim].target);
+    int foe_hp = units[foe].health;
+
+    ASSERT_EQ_INT(victim, Units_DebugKillHandle(victim));
+    units = Units_GetActive(&n);
+    ASSERT_EQ_INT(UNIT_ALIVE_DYING, units[victim].alive);
+    /* The order dies with the unit. */
+    ASSERT_EQ_INT(-1, units[victim].target);
+    ASSERT_EQ_INT(UNIT_CMD_NONE, units[victim].cmd_kind);
+    int32_t died_x = units[victim].world_x;
+    int32_t died_y = units[victim].world_y;
+    int feat_before = world->feature_count;
+
+    int ticks = 0;
+    while (ticks < 600 && units[victim].alive == UNIT_ALIVE_DYING) {
+        Units_TickEngines();
+        units = Units_GetActive(&n);
+        ticks++;
+        /* It never takes its foe back, never takes a step, and never
+         * lands a blow. */
+        ASSERT_EQ_INT(-1, units[victim].target);
+        ASSERT_EQ_INT(UNIT_CMD_NONE, units[victim].cmd_kind);
+        ASSERT_EQ_INT(UNIT_ANIM_DYING, units[victim].anim_state);
+        ASSERT_EQ_INT(died_x, units[victim].world_x);
+        ASSERT_EQ_INT(died_y, units[victim].world_y);
+        ASSERT_EQ_INT(foe_hp, units[foe].health);
+    }
+    printf("[corpse after %d ticks] ", ticks);
+    /* The death finishes and a body lies where it fell. */
+    ASSERT_EQ_INT(UNIT_ALIVE_DEAD, units[victim].alive);
+    ASSERT(ticks < 600);
+    ASSERT_EQ_INT(feat_before + 1, world->feature_count);
+
+    corpse_shutdown(&platform);
+}
+
 TEST(swordsman_strikes_an_enemy_standing_beside_it) {
     TAK_Platform platform;
     int boot_rc = corpse_boot(&platform);
@@ -19123,6 +19208,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_A, reclaim_clears_feature_and_pays_mana);
     RUN_UI_TEST(UI_GROUP_A, a_dead_unit_leaves_its_corpse_when_the_death_finishes);
     RUN_UI_TEST(UI_GROUP_D, swordsman_strikes_an_enemy_standing_beside_it);
+    RUN_UI_TEST(UI_GROUP_B, a_dying_unit_stops_fighting_and_leaves_its_corpse);
     RUN_UI_TEST(UI_GROUP_A, a_wall_is_never_picked_but_falls_when_ordered);
     RUN_UI_TEST(UI_GROUP_A, the_sweep_clears_a_corpse_and_keeps_it_from_rotting);
     RUN_UI_TEST(UI_GROUP_C, a_monarch_raises_a_corpse_at_a_tenth_of_its_life);
