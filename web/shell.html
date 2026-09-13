@@ -573,11 +573,19 @@
       .then(function (r) { return r.ok ? r.text() : ''; })
       .then(function (text) {
         var url = (text || '').split(/[\r\n]/)[0].trim();
-        /* A file that is there but empty, or full of something that is
-           not an address, is the same as no file. */
+        if (!url) return;
+        /* The natural thing to write down is the address as a browser
+           shows it, with https. A socket wants wss, and the two name
+           the same host and the same port, so it is turned rather than
+           refused. */
+        url = url.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://');
+        /* Anything else is not an address, and saying nothing about it
+           would leave someone staring at a file that looks right. */
         if (/^wss?:\/\/[^\s]+$/.test(url)) {
           Module.okRelayUrl = url;
           console.log('[openkingdoms] game server: ' + url);
+        } else {
+          console.warn('[openkingdoms] relay.txt does not hold a ws:// or wss:// address, ignoring it');
         }
       })
       .catch(function () {})
