@@ -6,9 +6,11 @@
  * running battle, so the terrain and the sidebar stay drawn behind it.
  * Enter and Escape press whatever the root's accelerator string names,
  * "#Enter#Resume#Esc#Resume", read the way the end screen reads its
- * own. Resume closes it (legacy:154721-154726). Game Information, Load
- * Game and Save Game are drawn by the shipped art and do nothing: we
- * have no save system and no game information screen yet.
+ * own. Resume closes it (legacy:154721-154726). Load Game and Save
+ * Game open the original's own dialogs over the menu, which stays
+ * drawn behind them, the way Options does (legacy:154703-154712).
+ * Game Information is still drawn by the shipped art and does
+ * nothing: we have no game information screen yet.
  */
 
 #include "tak_ingame_menu.h"
@@ -19,6 +21,9 @@
 #include "tak_ui.h"
 #include "tak_world.h"
 #include "tak_options.h"
+#include "tak_save_browser.h"
+#include "tak_savegame.h"
+#include "tak_loading.h"
 #include "tak_game_sound.h"
 #include "tak_gameloop.h"
 #include "tak_util.h"
@@ -46,6 +51,7 @@ static struct {
     int         prev_esc;
     int         prev_paused;
     int         options_open;
+    int         browser_open;
 } m;
 
 /* A restart request outlives the dialog that made it, so the frame loop
@@ -154,6 +160,7 @@ void InGameMenu_Close(void) {
     int restore = m.prev_paused;
     int multiplayer = (igm_mode() == IGM_MULTI);
     if (m.options_open) Options_Shutdown();
+    if (m.browser_open) SaveBrowser_Close();
     free_dialog();
     if (m.font_help) Font_Free(m.font_help);
     memset(&m, 0, sizeof(m));
@@ -208,7 +215,46 @@ static int press_named(const char *name) {
         InGameMenu_Close();
         return GAMESTATE_GAME_LOADING;
     }
-    /* GameInfo, LoadGame and SaveGame stay drawn and do nothing. */
+    /* Both dialogs are the original's own files, opened over the menu
+     * (legacy:154703-154712 into legacy:158806-158813). */
+    if (tak_stricmp(name, "SaveGame") == 0) {
+        if (SaveBrowser_Open(SAVEBROWSER_SAVE) == 0) m.browser_open = 1;
+        return GAMESTATE_IN_GAME;
+    }
+    if (tak_stricmp(name, "LoadGame") == 0) {
+        if (SaveBrowser_Open(SAVEBROWSER_LOAD) == 0) m.browser_open = 1;
+        return GAMESTATE_IN_GAME;
+    }
+    /* GameInfo stays drawn and does nothing. */
+    return GAMESTATE_IN_GAME;
+}
+
+/* A save the player picked becomes the same handoff a Restart makes:
+ * the battle it names is brought up from scratch and the save is
+ * applied on top of it once the definitions are in memory. */
+int InGameMenu_TakeBrowserResult(SaveBrowserResult r) {
+    if (r == SAVEBROWSER_OPEN) return GAMESTATE_IN_GAME;
+    if (r == SAVEBROWSER_LOAD_READY) {
+        TAK_SaveGame *sg = SaveBrowser_TakeLoad();
+        const TAK_SaveInfo *info = sg ? Save_Info(sg) : NULL;
+        if (info) {
+            igm_restart.pending = 1;
+            igm_restart.cfg = info->cfg;
+            set_text(igm_restart.map, sizeof(igm_restart.map), info->map_name);
+            set_text(igm_restart.kingdom, sizeof(igm_restart.kingdom),
+                     info->map_kingdom);
+            Loading_SetPendingSave(sg);
+            SaveBrowser_Close();
+            m.browser_open = 0;
+            InGameMenu_Close();
+            return GAMESTATE_GAME_LOADING;
+        }
+        if (sg) Save_ReadClose(sg);
+    }
+    /* Cancelled, or saved: back to the menu behind it
+     * (legacy:156337-156341 is the same return). */
+    SaveBrowser_Close();
+    m.browser_open = 0;
     return GAMESTATE_IN_GAME;
 }
 
@@ -250,12 +296,20 @@ int InGameMenu_Tick(TAK_Platform *platform) {
     const char *key_widget = NULL;
     /* An open options dialog takes the keys first (legacy:243003-243004),
      * so a key held through its close presses nothing here. */
-    if (!m.options_open) {
+    if (!m.options_open && !m.browser_open) {
         if (enter && !m.prev_enter && m.enter_widget[0]) key_widget = m.enter_widget;
         if (esc && !m.prev_esc && m.esc_widget[0])       key_widget = m.esc_widget;
     }
     m.prev_enter = enter;
     m.prev_esc = esc;
+
+    if (m.browser_open) {
+        /* The dialog sits over the menu, which stays drawn behind it,
+         * and the battle is never left (legacy:158806-158813). */
+        GUIRuntime_Render(m.rt);
+        SaveBrowserResult r = SaveBrowser_Tick(platform);
+        return InGameMenu_TakeBrowserResult(r);
+    }
 
     if (m.options_open) {
         /* Options sits inside the menu, which stays drawn behind it,
@@ -322,3 +376,5 @@ int InGameMenu_PressKey(const char *key) {
 }
 
 const char *InGameMenu_LastSound(void) { return m.last_sound; }
+
+int InGameMenu_BrowserOpen(void) { return m.open && m.browser_open; }

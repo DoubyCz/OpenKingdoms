@@ -84,6 +84,7 @@ set(TAK_GAME_SOURCES
     game/tnt.c
     game/world.c
     game/savegame.c
+    game/savelist.c
     game/sim_rand.c
     game/economy.c
     game/moveinfo.c
@@ -109,6 +110,8 @@ set(TAK_UI_SOURCES
     ui/ingame.c
     ui/ingame_debug_keys.c
     ui/ingame_keys.c
+    ui/save_browser.c
+    ui/message_box.c
     ui/ingame_menu.c ui/perf_probe.c
     ui/chat.c
     ui/end_screen.c
@@ -358,6 +361,14 @@ set(TAK_SCREEN_TEST_SOURCES
     ui/ingame.c
     ui/ingame_debug_keys.c
     ui/ingame_keys.c
+    ui/save_browser.c
+    ui/message_box.c
+    game/savelist.c
+    game/savegame.c
+    game/sim_hash.c
+    game/map_fingerprint.c
+    core/savefile.c
+    core/sha256.c
     ui/ingame_menu.c ui/perf_probe.c
     ui/chat.c
     ui/end_screen.c
@@ -467,6 +478,14 @@ add_executable(test_unit_stall
     ui/ingame.c
     ui/ingame_debug_keys.c
     ui/ingame_keys.c
+    ui/save_browser.c
+    ui/message_box.c
+    game/savelist.c
+    game/savegame.c
+    game/sim_hash.c
+    game/map_fingerprint.c
+    core/savefile.c
+    core/sha256.c
     ui/ingame_menu.c
     ui/perf_probe.c
     ui/chat.c

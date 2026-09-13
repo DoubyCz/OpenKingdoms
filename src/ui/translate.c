@@ -7,8 +7,10 @@
 
 #include "tak_translate.h"
 #include "tak_tdf.h"
+#include "tak_hpi.h"
 #include "tak_memory.h"
 #include "tak_util.h"
+#include <stdint.h>
 #include <string.h>
 
 struct TranslateEntry {
@@ -99,4 +101,65 @@ void Translate_MapName(const TranslateTable *t, const char *key,
         if (p != out && p[-1] != ' ') continue;
         if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 'a' + 'A');
     }
+}
+
+/* messages.tdf carries text with stray separators that the TDF
+ * validator counts, so the table is scanned as text: the [KEY] line,
+ * then the English value inside its braces. The key itself is the
+ * fallback (legacy:267931). */
+static int ci_prefix(const char *p, const char *word) {
+    for (; *word; p++, word++) {
+        char a = *p, b = *word;
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+void Translate_Message(const char *key, char *out, size_t cap) {
+    if (!out || !cap) return;
+    copy_text(out, cap, key);
+    if (!key || !*key) return;
+
+    void *data = NULL;
+    uint32_t size = 0;
+    if (VFS_ReadFile("english/translate/messages.tdf", &data, &size) != 0 || !data)
+        return;
+    char *text = (char *)tak_malloc((size_t)size + 1);
+    if (!text) { VFS_FreeBuffer(data); return; }
+    memcpy(text, data, size);
+    text[size] = '\0';
+    VFS_FreeBuffer(data);
+
+    size_t klen = strlen(key);
+    char *p = text;
+    while ((p = strchr(p, '[')) != NULL) {
+        p++;
+        if (!ci_prefix(p, key) || p[klen] != ']') continue;
+        char *brace = strchr(p, '{');
+        char *close = brace ? strchr(brace, '}') : NULL;
+        if (!brace || !close) break;
+        for (char *q = brace; q < close; q++) {
+            if (!(q == brace + 1 || q[-1] == '\n' || q[-1] == '\t' || q[-1] == ' '))
+                continue;
+            if (!ci_prefix(q, "English")) continue;
+            char *eq = strchr(q, '=');
+            char *semi = eq ? strchr(eq, ';') : NULL;
+            if (!eq || !semi || semi > close) break;
+            eq++;
+            while (*eq == ' ' || *eq == '\t') eq++;
+            size_t n = (size_t)(semi - eq);
+            while (n > 0 && (eq[n - 1] == ' ' || eq[n - 1] == '\t' ||
+                             eq[n - 1] == '\r')) n--;
+            if (n > 0) {
+                if (n > cap - 1) n = cap - 1;
+                memcpy(out, eq, n);
+                out[n] = '\0';
+            }
+            break;
+        }
+        break;
+    }
+    tak_free(text);
 }
