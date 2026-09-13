@@ -1355,6 +1355,107 @@ TEST(a_room_the_server_puts_us_in_opens_the_room_screen) {
 /* A desktop build has no address to guess from, and guessing at a host
  * is how a deployment detail ends up in a repository. It says so
  * instead of connecting to nothing. */
+#define SG_SCRATCH_DIR "select_game_scratch"
+
+/* What SDL would have delivered, handed over the way the platform
+ * hands it over, and then one tick of the screen that reads it. */
+static void sg_feed_text(TAK_Platform *platform, const char *text) {
+    snprintf(platform->text_in, sizeof platform->text_in, "%s", text);
+    platform->text_in_len = (int)strlen(text);
+    (void)SelectGame_Tick(platform, 1.0f / 60.0f);
+    platform->text_in_len = 0;
+    platform->text_in[0] = '\0';
+}
+
+/* Both boxes on this screen were boxes you could not type in.
+ *
+ * SDL delivers SDL_TEXTINPUT only between SDL_StartTextInput and
+ * SDL_StopTextInput, the platform stops it at start up, and nothing on
+ * this screen ever started it. So the name box took nothing and the
+ * address box, which is the only way to reach a server whose address
+ * the page does not already know, took nothing either.
+ *
+ * The case drives the real path: the caret goes into a box, the
+ * platform hands over what SDL would have delivered, and the screen's
+ * own tick is what puts it in the box. */
+TEST(select_game_takes_typing_in_both_of_its_boxes) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    Settings_SetDirectory(SG_SCRATCH_DIR);
+
+    /* Left on, so that "off" below is this screen's doing and not a
+     * leftover from whichever screen ran before. */
+    SDL_StartTextInput();
+    ASSERT_EQ_INT(0, SelectGame_Init(&platform));
+    if (SDL_IsTextInputActive())
+        printf("(the screen never took charge of the caret) ");
+    ASSERT_EQ_INT(0, (int)SDL_IsTextInputActive());
+
+    SelectGame_HandleClick("Name");
+    if (!SDL_IsTextInputActive())
+        printf("(the name box has the caret and SDL is still not sending) ");
+    ASSERT_EQ_INT(1, (int)SDL_IsTextInputActive());
+
+    sg_feed_text(&platform, "Zach");
+    ASSERT_EQ_STR("Zach", SelectGame_PlayerName());
+
+    /* And the address box, which is the only way to a server the page
+     * does not already know about. */
+    SelectGame_HandleClick("EnterTCPIPAddress");
+    ASSERT_EQ_INT(1, (int)SDL_IsTextInputActive());
+    sg_feed_text(&platform, "ws://h/r");
+    ASSERT_EQ_STR("ws://h/r", SelectGame_Address());
+
+    /* Leaving the screen puts it back, or every screen after this one
+     * collects keystrokes it never asked for. */
+    SelectGame_Shutdown();
+    ASSERT_EQ_INT(0, (int)SDL_IsTextInputActive());
+
+    Settings_SetDirectory(NULL);
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* A name typed once is the name next time, because it is kept with the
+ * rest of the player's settings. */
+TEST(select_game_remembers_the_name_it_was_given) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    Settings_SetDirectory(SG_SCRATCH_DIR);
+    remove(Settings_FilePath());
+    /* The store is one table for the process, so an earlier case's
+     * name is still in it. This is the state of a fresh install. */
+    Settings_SetStr("PlayerName", "");
+
+    ASSERT_EQ_INT(0, SelectGame_Init(&platform));
+    /* A player who has typed nothing still has a name. */
+    ASSERT_EQ_STR("Player", SelectGame_PlayerName());
+    SelectGame_HandleClick("Name");
+    sg_feed_text(&platform, "Lokken");
+    ASSERT_EQ_STR("Lokken", SelectGame_PlayerName());
+    SelectGame_Shutdown();
+
+    /* A fresh screen, from the file rather than from memory. */
+    ASSERT_EQ_INT(0, Settings_Load());
+    ASSERT_EQ_INT(0, SelectGame_Init(&platform));
+    if (strcmp(SelectGame_PlayerName(), "Lokken") != 0)
+        printf("(it came back as \"%s\") ", SelectGame_PlayerName());
+    ASSERT_EQ_STR("Lokken", SelectGame_PlayerName());
+
+    SelectGame_Shutdown();
+    Settings_SetDirectory(NULL);
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 TEST(select_game_with_no_address_says_what_to_do) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -2679,23 +2780,43 @@ TEST(loading_progress_clamps_and_transitions) {
     if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
 
     ASSERT_EQ_INT(0, UI_Init());
+    NetSession_Disconnect();
+
+    /* The bar stays in [0,1] whatever it is handed. */
+    Loading_SetProgress(-5.0f);
+    ASSERT(Loading_Progress() == 0.0f);
+    Loading_SetProgress(2.0f);
+    ASSERT(Loading_Progress() == 1.0f);
+
+    /* A real battle, because the screen loads a world and a screen
+     * with none goes back to the menu. */
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, "two castles", sizeof cfg.map_name - 1);
+    cfg.players[1].kind = TAK_SLOT_AI;
+    ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg, "two castles", "aramon"));
     ASSERT_EQ_INT(0, Loading_Init(&platform));
 
-    /* Progress stays in [0,1]; Tick stays in GAME_LOADING until 100%. */
-    Loading_SetProgress(-5.0f);
-    int next = Loading_Tick(&platform, 1.0f / 60.0f);
-    ASSERT_EQ_INT(GAMESTATE_GAME_LOADING, next);
+    ASSERT_EQ_INT(GAMESTATE_GAME_LOADING,
+                  Loading_Tick(&platform, 1.0f / 60.0f));
     ASSERT_EQ_INT(0, save_and_check_canvas("test_ui_loading.bmp"));
 
-    Loading_SetProgress(2.0f);
-    /* First tick at 100% — held one frame */
-    next = Loading_Tick(&platform, 1.0f / 60.0f);
-    ASSERT_EQ_INT(GAMESTATE_GAME_LOADING, next);
-    /* Second tick transitions to IN_GAME */
-    next = Loading_Tick(&platform, 1.0f / 60.0f);
+    /* The frame that fills the bar is not the frame that hands the
+     * battle over: the finished bar is held for one frame so the
+     * player sees it full. */
+    int next = GAMESTATE_GAME_LOADING;
+    int full_at = -1, frames = 0;
+    for (; frames < 3000 && next == GAMESTATE_GAME_LOADING; frames++) {
+        next = Loading_Tick(&platform, 1.0f / 60.0f);
+        if (full_at < 0 && Loading_Progress() >= 1.0f) full_at = frames;
+    }
     ASSERT_EQ_INT(GAMESTATE_IN_GAME, next);
+    ASSERT(full_at >= 0);
+    ASSERT_EQ_INT(full_at + 1, frames - 1);
 
+    InGame_Shutdown();
     Loading_Shutdown();
+    World_End(&platform);
     UI_Shutdown();
     teardown_platform(&platform);
     VFS_Shutdown();
@@ -17813,6 +17934,8 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_B, a_game_this_build_cannot_join_is_listed_rather_than_hidden);
     RUN_UI_TEST(UI_GROUP_B, a_room_the_server_puts_us_in_opens_the_room_screen);
     RUN_UI_TEST(UI_GROUP_C, select_game_with_no_address_says_what_to_do);
+    RUN_UI_TEST(UI_GROUP_A, select_game_takes_typing_in_both_of_its_boxes);
+    RUN_UI_TEST(UI_GROUP_B, select_game_remembers_the_name_it_was_given);
     RUN_UI_TEST(UI_GROUP_C, mp_room_chat_template_is_not_drawn);
     RUN_UI_TEST(UI_GROUP_C, mp_room_map_info_names_the_chosen_map);
     RUN_UI_TEST(UI_GROUP_A, mp_room_widgets_after_the_chat_box_load);

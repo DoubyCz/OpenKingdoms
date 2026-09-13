@@ -7,10 +7,16 @@
 
 #define SETTINGS_MAX_KEYS 64
 #define SETTINGS_KEY_MAX  48
+#define SETTINGS_TEXT_MAX 64
 
+/* A setting is a number or a piece of text. The file is key=value
+ * lines either way, and a reader that wants the other kind gets its
+ * default rather than a reinterpretation of the bytes. */
 typedef struct SettingsEntry {
     char key[SETTINGS_KEY_MAX];
+    int  is_text;
     int  value;
+    char text[SETTINGS_TEXT_MAX];
 } SettingsEntry;
 
 static SettingsEntry s_entries[SETTINGS_MAX_KEYS];
@@ -40,20 +46,49 @@ static SettingsEntry *find_entry(const char *key) {
     return NULL;
 }
 
+/* The entry for `key`, made if there is room. NULL when the table is
+ * full, which is the one case a setter drops. */
+static SettingsEntry *entry_for(const char *key) {
+    SettingsEntry *e = find_entry(key);
+    if (e) return e;
+    if (s_count >= SETTINGS_MAX_KEYS) return NULL;
+    e = &s_entries[s_count++];
+    memset(e, 0, sizeof *e);
+    snprintf(e->key, sizeof(e->key), "%s", key);
+    return e;
+}
+
 int Settings_GetInt(const char *key, int default_value) {
     const SettingsEntry *e = key ? find_entry(key) : NULL;
-    return e ? e->value : default_value;
+    if (!e || e->is_text) return default_value;
+    return e->value;
 }
 
 void Settings_SetInt(const char *key, int value) {
     if (!key || !key[0]) return;
-    SettingsEntry *e = find_entry(key);
-    if (!e) {
-        if (s_count >= SETTINGS_MAX_KEYS) return;
-        e = &s_entries[s_count++];
-        snprintf(e->key, sizeof(e->key), "%s", key);
-    }
+    SettingsEntry *e = entry_for(key);
+    if (!e) return;
+    e->is_text = 0;
     e->value = value;
+    e->text[0] = '\0';
+}
+
+const char *Settings_GetStr(const char *key, const char *default_value) {
+    const SettingsEntry *e = key ? find_entry(key) : NULL;
+    if (!e || !e->is_text) return default_value;
+    return e->text;
+}
+
+void Settings_SetStr(const char *key, const char *value) {
+    if (!key || !key[0] || !value) return;
+    /* One line per setting. A value carrying a newline would read back
+     * as a second key, so it is refused rather than written. */
+    if (strchr(value, '\n') || strchr(value, '\r')) return;
+    SettingsEntry *e = entry_for(key);
+    if (!e) return;
+    e->is_text = 1;
+    e->value = 0;
+    snprintf(e->text, sizeof(e->text), "%s", value);
 }
 
 int Settings_Load(void) {
@@ -69,7 +104,22 @@ int Settings_Load(void) {
         char *end = eq;
         while (end > key && (end[-1] == ' ' || end[-1] == '\t')) *--end = '\0';
         if (!key[0]) continue;
-        Settings_SetInt(key, (int)strtol(eq + 1, NULL, 10));
+        char *val = eq + 1;
+        size_t vlen = strlen(val);
+        while (vlen && (val[vlen - 1] == '\n' ||
+                        val[vlen - 1] == '\r')) {
+            val[--vlen] = '\0';
+        }
+        /* A value that is not a whole number is text. strtol stopping
+         * short of the end is what says so, and it is what lets a name
+         * like "42nd Regiment" survive a round trip. */
+        char *stop = val;
+        long n = strtol(val, &stop, 10);
+        if (stop != val && *stop == '\0') {
+            Settings_SetInt(key, (int)n);
+        } else {
+            Settings_SetStr(key, val);
+        }
     }
     fclose(fp);
     return 0;
@@ -79,7 +129,11 @@ int Settings_Save(void) {
     FILE *fp = fopen(Settings_FilePath(), "w");
     if (!fp) return -1;
     for (int i = 0; i < s_count; i++) {
-        fprintf(fp, "%s=%d\n", s_entries[i].key, s_entries[i].value);
+        if (s_entries[i].is_text) {
+            fprintf(fp, "%s=%s\n", s_entries[i].key, s_entries[i].text);
+        } else {
+            fprintf(fp, "%s=%d\n", s_entries[i].key, s_entries[i].value);
+        }
     }
     fclose(fp);
     /* In the browser the file so far lives only in a filesystem that

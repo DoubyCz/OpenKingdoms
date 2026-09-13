@@ -488,6 +488,7 @@
        exactly the one that takes that return. */
     restorePrefs(FS);
     askForStorage();
+    findRelay();
     if (Module.bundledData) return;   /* dev build: data preloaded by the packager */
     Module.addRunDependency('gamefiles');
     tryCache(FS).then(function (n) {
@@ -553,6 +554,36 @@
      twenty before the main menu drew, whether or not they were going
      to load one. They come in when the load or save dialog opens, and
      Module.restoreSaves below is what brings them. */
+  /* Where the game server is, if there is one.
+
+     A relay is a running process on a machine somewhere, and this page
+     is a directory of files. The two need not be the same host, and on
+     a static file host they cannot be: nothing there can hold a socket
+     open. So the page asks for a file called relay.txt sitting beside
+     it, and whatever one line it holds is the address.
+
+     No address is written down in this repository. A build with no
+     relay.txt beside it falls back to this page's own origin, which is
+     right when the page really is served by the relay, and when
+     nothing answers there the screen says so and offers the box. */
+  function findRelay() {
+    Module.addRunDependency('relay');
+    var done = function () { Module.removeRunDependency('relay'); };
+    fetch('relay.txt', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (text) {
+        var url = (text || '').split(/[\r\n]/)[0].trim();
+        /* A file that is there but empty, or full of something that is
+           not an address, is the same as no file. */
+        if (/^wss?:\/\/[^\s]+$/.test(url)) {
+          Module.okRelayUrl = url;
+          console.log('[openkingdoms] game server: ' + url);
+        }
+      })
+      .catch(function () {})
+      .then(done, done);
+  }
+
   function restorePrefs(FS) {
     mkdirp(FS, PREFDIR);
     mkdirp(FS, PREFDIR + '/' + SAVES);
