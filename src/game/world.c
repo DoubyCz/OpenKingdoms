@@ -60,6 +60,11 @@ int World_BeginLoad(TAK_Platform       *plat,
     copy_bounded(g_world->map_name,    sizeof(g_world->map_name),    map_name);
     copy_bounded(g_world->map_kingdom, sizeof(g_world->map_kingdom), kingdom);
     g_world->loaded = 0;
+    /* Whose battle this is, on this machine. Every battle but a match
+     * is the first seat's, and a match says which right after this
+     * call. Without the reset a skirmish after a match would show the
+     * other player's sidebar and fog. */
+    Units_SetLocalPlayer(1);
     Economy_Init(&g_world->economy);
     /* One seed for every simulation draw, and the AI starts the match
      * from it rather than from whatever the last battle left behind. */

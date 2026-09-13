@@ -362,7 +362,8 @@ static SDL_Surface *weapon_icon_load(const char *basename) {
 /* The sidebar is <nameprefix>ingame.gui for the local player's side
  * (legacy:243412-243460), so Creon gets creingame.gui. */
 static void local_player_gui_path(const GameWorld *w, char *out, size_t cap) {
-    const TakSideInfo *side = w ? Sides_Get(w->cfg.players[0].side) : NULL;
+    const TakSideInfo *side =
+        w ? Sides_Get(Units_PlayerSide(Units_LocalPlayer())) : NULL;
     const char *prefix = (side && side->prefix[0]) ? side->prefix : "ara";
     snprintf(out, cap, "data/guis/%singame.gui", prefix);
     for (char *c = out; *c; c++)
@@ -1020,8 +1021,9 @@ void HUD_Draw(TAK_Platform *plat, const GameWorld *world) {
             if (cargo > 0) {
                 snprintf(help, sizeof(help), "%s %d", g_msg_carrying, cargo);
             } else if (world) {
-                int32_t pool     = Economy_GetMana(&world->economy, 1);
-                int32_t pool_max = Economy_GetMaxMana(&world->economy, 1);
+                int me = Units_LocalPlayer();
+                int32_t pool     = Economy_GetMana(&world->economy, me);
+                int32_t pool_max = Economy_GetMaxMana(&world->economy, me);
                 if (pool > pool_max) pool = pool_max;
                 snprintf(help, sizeof(help), "%s\n%d/%d",
                          g_msg_mana, pool, pool_max);
@@ -1031,8 +1033,9 @@ void HUD_Draw(TAK_Platform *plat, const GameWorld *world) {
 
         if (world) {
             char buf[24];
-            int32_t income = Economy_GetRegenRate(&world->economy, 1);
-            int32_t spend  = Economy_GetSpend    (&world->economy, 1);
+            int me = Units_LocalPlayer();
+            int32_t income = Economy_GetRegenRate(&world->economy, me);
+            int32_t spend  = Economy_GetSpend    (&world->economy, me);
             snprintf(buf, sizeof(buf), "+%d", income);
             GUIRuntime_SetWidgetText(g_rt, "PositiveM", buf);
             snprintf(buf, sizeof(buf), "-%d", spend);
@@ -1063,8 +1066,9 @@ void HUD_Draw(TAK_Platform *plat, const GameWorld *world) {
         /* The crystal ball is the player's pool: its frame is the pool
          * fraction scaled to the sheet's last frame (legacy:152158). */
         if (g_rt && world) {
-            int32_t pool = Economy_GetMana(&world->economy, 1);
-            int32_t pool_max = Economy_GetMaxMana(&world->economy, 1);
+            int me = Units_LocalPlayer();
+            int32_t pool = Economy_GetMana(&world->economy, me);
+            int32_t pool_max = Economy_GetMaxMana(&world->economy, me);
             float pf = (pool_max > 0) ? (float)pool / (float)pool_max : 0.0f;
             if (pf < 0.0f) pf = 0.0f;
             if (pf > 1.0f) pf = 1.0f;

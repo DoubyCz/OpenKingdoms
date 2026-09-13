@@ -72,6 +72,10 @@ static struct {
     char         status[96];
     int          held_one_frame;   /* wait one frame after 100% before transition */
     LoadingStep  step;             /* current phase of the asset loader */
+    /* Nobody built a world for this screen to load. It cannot be
+     * loaded and it cannot be waited for, so the screen says so and
+     * goes back rather than holding a bar that will never move. */
+    int          no_world;
 
     /* Background Bink video, played over the AnimatedControl widget.
      * NULL when the file is missing or FFmpeg is not in the build, as
@@ -336,7 +340,7 @@ static void loading_advance_step(TAK_Platform *platform) {
         Loading_SetProgress(0.10f);
 
         GameWorld *world = World_Get();
-        if (!world) { ld.step = LS_DONE; break; }
+        if (!world) { ld.no_world = 1; break; }
 
         /* The map pack, the maps folder and the missions folder, in
          * the order the original looks in (see tak_maps.h). */
@@ -722,7 +726,8 @@ static void loading_advance_step(TAK_Platform *platform) {
     }
 
     case LS_POSITION_CAMERA: {
-        /* TASK 7b (user): center camera on player-1 StartPos from the OTA. */
+        /* The view opens on this machine's own start position, which
+         * outside a match is the first seat's. */
         Loading_SetStatus("Positioning view...");
         Loading_SetProgress(0.90f);
         GameWorld *world = World_Get();
@@ -734,7 +739,7 @@ static void loading_advance_step(TAK_Platform *platform) {
         int32_t cam_y = world->map_pixels_h / 2 - world->viewport_h / 2;
         for (int i = 0; i < world->num_start_positions; i++) {
             StartPos curr_start_pos = world->start_positions[i];
-            if (curr_start_pos.player == 1) {
+            if (curr_start_pos.player == Units_LocalPlayer()) {
                 cam_x = curr_start_pos.x * 16 - world->viewport_w / 2; // 16 is a best guess scale factor.. need to figure this out
                 cam_y = curr_start_pos.z * 16 - world->viewport_h / 2;
             }
@@ -809,7 +814,7 @@ static void loading_advance_step(TAK_Platform *platform) {
                                                     cap_contrib, regen_contrib);
                         }
                     }
-                    if (!selected && p->player == 1) {
+                    if (!selected && p->player == Units_LocalPlayer()) {
                         Units_SelectSingle(handle);
                         selected = 1;
                     }
@@ -897,12 +902,13 @@ static void loading_advance_step(TAK_Platform *platform) {
                                                 cap_contrib, regen_contrib);
                     }
 
-                    /* Auto-select the local human player's monarch so
-                     * the HUD bottom strip immediately shows "Elsin /
-                     * Standby" instead of an empty status box. Matches
-                     * legacy behaviour where the game opens centred on
-                     * the player's monarch with it pre-selected. */
-                    if (sp.player == 1 && slot->kind == TAK_SLOT_HUMAN) {
+                    /* Auto-select this machine's own monarch so the
+                     * HUD bottom strip shows a name and a status rather
+                     * than an empty box. The original opens centred on
+                     * the player's monarch with it picked, and in a
+                     * match that is whichever seat this machine took. */
+                    if (sp.player == Units_LocalPlayer() &&
+                        slot->kind == TAK_SLOT_HUMAN) {
                         Units_SelectSingle(handle);
                     }
 
@@ -1074,6 +1080,11 @@ int Loading_Tick(TAK_Platform *platform, float frame_dt) {
      * keeps the progress bar + Bink smooth — the user sees each phase
      * tick past instead of a frozen UI during a big synchronous load. */
     loading_advance_step(platform);
+    if (ld.no_world) {
+        fprintf(stderr, "Loading: no world to load, going back to the menu\n");
+        ld.no_world = 0;
+        return GAMESTATE_MENU;
+    }
 
     /* Advance the Bink clip at its native frame rate. Loop on reaching
      * the end so the montage keeps playing until loading completes.

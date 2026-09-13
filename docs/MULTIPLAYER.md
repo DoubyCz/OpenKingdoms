@@ -135,20 +135,26 @@ the rest of this document is still design.
   server, an arriving turn is unpacked into the queue with the tick that
   turn owns, and nothing runs past the turns it holds.
 
-What is not built is a match played by two people. Every layer it needs is
-in, and the run that would prove it has not been done.
+Two browsers have now played one match. One Edge page hosts a game on
+okrelay, a second lists it, joins it and takes the second seat, both say they
+are ready, the host presses Play and both pages load the same world and open
+in it. The two builds spawn both monarchs at the same coordinates from the
+same seed, and each page plays its own seat: its own start position, its own
+monarch picked, its own kingdom's sidebar and its own mana pool.
 
-A browser has now run it. Edge, on the WebAssembly build, opens a WebSocket
-to okrelay, is welcomed, asks for the room list and draws a game hosted by a
-separate client on the original own Select Game screen. That run is
-scripts/mp-browser-smoke.js, and it found two things nothing without a
-browser could: a screen that drew and never presented, and a page reaching
-HEAPU8 through Module, where this build does not export it.
+That run is where four things were found that nothing without a browser
+could. A screen that drew and never presented. A page reaching HEAPU8 through
+Module, where this build does not export it. A page calling the allocator
+from its socket callback, where this build exports no _free, so every
+arriving message threw. And the one that mattered most: the battle room moved
+to the loading screen without building a world, so the bar held at ten per
+cent for ever with nothing on screen to say why.
 
-What still has not happened is two people playing. The turn loop, the match
-handshake and the screens are all in and tested, and the last mile is a
-browser hosting a game, another joining it, and both simulations agreeing
-tick for tick over a real socket.
+The browser harness is scripts/mp-browser-smoke.js, which now fails when the
+page throws rather than printing the throw and passing.
+
+What has not happened yet is a long match under load, a dropped client that
+comes back, and a native client in the same room as a browser one.
 
 ---
 
@@ -451,8 +457,8 @@ Good entry points, roughly in the order they unblock other work:
 - Taking the piece hierarchy out of the renderer so a headless target can
   step the simulation with no window.
 - Replay recording and playback from the turn log.
-- Two browsers in one match. Everything under it is in and tested, and what
-  is missing is the run that proves it.
+- A long match. Two browsers reach a battle and play their own seats, and
+  what has not been measured is an hour of it with armies on the field.
 - Reconnect, which needs the device token stored with the player settings.
   The settings file carries integers only today, so it is a change to that
   first.

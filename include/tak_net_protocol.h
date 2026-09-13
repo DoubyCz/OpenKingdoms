@@ -210,6 +210,18 @@ typedef enum TAK_NetPaceReason {
 #define TAK_ROOMF_HOST_PACES_ONLY 0x0010u
 #define TAK_ROOMF_AI_TAKES_OVER   0x0020u   /* on a drop, else the army goes */
 
+/* Rule option bits, carried by CREATE_ROOM, the snapshot and
+ * START_GAME. One bit for each rule the skirmish screen has a checkbox
+ * for, because the world a match builds is built from a BattleConfig
+ * and every seat has to build the same one. */
+#define TAK_ROOMOPT_LINE_OF_SIGHT     0x0001u
+#define TAK_ROOMOPT_MAP_REVEALED      0x0002u
+#define TAK_ROOMOPT_MONARCH_EXPEND    0x0004u
+#define TAK_ROOMOPT_RANDOM_STARTS     0x0008u
+#define TAK_ROOMOPT_POWER_CODES       0x0010u
+#define TAK_ROOMOPT_SLOW_GAME         0x0020u
+#define TAK_ROOMOPT_CRUSADES_BALANCE  0x0040u
+
 /* HELLO flag bits. */
 #define TAK_HELLOF_IRON_PLAGUE    0x01u
 #define TAK_HELLOF_WANTS_REJOIN   0x02u

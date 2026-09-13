@@ -276,7 +276,8 @@ int EndScreen_Open(TAK_Platform *platform, const GameWorld *world) {
 
     if (world->skirmish_local_result > 0) {
         char prefix[16];
-        side_prefix(world->cfg.players[0].side, prefix, sizeof(prefix));
+        side_prefix(Units_PlayerSide(Units_LocalPlayer()),
+                    prefix, sizeof(prefix));
         for (char *p = prefix; *p; p++) {
             if (*p >= 'A' && *p <= 'Z') *p = (char)(*p - 'A' + 'a');
         }

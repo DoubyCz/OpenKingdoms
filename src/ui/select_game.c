@@ -21,6 +21,7 @@
 
 #include "tak_font.h"
 #include "tak_gameloop.h"
+#include "tak_battle_config.h"
 #include "tak_gui.h"
 #include "tak_gui_render.h"
 #include "tak_maps.h"
@@ -213,6 +214,20 @@ static void host_game(void) {
     snprintf(cr.name, sizeof cr.name, "%s's game", "Player");
     cr.flags = TAK_ROOMF_LISTED | TAK_ROOMF_ALLOW_WATCHING;
     cr.max_players = TAK_NET_SEATS;
+    /* The rules this build plays a skirmish under. Sending nothing
+     * reads as every rule off, which is not a default anybody chose:
+     * line of sight alone is a different battle. */
+    BattleConfig defaults;
+    BattleConfig_SetDefaults(&defaults);
+    cr.unit_cap = (uint16_t)defaults.units_per_side;
+    cr.options =
+        (defaults.line_of_sight          ? TAK_ROOMOPT_LINE_OF_SIGHT    : 0u) |
+        (defaults.map_revealed           ? TAK_ROOMOPT_MAP_REVEALED     : 0u) |
+        (defaults.monarch_expendable     ? TAK_ROOMOPT_MONARCH_EXPEND   : 0u) |
+        (defaults.random_start_locations ? TAK_ROOMOPT_RANDOM_STARTS    : 0u) |
+        (defaults.power_codes            ? TAK_ROOMOPT_POWER_CODES      : 0u) |
+        (defaults.slow_game              ? TAK_ROOMOPT_SLOW_GAME        : 0u) |
+        (defaults.crusades_balance       ? TAK_ROOMOPT_CRUSADES_BALANCE : 0u);
     if (first_map(cr.map_name, sizeof cr.map_name, cr.map_fingerprint) != 0) {
         /* Without a map the server would take the room and then refuse
          * every attempt to start it, which is a worse answer than this. */
