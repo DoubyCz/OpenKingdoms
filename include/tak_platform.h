@@ -42,6 +42,11 @@ typedef struct TAK_Platform {
     uint8_t  pressed_enter;
     uint8_t  pressed_escape;
     uint8_t  pressed_backspace;
+    /* The left mouse button went down since the last pump, and where,
+     * in window pixels. A click that was over before the frame saw it
+     * is in here and nowhere else. */
+    uint8_t  pressed_mouse_left;
+    int      press_x, press_y;
     SDL_Texture   *canvas_tex;    /* streaming, canvas_w × canvas_h, RGBA  */
 
     int            window_w;      /* current window size (updates on resize) */
@@ -109,6 +114,13 @@ void TAK_Platform_Present(TAK_Platform *plat);
  * canvas coords. If the point lies in the letterbox bars, returns 0 and
  * leaves *out_cx/cy untouched; otherwise returns 1 and writes clamped
  * canvas coords. UI code should use this before doing any hit-testing. */
+/* The left button as a screen should read it this frame: held, or
+ * pressed since the last pump even if already let go. When it was
+ * pressed and let go inside one frame the position is where the press
+ * landed, not where the pointer is now. Returns whether it is down,
+ * and fills the canvas position, -1 when off the canvas. */
+int TAK_Platform_MouseThisFrame(const TAK_Platform *plat, int *out_cx, int *out_cy);
+
 int  TAK_Platform_MapMouseToCanvas(const TAK_Platform *plat,
                                     int window_x, int window_y,
                                     int *out_canvas_x, int *out_canvas_y);

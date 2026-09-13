@@ -582,14 +582,7 @@ SaveBrowserResult SaveBrowser_Tick(TAK_Platform *platform) {
     sb.prev_back = back;
 
     int mx = -1, my = -1, mouse_down = 0;
-    if (focus) {
-        int wx = 0, wy = 0;
-        uint32_t buttons = SDL_GetMouseState(&wx, &wy);
-        mouse_down = (buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-        if (!TAK_Platform_MapMouseToCanvas(platform, wx, wy, &mx, &my)) {
-            mx = -1; my = -1;
-        }
-    }
+    if (focus) mouse_down = TAK_Platform_MouseThisFrame(platform, &mx, &my);
 
     /* A message box owns the keys and the mouse until it is read, the
      * same rule an inner dialog follows (legacy:243003-243004). The
