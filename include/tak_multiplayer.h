@@ -56,5 +56,14 @@ int         Multiplayer_MapChooserRowCount(void);
 const char *Multiplayer_MapChooserRowKey(int row);
 void        Multiplayer_MapChooserSelect(int row);
 void        Multiplayer_MapChooserPress(const char *name);
+/* Test seams for the chooser's list and its bar: the top row showing,
+ * the rows that fit, a pointer event as the tick would feed it, the
+ * bar's thumb and track as drawn, and whether a named widget is hidden. */
+int         Multiplayer_MapChooserScroll(void);
+int         Multiplayer_MapChooserRowsVisible(void);
+void        Multiplayer_MapChooserPointer(int x, int y, int down);
+int         Multiplayer_MapChooserThumbRect(SDL_Rect *out);
+int         Multiplayer_MapChooserTrackRect(SDL_Rect *out);
+int         Multiplayer_MapChooserWidgetHidden(const char *name);
 
 #endif

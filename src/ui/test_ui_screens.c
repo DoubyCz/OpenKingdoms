@@ -1249,6 +1249,94 @@ TEST(select_game_draws_the_widgets_the_shipped_file_authors) {
     VFS_Shutdown();
 }
 
+/* Game Information. Reported from play: the panel beside the list was
+ * always empty. The labels selectgame.gui authors take the chosen
+ * game's name, host, map, rules, players and state, which the server
+ * now lists with each room. */
+static size_t sg_encode_room_list_described(uint8_t *out, size_t cap) {
+    TAK_MsgRoomList rl;
+    memset(&rl, 0, sizeof rl);
+    rl.flags = TAK_ROOMLISTF_FULL;
+    rl.count = 2;
+    for (int i = 0; i < 2; i++) {
+        rl.room[i].room_id = (uint32_t)(i + 1);
+        snprintf(rl.room[i].name, sizeof rl.room[i].name, "game %d", i + 1);
+        snprintf(rl.room[i].host_name, sizeof rl.room[i].host_name, "host %d", i + 1);
+        snprintf(rl.room[i].map_name, sizeof rl.room[i].map_name, "two castles");
+        rl.room[i].players = (uint8_t)(2 + i);
+        rl.room[i].max_players = 8;
+    }
+    rl.room[0].options = TAK_ROOMOPT_LINE_OF_SIGHT | TAK_ROOMOPT_MONARCH_EXPEND;
+    rl.room[0].flags = TAK_ROOMF_LISTED | TAK_ROOMF_IRON_PLAGUE;
+    rl.room[0].status = TAK_ROOM_OPEN;
+    rl.room[1].options = TAK_ROOMOPT_MAP_REVEALED;
+    rl.room[1].flags = TAK_ROOMF_LISTED;
+    rl.room[1].status = TAK_ROOM_IN_PROGRESS;
+    return TAK_Msg_RoomListEncode(&rl, out, cap);
+}
+
+static void sg_expect_label(const char *name, const char *want) {
+    char got[64] = { 0 };
+    if (!SelectGame_LabelText(name, got, sizeof got)) return;   /* not authored */
+    if (strcmp(got, want) != 0)
+        printf("[%s: wanted \"%s\", got \"%s\"] ", name, want, got);
+    ASSERT_EQ_STR(want, got);
+}
+
+TEST(select_game_shows_the_chosen_games_information) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, SelectGame_Init(&platform));
+    NetSession_BeginWithoutLink("Player");
+    uint8_t msg[TAK_NET_FRAME_MAX];
+    size_t n = sg_encode_welcome(msg, sizeof msg, 7);
+    sg_feed(msg, n);
+    ASSERT_EQ_INT(GAMESTATE_SELECT_GAME, SelectGame_Tick(&platform, 1.0f / 60.0f));
+    n = sg_encode_room_list_described(msg, sizeof msg);
+    ASSERT(n > 0);
+    sg_feed(msg, n);
+    ASSERT_EQ_INT(GAMESTATE_SELECT_GAME, SelectGame_Tick(&platform, 1.0f / 60.0f));
+    ASSERT_EQ_INT(2, SelectGame_RowCount());
+
+    /* Nothing chosen, nothing said. */
+    char got[64] = { 0 };
+    ASSERT_EQ_INT(1, SelectGame_LabelText("Game", got, sizeof got));
+    ASSERT_EQ_STR("", got);
+
+    SelectGame_SelectRow(0);
+    ASSERT_EQ_INT(GAMESTATE_SELECT_GAME, SelectGame_Tick(&platform, 1.0f / 60.0f));
+    sg_expect_label("Game", "game 1");
+    sg_expect_label("Host", "host 1");
+    sg_expect_label("MapName", "two castles");
+    sg_expect_label("MonarchDeath", "Expendable");
+    sg_expect_label("LOS", "Yes");
+    sg_expect_label("Mapping", "No");
+    sg_expect_label("NumPlayers", "2/8");
+    sg_expect_label("GameStatus", "Open");
+    sg_expect_label("ScriptedStatus", "No");
+    sg_expect_label("Creon", "Yes");
+
+    SelectGame_SelectRow(1);
+    ASSERT_EQ_INT(GAMESTATE_SELECT_GAME, SelectGame_Tick(&platform, 1.0f / 60.0f));
+    sg_expect_label("Game", "game 2");
+    sg_expect_label("Host", "host 2");
+    sg_expect_label("MonarchDeath", "Fatal");
+    sg_expect_label("LOS", "No");
+    sg_expect_label("Mapping", "Yes");
+    sg_expect_label("NumPlayers", "3/8");
+    sg_expect_label("GameStatus", "Playing");
+    sg_expect_label("Creon", "No");
+    ASSERT_EQ_INT(0, save_and_check_canvas("test_ui_select_game_info.bmp"));
+
+    SelectGame_Shutdown();
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 TEST(select_game_lists_the_rooms_a_server_offers) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -2267,6 +2355,77 @@ TEST(mp_room_shows_why_the_server_said_no) {
 /* The host changes a rule and the unit limit and the map, and each is
  * one edit to the server, which owns the room. A guest pressing the
  * same box sends nothing and is told whose it is. */
+/* The map chooser's own scrollbar. Reported from play: the bar could
+ * not be used, and the first row drew two names on top of each other.
+ * The chooser only ever answered its two arrow buttons, and the
+ * MapName label choosemap.gui authors on the first row was given the
+ * selected map's name. The thumb drags, the track pages, the thumb
+ * follows the list, and the label is art the rows draw over. */
+TEST(mp_room_map_chooser_scrolls_by_its_bar) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, Multiplayer_Init(&platform));
+    NetSession_BeginWithoutLink("Player");
+    TAK_NetClient *c = NetSession_Client();
+    uint8_t msg[TAK_NET_FRAME_MAX];
+    size_t n = sg_encode_welcome(msg, sizeof msg, 702);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1000);
+    n = mp_encode_room_hosted(msg, sizeof msg, 1, 702,
+                              TAK_ROOMOPT_LINE_OF_SIGHT, 500, 0);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1100);
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+    mp_drain(c);
+
+    GUIRuntime *rt = Multiplayer_Runtime();
+    (void)Multiplayer_HandleClick("Map", widget_index_named(rt, "Map"));
+    ASSERT_EQ_INT(1, Multiplayer_MapChooserOpen());
+    int count = Multiplayer_MapChooserRowCount();
+    int vis = Multiplayer_MapChooserRowsVisible();
+    printf("[%d maps, %d rows showing] ", count, vis);
+    ASSERT(count > vis + 2);
+    /* The template's label is art, not a row of its own. */
+    ASSERT_EQ_INT(1, Multiplayer_MapChooserWidgetHidden("MapName"));
+
+    Multiplayer_MapChooserSelect(0);
+    ASSERT_EQ_INT(0, Multiplayer_MapChooserScroll());
+    SDL_Rect track, thumb;
+    ASSERT_EQ_INT(1, Multiplayer_MapChooserTrackRect(&track));
+    ASSERT_EQ_INT(1, Multiplayer_MapChooserThumbRect(&thumb));
+    ASSERT(track.h > thumb.h + 20);
+    ASSERT_EQ_INT(track.y, thumb.y);
+
+    /* Grab the thumb and drag it past the bottom of the track. */
+    int tx = thumb.x + thumb.w / 2, ty = thumb.y + thumb.h / 2;
+    Multiplayer_MapChooserPointer(tx, ty, 1);
+    Multiplayer_MapChooserPointer(tx, track.y + track.h + 40, 1);
+    Multiplayer_MapChooserPointer(tx, track.y + track.h + 40, 0);
+    int max_scroll = count - vis;
+    ASSERT_EQ_INT(max_scroll, Multiplayer_MapChooserScroll());
+    ASSERT_EQ_INT(1, Multiplayer_MapChooserThumbRect(&thumb));
+    ASSERT_EQ_INT(track.y + track.h - thumb.h, thumb.y);
+
+    /* A press on the track above the thumb pages up. */
+    Multiplayer_MapChooserPointer(tx, track.y + 2, 1);
+    Multiplayer_MapChooserPointer(tx, track.y + 2, 0);
+    ASSERT_EQ_INT(max_scroll - vis > 0 ? max_scroll - vis : 0,
+                  Multiplayer_MapChooserScroll());
+
+    /* Picking the first row brings the list and the thumb back up. */
+    Multiplayer_MapChooserSelect(0);
+    ASSERT_EQ_INT(0, Multiplayer_MapChooserScroll());
+    ASSERT_EQ_INT(1, Multiplayer_MapChooserThumbRect(&thumb));
+    ASSERT_EQ_INT(track.y, thumb.y);
+
+    Multiplayer_CloseMapChooser();
+    Multiplayer_Shutdown();
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 TEST(mp_room_host_sets_the_rules_the_cap_and_the_map) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -18306,10 +18465,12 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_A, mp_room_draws_a_seat_that_is_ready);
     RUN_UI_TEST(UI_GROUP_B, mp_room_shows_why_the_server_said_no);
     RUN_UI_TEST(UI_GROUP_C, mp_room_host_sets_the_rules_the_cap_and_the_map);
+    RUN_UI_TEST(UI_GROUP_D, mp_room_map_chooser_scrolls_by_its_bar);
     RUN_UI_TEST(UI_GROUP_D, mp_room_a_guest_cannot_change_the_rules);
     RUN_UI_TEST(UI_GROUP_A, mp_room_chat_goes_out_and_comes_in);
     RUN_UI_TEST(UI_GROUP_A, select_game_draws_the_widgets_the_shipped_file_authors);
     RUN_UI_TEST(UI_GROUP_A, select_game_lists_the_rooms_a_server_offers);
+    RUN_UI_TEST(UI_GROUP_B, select_game_shows_the_chosen_games_information);
     RUN_UI_TEST(UI_GROUP_A, select_game_hosting_a_game_gives_it_a_map);
     RUN_UI_TEST(UI_GROUP_C, select_game_hosting_a_game_names_the_rules_it_plays_by);
     RUN_UI_TEST(UI_GROUP_B, mp_room_says_whether_it_has_the_rooms_map);

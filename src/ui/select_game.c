@@ -86,6 +86,7 @@ static struct {
  * because the test seam sits above it. */
 static void sg_press(const char *name);
 static void connect_to(const char *address);
+static void fill_info(void);
 
 static TAK_NetClient *client(void) { return NetSession_Client(); }
 
@@ -347,13 +348,15 @@ static void draw_rows(void) {
         }
         char line[128];
         /* A room this build cannot join is listed and marked, not
-         * hidden, which is the one thing the original got wrong here. */
-        snprintf(line, sizeof line, "%s%-24s %s  %u/%u",
+         * hidden, which is the one thing the original got wrong here.
+         * The game under Game Name and its host under Host, the two
+         * columns GameInfoTemplate authors. */
+        snprintf(line, sizeof line, "%s%s",
                  s->compat ? "- " : "  ",
-                 s->name[0] ? s->name : "(no name)",
-                 s->map_name[0] ? s->map_name : "(no map)",
-                 (unsigned)s->players, (unsigned)s->max_players);
+                 s->name[0] ? s->name : "(no name)");
         Font_DrawString(sg.font_row, off, r.x + 4, r.y + i * rh + 2, line);
+        Font_DrawString(sg.font_row, off, r.x + 158, r.y + i * rh + 2,
+                        s->host_name[0] ? s->host_name : "");
     }
 }
 
@@ -417,6 +420,7 @@ int SelectGame_Init(TAK_Platform *platform) {
 
     load_name();
     set_caret(0, 0);
+    fill_info();
 
     NetSession_DefaultAddress(sg.address, sizeof sg.address);
     if (sg.address[0]) {
@@ -447,6 +451,61 @@ void SelectGame_Shutdown(void) {
 
 int SelectGame_RowCount(void) { return room_count(); }
 int SelectGame_Selected(void) { return sg.selected; }
+
+/* The Game Information panel: the chosen game's name, host, map,
+ * rules, players and state in the labels selectgame.gui authors.
+ * Nothing chosen, nothing said. */
+static void set_label(const char *name, const char *text) {
+    if (sg.rt && GUIDialog_FindByName(&sg.dialog, name))
+        GUIRuntime_SetWidgetText(sg.rt, name, text);
+}
+
+static const char *yes_no(int on) { return on ? "Yes" : "No"; }
+
+static const char *status_word(uint8_t status) {
+    switch (status) {
+        case TAK_ROOM_OPEN:        return "Open";
+        case TAK_ROOM_LOCKED:      return "Locked";
+        case TAK_ROOM_LOADING:     return "Loading";
+        case TAK_ROOM_IN_PROGRESS: return "Playing";
+        case TAK_ROOM_ENDED:       return "Ended";
+        default:                   return "";
+    }
+}
+
+static void fill_info(void) {
+    TAK_NetClient *c = client();
+    const TAK_RoomSummary *r = (c && sg.selected >= 0 && sg.selected < room_count())
+                             ? &c->rooms.room[sg.selected] : NULL;
+    char players[32];
+    players[0] = '\0';
+    if (r) snprintf(players, sizeof players, "%u/%u",
+                    (unsigned)r->players, (unsigned)r->max_players);
+    set_label("Game",           r ? r->name : "");
+    set_label("Host",           r ? r->host_name : "");
+    set_label("MapName",        r ? r->map_name : "");
+    set_label("MonarchDeath",   r ? ((r->options & TAK_ROOMOPT_MONARCH_EXPEND)
+                                     ? "Expendable" : "Fatal") : "");
+    set_label("LOS",            r ? yes_no(r->options & TAK_ROOMOPT_LINE_OF_SIGHT) : "");
+    set_label("Mapping",        r ? yes_no(r->options & TAK_ROOMOPT_MAP_REVEALED) : "");
+    set_label("NumPlayers",     players);
+    set_label("GameStatus",     r ? status_word(r->status) : "");
+    set_label("ScriptedStatus", r ? "No" : "");
+    set_label("Creon",          r ? yes_no(r->flags & TAK_ROOMF_IRON_PLAGUE) : "");
+}
+
+void SelectGame_SelectRow(int row) {
+    sg.selected = (row >= 0 && row < room_count()) ? row : -1;
+    fill_info();
+}
+
+int SelectGame_LabelText(const char *name, char *out, size_t cap) {
+    if (!sg.rt || !name || !out || !cap) return 0;
+    const GUIWidget *w = GUIRuntime_WidgetByName(sg.rt, name);
+    if (!w) return 0;
+    snprintf(out, cap, "%s", w->display_text);
+    return 1;
+}
 
 const char *SelectGame_RowName(int index) {
     TAK_NetClient *c = client();
@@ -485,6 +544,7 @@ static void take_events(void) {
                 if (sg.selected >= room_count()) sg.selected = -1;
             }
             clamp_scroll();
+            fill_info();
             break;
         case TAK_NC_EV_ROOM_STATE:
             /* In a room, so the battle room takes over from here. */
@@ -651,6 +711,8 @@ int SelectGame_Tick(TAK_Platform *platform, float dt) {
                 if (rel > travel) rel = travel;
                 sg.scroll = (rel * m + travel / 2) / travel;
                 clamp_scroll();
+                GUIWidget *tw = &sg.dialog.children[sg.idx_thumb];
+                tw->rect.y = track.y + rel + (tw->rect.y - thumb_draw.y);
             }
         }
     }
@@ -671,6 +733,7 @@ int SelectGame_Tick(TAK_Platform *platform, float dt) {
             if (row >= 0 && row < room_count()) {
                 if (row == sg.selected) join_selected();
                 sg.selected = row;
+                fill_info();
             }
         }
         /* The name box is an edit field and not a button, so the
@@ -689,6 +752,18 @@ int SelectGame_Tick(TAK_Platform *platform, float dt) {
         return next;
     }
 
+    /* The thumb sits on the track where the list is. */
+    if (sg.idx_thumb >= 0 && sg.idx_track >= 0 && !sg.dragging) {
+        SDL_Rect track, thumb;
+        widget_draw_rect(sg.idx_track, &track);
+        widget_draw_rect(sg.idx_thumb, &thumb);
+        int travel = track.h - thumb.h;
+        if (travel < 0) travel = 0;
+        int m = max_scroll();
+        GUIWidget *tw = &sg.dialog.children[sg.idx_thumb];
+        int rel = m > 0 ? (travel * sg.scroll) / m : 0;
+        tw->rect.y = track.y + rel + (tw->rect.y - thumb.y);
+    }
     GUIRuntime_Render(sg.rt);
     draw_rows();
     draw_name();
