@@ -75,6 +75,7 @@ set(TAK_RENDER_SOURCES
 
 set(TAK_GAME_SOURCES
     game/ai.c
+    game/game_speed.c
     game/sim_hash.c
     game/ai_influence.c
     game/ai_plan.c
@@ -106,6 +107,8 @@ set(TAK_UI_SOURCES
     ui/multiplayer.c
     ui/translate.c
     ui/ingame.c
+    ui/ingame_debug_keys.c
+    ui/ingame_keys.c
     ui/ingame_menu.c ui/perf_probe.c
     ui/chat.c
     ui/end_screen.c
@@ -353,6 +356,8 @@ set(TAK_SCREEN_TEST_SOURCES
     ui/credits.c
     ui/story.c
     ui/ingame.c
+    ui/ingame_debug_keys.c
+    ui/ingame_keys.c
     ui/ingame_menu.c ui/perf_probe.c
     ui/chat.c
     ui/end_screen.c
@@ -377,6 +382,7 @@ set(TAK_SCREEN_TEST_SOURCES
     sound/game_sound.c
     sound/ambient.c
     game/ai.c
+    game/game_speed.c
     game/ai_influence.c
     game/ai_plan.c
     game/tnt.c
@@ -459,6 +465,8 @@ add_executable(test_unit_stall
     ui/credits.c
     ui/story.c
     ui/ingame.c
+    ui/ingame_debug_keys.c
+    ui/ingame_keys.c
     ui/ingame_menu.c
     ui/perf_probe.c
     ui/chat.c
@@ -485,6 +493,7 @@ add_executable(test_unit_stall
     sound/game_sound.c
     sound/ambient.c
     game/ai.c
+    game/game_speed.c
     game/ai_influence.c
     game/ai_plan.c
     game/tnt.c
@@ -1535,6 +1544,50 @@ target_compile_definitions(test_savestate PRIVATE
     TAK_GAME_DIR="${TAK_GAME_DIR}"
 )
 
+# Game speed: the level, the range, the message, the timer that runs on
+# it, and the proof that the simulation comes out the same at every
+# speed for the same number of ticks. Data free, so CI runs it.
+add_executable(test_game_speed
+    game/test_game_speed.c
+    game/game_speed.c
+    game/sim_hash.c
+    game/sim_rand.c
+    core/game_loop.c
+    ui/ingame_keys.c
+)
+target_include_directories(test_game_speed PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_compile_definitions(test_game_speed PRIVATE SDL_MAIN_HANDLED)
+target_link_libraries(test_game_speed PRIVATE SDL2::SDL2)
+
+# The debug hotkey decoder in a developer build, where the tools do
+# exist and every one of them has to take Alt. Data free.
+add_executable(test_ingame_debug_keys
+    ui/test_ingame_debug_keys.c
+    ui/ingame_debug_keys.c
+)
+target_include_directories(test_ingame_debug_keys PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_compile_definitions(test_ingame_debug_keys PRIVATE SDL_MAIN_HANDLED TAK_DEBUG=1)
+target_link_libraries(test_ingame_debug_keys PRIVATE SDL2::SDL2)
+
+# The same file again, built the way a player's copy is built. Nothing
+# it presses may reach a development tool. Data free.
+add_executable(test_ingame_keys_shipped
+    ui/test_ingame_debug_keys.c
+    ui/ingame_debug_keys.c
+)
+target_include_directories(test_ingame_keys_shipped PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_compile_definitions(test_ingame_keys_shipped PRIVATE SDL_MAIN_HANDLED)
+target_link_libraries(test_ingame_keys_shipped PRIVATE SDL2::SDL2)
+
 add_executable(test_fog
     game/test_fog.c
     game/fog.c
@@ -1707,6 +1760,9 @@ if(BUILD_TESTING)
     add_test(NAME test_savegame_no_data COMMAND test_savegame --no-data)
     add_test(NAME test_sim_hash    COMMAND test_sim_hash)
     add_test(NAME test_savestate   COMMAND test_savestate)
+    add_test(NAME test_game_speed  COMMAND test_game_speed)
+    add_test(NAME test_ingame_debug_keys COMMAND test_ingame_debug_keys)
+    add_test(NAME test_ingame_keys_shipped COMMAND test_ingame_keys_shipped)
     add_test(NAME test_sound       COMMAND test_sound)
     add_test(NAME test_palette     COMMAND test_palette)
     add_test(NAME test_tnt         COMMAND test_tnt)

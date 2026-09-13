@@ -146,6 +146,11 @@ int  HUD_GetMinimapRect(const TAK_Platform *plat, SDL_Rect *out);
  * UI canvas. Return 0 when the HUD has no dialog. */
 int  HUD_GetViewportCanvasRect(SDL_Rect *out);
 
+/* Draw one transient message line over the top left of the play area,
+ * where the original's message ring draws (legacy:205785-205828). Does
+ * nothing for an empty string. */
+void HUD_DrawMessageLine(TAK_Platform *plat, const char *text);
+
 /* ── Introspection (tests) ─────────────────────────────────────────── */
 
 /* 1 when the named widget exists in the HUD dialog and every copy of it

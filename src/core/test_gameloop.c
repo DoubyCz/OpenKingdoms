@@ -109,6 +109,71 @@ TEST(timer_accumulator_debt_is_clamped) {
     ASSERT_EQ_INT(t.max_ticks_per_frame, ticks);
 }
 
+/* Game speed. It scales the wall time going into the accumulator and
+ * nothing else: the tick keeps its length, so the same battle runs the
+ * same way at every speed and only the number of ticks a frame gets
+ * changes (legacy:242355, legacy:242391-242396). */
+
+TEST(timer_init_speed_is_normal) {
+    Timer t;
+    Timer_Init(&t);
+    ASSERT(t.speed == 1.0);
+    ASSERT_EQ_INT(SIM_MAX_TICKS_PER_FRAME, t.base_max_ticks);
+}
+
+TEST(timer_speed_does_not_touch_the_timestep) {
+    Timer t;
+    Timer_Init(&t);
+    double dt = t.sim_dt;
+    Timer_SetSpeed(&t, 2.0);
+    ASSERT(t.sim_dt == dt);
+}
+
+TEST(timer_speed_scales_the_ticks_a_frame_gets) {
+    Timer t;
+    Timer_Init(&t);
+    Timer_SetSpeed(&t, 2.0);
+    Timer_Advance(&t, 1.0 / 60.0);
+    int ticks = 0;
+    while (Timer_ConsumeTick(&t)) ticks++;
+    ASSERT_EQ_INT(2, ticks);
+}
+
+TEST(timer_speed_scales_the_catch_up_budget) {
+    /* A budget frozen at the normal-speed value is spent by one frame
+     * of a slow machine at double speed, and every frame after that
+     * throws its surplus away, so the speed the player asked for never
+     * arrives. */
+    Timer t;
+    Timer_Init(&t);
+    Timer_SetSpeed(&t, 2.0);
+    ASSERT_EQ_INT(SIM_MAX_TICKS_PER_FRAME * 2, t.max_ticks_per_frame);
+    Timer_Advance(&t, 1.0 / 20.0);
+    int ticks = 0;
+    while (Timer_ConsumeTick(&t)) ticks++;
+    ASSERT_EQ_INT(6, ticks);
+}
+
+TEST(timer_frame_dt_is_wall_time_at_any_speed) {
+    /* Camera scroll and cursor animation run on frame_dt, and the
+     * original scrolls per frame (legacy:243576). */
+    Timer t;
+    Timer_Init(&t);
+    Timer_SetSpeed(&t, 2.0);
+    Timer_Advance(&t, 0.02);
+    ASSERT(Timer_GetFrameDT(&t) == 0.02);
+}
+
+TEST(timer_zero_speed_is_a_full_stop) {
+    Timer t;
+    Timer_Init(&t);
+    Timer_SetSpeed(&t, 0.0);
+    for (int i = 0; i < 100; i++) Timer_Advance(&t, 1.0 / 60.0);
+    int ticks = 0;
+    while (Timer_ConsumeTick(&t)) ticks++;
+    ASSERT_EQ_INT(0, ticks);
+}
+
 /* ── Timer_GetAlpha ─────────────────────────────────────────────── */
 
 TEST(timer_alpha_in_range) {
@@ -166,6 +231,14 @@ int main(int argc, char *argv[]) {
     TEST_SUITE("Spiral-of-death clamp");
     RUN(timer_spiral_of_death_clamp);
     RUN(timer_accumulator_debt_is_clamped);
+
+    TEST_SUITE("Game speed");
+    RUN(timer_init_speed_is_normal);
+    RUN(timer_speed_does_not_touch_the_timestep);
+    RUN(timer_speed_scales_the_ticks_a_frame_gets);
+    RUN(timer_speed_scales_the_catch_up_budget);
+    RUN(timer_frame_dt_is_wall_time_at_any_speed);
+    RUN(timer_zero_speed_is_a_full_stop);
 
     TEST_SUITE("Timer_GetAlpha");
     RUN(timer_alpha_in_range);

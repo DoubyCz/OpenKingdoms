@@ -1,0 +1,36 @@
+/*
+ * ingame_keys.c -- in-game key bindings that stand on their own.
+ *
+ * Separate from ingame.c so a test can press a key with no window and
+ * no world, and separate from the debug decoder because these ship.
+ */
+
+#include "tak_ingame_keys.h"
+#include "tak_game_speed.h"
+
+#include <SDL.h>
+
+#define IG_KEY_PRESSED(sc) (keys[sc] && !prev[sc])
+
+InGameSpeedKey InGame_SpeedKey(const uint8_t *keys, const uint8_t *prev) {
+    if (!keys || !prev) return IG_SPEED_KEY_NONE;
+    /* Alt is the debug modifier, and nothing bound here answers it. */
+    if (keys[SDL_SCANCODE_LALT] || keys[SDL_SCANCODE_RALT])
+        return IG_SPEED_KEY_NONE;
+    if (IG_KEY_PRESSED(SDL_SCANCODE_EQUALS) || IG_KEY_PRESSED(SDL_SCANCODE_KP_PLUS))
+        return IG_SPEED_KEY_UP;
+    if (IG_KEY_PRESSED(SDL_SCANCODE_MINUS) || IG_KEY_PRESSED(SDL_SCANCODE_KP_MINUS))
+        return IG_SPEED_KEY_DOWN;
+    return IG_SPEED_KEY_NONE;
+}
+
+void InGame_ApplySpeedKeys(const uint8_t *keys, const uint8_t *prev) {
+    switch (InGame_SpeedKey(keys, prev)) {
+    case IG_SPEED_KEY_UP:   GameSpeed_Increase(); break;
+    case IG_SPEED_KEY_DOWN: GameSpeed_Decrease(); break;
+    case IG_SPEED_KEY_NONE:
+    default: break;
+    }
+}
+
+#undef IG_KEY_PRESSED

@@ -1,0 +1,34 @@
+#ifndef TAK_INGAME_KEYS_H
+#define TAK_INGAME_KEYS_H
+
+#include <stdint.h>
+
+/*
+ * In-game key decoding that is worth testing on its own.
+ *
+ * The original does not test scancodes in the battle loop at all. A key
+ * reaches a binding table built from Keys.TDF, the table names a
+ * command, and the command runs (legacy:242938, legacy:122813-122845).
+ * Until that layer exists, the bindings live here, in one place a test
+ * can press.
+ */
+
+typedef enum InGameSpeedKey {
+    IG_SPEED_KEY_NONE = 0,
+    IG_SPEED_KEY_UP,
+    IG_SPEED_KEY_DOWN
+} InGameSpeedKey;
+
+/* The game speed keys, from an SDL keyboard state array and last
+ * frame's copy of it. The original binds them by character code, not by
+ * key name: SYMBOL_2B and SYMBOL_3D raise the speed, SYMBOL_2D and
+ * SYMBOL_5F lower it, which is '+', '=', '-' and '_'. On a US layout
+ * that is the two keys right of the number row, and the keypad pair
+ * produces the same characters. */
+InGameSpeedKey InGame_SpeedKey(const uint8_t *keys, const uint8_t *prev);
+
+/* Decode the speed keys and apply them. Nothing happens when the
+ * control is unavailable, which GameSpeed_SetLevel enforces. */
+void InGame_ApplySpeedKeys(const uint8_t *keys, const uint8_t *prev);
+
+#endif /* TAK_INGAME_KEYS_H */
