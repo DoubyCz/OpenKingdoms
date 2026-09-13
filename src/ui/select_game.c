@@ -27,6 +27,7 @@
 #include "tak_maps.h"
 #include "tak_map_fingerprint.h"
 #include "tak_net_session.h"
+#include "tak_settings.h"
 #include "tak_ui.h"
 #include "tak_util.h"
 
@@ -36,6 +37,11 @@
 
 #define SG_ADDRESS_MAX 96
 #define SG_STATUS_MAX  128
+/* TAK_NET_NAME_MAX is what the wire carries, and the box holds no more
+ * than the wire will take. */
+#define SG_NAME_MAX    TAK_NET_NAME_MAX
+/* The key the name is kept under, so it survives a restart. */
+#define SG_NAME_KEY    "PlayerName" 
 
 static struct {
     int         open;
@@ -52,7 +58,20 @@ static struct {
 
     char address[SG_ADDRESS_MAX];
     char status[SG_STATUS_MAX];
+    char name[SG_NAME_MAX];
+    /* Which box has the caret. A screen with two text boxes needs to
+     * know, and the original's Enter key means different things in
+     * each: in the address box it connects, in the name box it does
+     * not. */
     int  typing_address;
+    int  typing_name;
+    /* A name that changed and has not been written out yet. */
+    int  name_dirty;
+    /* The address being tried is the one the page came from, which
+     * nobody chose and nobody can be expected to fix. A failure there
+     * needs a different sentence from one on an address a player
+     * typed. */
+    int  tried_default;
 
     /* Asked for a room list and waiting, so the screen can say so
      * rather than showing an empty list that looks like no games. */
@@ -63,7 +82,72 @@ static struct {
     int  next_state;
 } sg;
 
+/* Defined below, beside the rest of what a press does. Declared here
+ * because the test seam sits above it. */
+static void sg_press(const char *name);
+static void connect_to(const char *address);
+
 static TAK_NetClient *client(void) { return NetSession_Client(); }
+
+/* Never empty. A player who has typed nothing plays as "Player",
+ * which is what the room shows and what the server is told. */
+const char *SelectGame_PlayerName(void) {
+    return sg.name[0] ? sg.name : "Player";
+}
+
+/* Kept with the rest of the player's settings, so a name typed once is
+ * the name next time. */
+static void load_name(void) {
+    const char *saved = Settings_GetStr(SG_NAME_KEY, "");
+    snprintf(sg.name, sizeof sg.name, "%s", saved ? saved : "");
+}
+
+/* Which box has the caret, and whether SDL should be sending typed
+ * characters at all.
+ *
+ * SDL delivers SDL_TEXTINPUT only between SDL_StartTextInput and
+ * SDL_StopTextInput, and the platform stops it at start up. Nothing on
+ * this screen ever started it, so both boxes looked like boxes and
+ * neither took a key. On a phone or a tablet this is also what raises
+ * the on screen keyboard. */
+static void set_caret(int on_address, int on_name) {
+    sg.typing_address = on_address;
+    sg.typing_name = on_name;
+    if (on_address || on_name) SDL_StartTextInput();
+    else                       SDL_StopTextInput();
+}
+
+/* The server was told a name when this screen connected, and that was
+ * before the player had any chance to type one. So a name that changes
+ * has to reach the server again.
+ *
+ * In a room that is one edit to our own row. In the lobby the name
+ * travels in the greeting and nowhere else, so the greeting has to
+ * happen again, which costs nothing there because nothing is in
+ * progress and the room list comes straight back. */
+static void push_name(void) {
+    TAK_NetClient *c = client();
+    if (!c) return;
+    if (c->seat != TAK_NET_SEAT_NONE) {
+        TAK_MsgRoomEdit e;
+        memset(&e, 0, sizeof e);
+        e.field = TAK_EDIT_NAME;
+        snprintf(e.text, sizeof e.text, "%s", SelectGame_PlayerName());
+        (void)TAK_NetClient_EditRoom(c, &e);
+        return;
+    }
+    if (NetSession_State() == NET_SESSION_READY && sg.address[0]) {
+        connect_to(sg.address);
+    }
+}
+
+static void save_name(void) {
+    if (!sg.name_dirty) return;
+    sg.name_dirty = 0;
+    Settings_SetStr(SG_NAME_KEY, sg.name);
+    (void)Settings_Save();
+    push_name();
+}
 
 static int room_count(void) {
     TAK_NetClient *c = client();
@@ -147,7 +231,7 @@ static void connect_to(const char *address) {
         set_status("Type the address of a server to join.");
         return;
     }
-    if (NetSession_Connect(address, "Player") != 0) {
+    if (NetSession_Connect(address, SelectGame_PlayerName()) != 0) {
         set_status(NetSession_Why());
         return;
     }
@@ -211,7 +295,7 @@ static void host_game(void) {
     }
     TAK_MsgCreateRoom cr;
     memset(&cr, 0, sizeof cr);
-    snprintf(cr.name, sizeof cr.name, "%s's game", "Player");
+    snprintf(cr.name, sizeof cr.name, "%s's game", SelectGame_PlayerName());
     cr.flags = TAK_ROOMF_LISTED | TAK_ROOMF_ALLOW_WATCHING;
     cr.max_players = TAK_NET_SEATS;
     /* The rules this build plays a skirmish under. Sending nothing
@@ -273,6 +357,20 @@ static void draw_rows(void) {
     }
 }
 
+/* The name box, with a caret while it has one. The .gui authors the
+ * label above it and the frame around it, and this is the text. */
+static void draw_name(void) {
+    SDL_Surface *off = UI_Offscreen();
+    const GUIWidget *w = GUIDialog_FindByName(&sg.dialog, "Name");
+    if (!off || !w || !sg.font_row) return;
+    SDL_Rect r = w->rect;
+    SDL_FillRect(off, &r, SDL_MapRGBA(off->format, 16, 12, 8, 255));
+    char shown[SG_NAME_MAX + 2];
+    snprintf(shown, sizeof shown, "%s%s", SelectGame_PlayerName(),
+             sg.typing_name ? "_" : "");
+    Font_DrawString(sg.font_row, off, r.x + 4, r.y + 3, shown);
+}
+
 static void draw_address(void) {
     SDL_Surface *off = UI_Offscreen();
     const GUIWidget *w = GUIDialog_FindByName(&sg.dialog, "EnterTCPIPAddress");
@@ -317,10 +415,16 @@ int SelectGame_Init(TAK_Platform *platform) {
     sg.font_help = Font_Load("data/fonts/b_times new roman (100b)",
                              UI_RGBAFormat());
 
+    load_name();
+    set_caret(0, 0);
+
     NetSession_DefaultAddress(sg.address, sizeof sg.address);
     if (sg.address[0]) {
-        /* A browser came from somewhere, so there is a server to try
-         * and the player never has to know its name. */
+        /* A browser came from somewhere, so there is an address to try
+         * and the player never has to know its name. Whether anything
+         * answers there is another matter, which is what
+         * sg.tried_default is for. */
+        sg.tried_default = 1;
         connect_to(sg.address);
     } else {
         set_status("Type the address of a server to join.");
@@ -330,6 +434,10 @@ int SelectGame_Init(TAK_Platform *platform) {
 }
 
 void SelectGame_Shutdown(void) {
+    /* A name typed and not confirmed with Enter is still the name the
+     * player meant, so leaving the screen writes it out. */
+    save_name();
+    SDL_StopTextInput();
     if (sg.rt) GUIRuntime_Destroy(sg.rt);
     if (sg.has_dialog) GUIDialog_Free(&sg.dialog);
     if (sg.font_row) Font_Free(sg.font_row);
@@ -348,11 +456,11 @@ const char *SelectGame_RowName(int index) {
 
 const char *SelectGame_Status(void) { return sg.status; }
 
+const char *SelectGame_Address(void) { return sg.address; }
+
 void SelectGame_HandleClick(const char *name) {
-    if (!sg.open || !name) return;
-    if (tak_stricmp(name, "HostGame") == 0)      host_game();
-    else if (tak_stricmp(name, "Join") == 0)     join_selected();
-    else if (tak_stricmp(name, "Update") == 0)   ask_for_rooms();
+    if (!sg.open) return;
+    sg_press(name);
 }
 
 /* Everything the session did since the last frame, turned into the one
@@ -364,6 +472,7 @@ static void take_events(void) {
     while (TAK_NetClient_PollEvent(c, &e)) {
         switch (e.kind) {
         case TAK_NC_EV_WELCOMED:
+            sg.tried_default = 0;
             set_status("Connected.");
             ask_for_rooms();
             break;
@@ -394,14 +503,64 @@ static void take_events(void) {
     }
 }
 
+/* What a press on a named button does. One place, because a test
+ * presses buttons through SelectGame_HandleClick and a player presses
+ * them through the runtime, and the two had already drifted: the seam
+ * knew three of these and the screen knew seven, so a test could not
+ * see the name box at all. */
+static void sg_press(const char *name) {
+    if (!name || !name[0]) return;
+    if (tak_stricmp(name, "MainMenu") == 0) {
+        set_caret(0, 0);
+        NetSession_Disconnect();
+        sg.next_state = GAMESTATE_MENU;
+    } else if (tak_stricmp(name, "Update") == 0) {
+        ask_for_rooms();
+    } else if (tak_stricmp(name, "Join") == 0) {
+        join_selected();
+    } else if (tak_stricmp(name, "HostGame") == 0) {
+        host_game();
+    } else if (tak_stricmp(name, "Boneyards") == 0) {
+        /* The service this button named is gone. It connects to where
+         * this build came from instead, which in a browser is the
+         * page's own origin. */
+        char def[SG_ADDRESS_MAX];
+        NetSession_DefaultAddress(def, sizeof def);
+        if (def[0]) {
+            memcpy(sg.address, def, sizeof def);
+            sg.tried_default = 1;
+            connect_to(sg.address);
+        } else {
+            set_status("This build has no server of its own. "
+                       "Type an address.");
+        }
+    } else if (tak_stricmp(name, "EnterTCPIPAddress") == 0) {
+        set_caret(1, 0);
+        set_status("Type an address, then press Enter.");
+    } else if (tak_stricmp(name, "Name") == 0) {
+        set_caret(0, 1);
+        set_status("Type the name other players will see.");
+    }
+}
+
 int SelectGame_Tick(TAK_Platform *platform, float dt) {
     (void)dt;
     if (!sg.open || !sg.rt) return GAMESTATE_MENU;
 
     NetSession_Tick(SDL_GetTicks64());
     if (NetSession_State() == NET_SESSION_FAILED) {
-        const char *why = NetSession_Why();
-        if (why && why[0]) set_status(why);
+        if (sg.tried_default) {
+            /* The page's own origin answered nothing. That is not a
+             * thing the player did, and "the connection closed" tells
+             * them nothing they can act on, so this says what is
+             * true and what is left to try. */
+            sg.tried_default = 0;
+            set_status("No game server is running at this address. "
+                       "Type the address of one to join it.");
+        } else {
+            const char *why = NetSession_Why();
+            if (why && why[0]) set_status(why);
+        }
     }
     take_events();
     if (sg.next_state != GAMESTATE_SELECT_GAME) {
@@ -435,26 +594,42 @@ int SelectGame_Tick(TAK_Platform *platform, float dt) {
     /* The screen's own keys, which the .gui names: Enter joins and
      * Escape goes back to the main menu. */
     if (esc_edge) {
+        set_caret(0, 0);
         NetSession_Disconnect();
         return GAMESTATE_MENU;
     }
 
-    if (sg.typing_address) {
+    if (sg.typing_address || sg.typing_name) {
+        char  *box = sg.typing_address ? sg.address : sg.name;
+        size_t cap = sg.typing_address ? sizeof sg.address : sizeof sg.name;
         if (back_edge) {
-            size_t n = strlen(sg.address);
-            if (n) sg.address[n - 1] = '\0';
+            size_t n = strlen(box);
+            if (n) {
+                box[n - 1] = '\0';
+                if (box == sg.name) sg.name_dirty = 1;
+            }
         }
         if (platform && platform->text_in_len > 0) {
             for (int i = 0; i < platform->text_in_len; i++) {
-                size_t n = strlen(sg.address);
-                if (n + 1 >= sizeof sg.address) break;
-                sg.address[n] = platform->text_in[i];
-                sg.address[n + 1] = '\0';
+                size_t n = strlen(box);
+                if (n + 1 >= cap) break;
+                box[n] = platform->text_in[i];
+                box[n + 1] = '\0';
             }
+            if (box == sg.name) sg.name_dirty = 1;
         }
         if (enter_edge) {
-            sg.typing_address = 0;
-            connect_to(sg.address);
+            /* Enter in the address box connects, which is the original's
+             * accelerator for this screen. In the name box it only puts
+             * the caret down: a name is not a thing to act on. */
+            if (sg.typing_address) {
+                set_caret(0, 0);
+                sg.tried_default = 0;
+                connect_to(sg.address);
+            } else {
+                set_caret(0, 0);
+                save_name();
+            }
         }
     } else if (enter_edge) {
         join_selected();
@@ -505,41 +680,25 @@ int SelectGame_Tick(TAK_Platform *platform, float dt) {
                 sg.selected = row;
             }
         }
+        /* The name box is an edit field and not a button, so the
+         * runtime never reports a press on it and the press has to be
+         * found here, the way a row in the list is. Clicking it did
+         * nothing at all until this. */
+        const GUIWidget *nw = GUIDialog_FindByName(&sg.dialog, "Name");
+        if (nw && SDL_PointInRect(&pt, &nw->rect)) sg_press("Name");
     }
 
-    if (clicked[0]) {
-        if (tak_stricmp(clicked, "MainMenu") == 0) {
-            NetSession_Disconnect();
-            sg.prev_mouse = mouse_down;
-            return GAMESTATE_MENU;
-        } else if (tak_stricmp(clicked, "Update") == 0) {
-            ask_for_rooms();
-        } else if (tak_stricmp(clicked, "Join") == 0) {
-            join_selected();
-        } else if (tak_stricmp(clicked, "HostGame") == 0) {
-            host_game();
-        } else if (tak_stricmp(clicked, "Boneyards") == 0) {
-            /* The service this button named is gone. It connects to
-             * where this build came from instead, which in a browser is
-             * the page's own origin. */
-            char def[SG_ADDRESS_MAX];
-            NetSession_DefaultAddress(def, sizeof def);
-            if (def[0]) {
-                memcpy(sg.address, def, sizeof def);
-                connect_to(sg.address);
-            } else {
-                set_status("This build has no server of its own. "
-                           "Type an address.");
-            }
-        } else if (tak_stricmp(clicked, "EnterTCPIPAddress") == 0) {
-            sg.typing_address = 1;
-            set_status("Type an address, then press Enter.");
-        }
-    }
+    if (clicked[0]) sg_press(clicked);
     sg.prev_mouse = mouse_down;
+    if (sg.next_state != GAMESTATE_SELECT_GAME) {
+        int next = sg.next_state;
+        sg.next_state = GAMESTATE_SELECT_GAME;
+        return next;
+    }
 
     GUIRuntime_Render(sg.rt);
     draw_rows();
+    draw_name();
     draw_address();
     draw_status();
     /* Drawing is not showing. Every other screen presents its own

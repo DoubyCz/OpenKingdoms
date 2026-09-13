@@ -121,6 +121,41 @@ static int test_settings_override_still_works(void) {
     return 0;
 }
 
+/* The store holds text as well as numbers, because a player name has
+ * to survive a restart and the device token a rejoin is recognised by
+ * will have to as well. The file is key=value lines either way, so a
+ * value that happens to look like a number must still come back as a
+ * number and one that does not must come back as its text. */
+static int test_settings_hold_text_as_well_as_numbers(void) {
+    Settings_SetDirectory("test_paths_scratch/text");
+    remove(Settings_FilePath());
+
+    Settings_SetStr("PlayerName", "42nd Regiment");
+    Settings_SetInt("DisplayDamageBars", 1);
+    ASSERT(Paths_SaveDir() != NULL);   /* creates the tree */
+    ASSERT(Settings_Save() == 0);
+
+    /* Forget both, then read the file back. */
+    Settings_SetStr("PlayerName", "");
+    Settings_SetInt("DisplayDamageBars", 0);
+    ASSERT(Settings_Load() == 0);
+    ASSERT_STR("42nd Regiment", Settings_GetStr("PlayerName", ""));
+    ASSERT(Settings_GetInt("DisplayDamageBars", 0) == 1);
+
+    /* A number asked for as text, and text asked for as a number, get
+     * the default rather than a reinterpretation of the bytes. */
+    ASSERT_STR("none", Settings_GetStr("DisplayDamageBars", "none"));
+    ASSERT(Settings_GetInt("PlayerName", -7) == -7);
+
+    /* One line per setting. A value carrying a newline would read back
+     * as a second key, so it is refused rather than written. */
+    Settings_SetStr("PlayerName", "one\ntwo");
+    ASSERT_STR("42nd Regiment", Settings_GetStr("PlayerName", ""));
+
+    Settings_SetDirectory(NULL);
+    return 0;
+}
+
 static int test_platform_default_restored(void) {
     Settings_SetDirectory(NULL);
     const char *pref = Paths_PrefDir();
@@ -141,6 +176,7 @@ int main(void) {
         { "save_dir_is_created",          test_save_dir_is_created },
         { "save_file",                    test_save_file },
         { "settings_override_still_works", test_settings_override_still_works },
+        { "settings_hold_text",           test_settings_hold_text_as_well_as_numbers },
         { "platform_default_restored",    test_platform_default_restored },
     };
     int failed = 0;

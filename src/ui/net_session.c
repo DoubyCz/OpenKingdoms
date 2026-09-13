@@ -37,10 +37,23 @@ static struct {
  * https gets wss, which is what a browser insists on from a secure
  * page. Nothing about a particular deployment is written down here:
  * the page knows where it came from and this asks it. */
+/* Where the page says the game server is.
+ *
+ * A relay is a process holding sockets open and this page is a
+ * directory of files, so the two need not be the same host and on a
+ * static file host they cannot be. The page reads the address out of a
+ * relay.txt beside it and leaves it on Module.okRelayUrl. None of that
+ * address is in this repository.
+ *
+ * With no such file the page's own origin is the guess, which is right
+ * when the page really is served by the relay. When nothing answers
+ * there the screen says so rather than looking broken. */
 EM_JS(void, session_page_origin, (char *out, int cap), {
     try {
-        var proto = (location.protocol === 'https:') ? 'wss://' : 'ws://';
-        var url = proto + location.host + '/relay';
+        var url = (typeof Module !== 'undefined' && Module.okRelayUrl)
+                ? Module.okRelayUrl
+                : ((location.protocol === 'https:' ? 'wss://' : 'ws://')
+                   + location.host + '/relay');
         stringToUTF8(url, out, cap);
     } catch (e) {
         if (cap > 0) HEAPU8[out] = 0;

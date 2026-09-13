@@ -17,6 +17,16 @@ int  Settings_Save(void);
 int  Settings_GetInt(const char *key, int default_value);
 void Settings_SetInt(const char *key, int value);
 
+/* The same store for text. The file has always been key=value lines,
+ * so this changes nothing about its shape. A value is written on one
+ * line, so anything past a newline is refused rather than writing a
+ * file that reads back as two settings.
+ *
+ * Reconnect waits on this too: the device token a rejoin is recognised
+ * by has to survive a restart, and the store could not hold one. */
+const char *Settings_GetStr(const char *key, const char *default_value);
+void        Settings_SetStr(const char *key, const char *value);
+
 /* Tests point the store at a scratch directory. NULL restores the
  * platform default. */
 void Settings_SetDirectory(const char *dir);

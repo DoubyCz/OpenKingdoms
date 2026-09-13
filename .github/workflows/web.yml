@@ -60,7 +60,14 @@ jobs:
             exit 1
           done
 
+      # Where the game server is. The address lives in a repository
+      # variable and nowhere in this tree: the page cannot be served by
+      # the relay, because GitHub Pages holds no socket open, so the page
+      # reads one line out of relay.txt beside it. With the variable unset
+      # nothing is written and the page falls back to its own origin.
       - name: Assemble site
+        env:
+          RELAY_URL: ${{ vars.RELAY_URL }}
         run: |
           mkdir -p site
           cp build-wasm/src/tak-re.html site/index.html
@@ -71,6 +78,7 @@ jobs:
           cp web/scroll-pick.jpg web/scroll-ready.jpg site/
           cp web/favicon.png web/og.jpg site/
           cp web/CNAME site/CNAME
+          [ -n "$RELAY_URL" ] && printf '%s\n' "$RELAY_URL" > site/relay.txt || true
           ls -la site
 
       - name: Upload site

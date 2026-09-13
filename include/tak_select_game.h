@@ -30,6 +30,12 @@ const char *SelectGame_RowName(int index);
  * have to be. */
 void SelectGame_HandleClick(const char *name);
 
+/* The name this player is playing under. Never empty: a player who has
+ * typed nothing is "Player", which is what the room shows. */
+const char *SelectGame_PlayerName(void);
+/* What is in the address box, for the screen tests. */
+const char *SelectGame_Address(void);
+
 /* The line the screen is showing a player, empty when there is none.
  * A connection that failed says so here rather than in a log. */
 const char *SelectGame_Status(void);

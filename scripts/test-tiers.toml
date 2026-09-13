@@ -213,7 +213,7 @@ ctest = "^(test_command_pipeline|test_gui_loader|test_gui_loader_no_data|test_mo
 ui = [
   ["battle_", 18],
   ["mp_room", 14],
-  ["select_game", 5],
+  ["select_game", 7],
   ["hud_static_art_fits_its_cell", 1],
   ["loading_backdrop_is_the_arch_and_its_glass", 1],
   ["a_skirmish_still_starts_the_moment_its_world_is_built", 1],

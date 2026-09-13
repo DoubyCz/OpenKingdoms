@@ -39,6 +39,8 @@ int Loading_HasPendingSave(void);
 
 /* 0.0 .. 1.0 — clamped on call. */
 void Loading_SetProgress(float fraction);
+/* Where the bar is, 0 to 1. */
+float Loading_Progress(void);
 void Loading_SetStatus(const char *status_line);  /* e.g. "Loading units..." */
 
 /* The screen's live loadscreen.gui runtime, NULL outside Init/Shutdown.
