@@ -23,6 +23,9 @@
 #include "tak_map_fingerprint.h"
 #include "tak_net_session.h"
 #include "tak_net_room.h"
+#include "tak_tdf.h"
+#include "tak_unit.h"
+#include "tak_world.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <string.h>
@@ -309,10 +312,81 @@ int Multiplayer_Init(TAK_Platform *platform) {
     return 0;
 }
 
+/* The map's own faction, which picks the minimap palette. It is read
+ * out of the map rather than off the wire: every seat had to prove it
+ * holds this exact map before the host could start, so every seat
+ * reads the same answer. */
+static void mp_map_kingdom(const char *map, char *out, size_t cap) {
+    out[0] = '\0';
+    char path[512];
+    TAK_Maps_FindFile(map, "ota", path, sizeof path);
+    TDFFile *tdf = TDF_Open(path);
+    if (tdf && TDF_Load(tdf) == 0 && TDF_PushSection(tdf, "GlobalHeader") == 0) {
+        const char *kingdom = TDF_ReadString(tdf, "kingdom", "");
+        size_t k = 0;
+        for (; kingdom && kingdom[k] && k + 1 < cap; k++) {
+            char ch = kingdom[k];
+            out[k] = (ch >= 'A' && ch <= 'Z') ? (char)(ch - 'A' + 'a') : ch;
+        }
+        out[k] = '\0';
+    }
+    if (tdf) TDF_Close(tdf);
+}
+
+/* The battle the server just described, in the terms a world is built
+ * from. Every value here comes off the wire. One a machine picked for
+ * itself is a desync waiting for the first tick. */
+static void mp_config_from_start(const TAK_MsgStartGame *sg,
+                                 BattleConfig *cfg) {
+    BattleConfig_SetDefaults(cfg);
+    snprintf(cfg->map_name, sizeof cfg->map_name, "%s", sg->map_name);
+    cfg->seed = sg->seed;
+    cfg->units_per_side = sg->unit_cap ? (int)sg->unit_cap
+                                       : TAK_UNITS_PER_SIDE_DEFAULT;
+    cfg->line_of_sight          = (sg->options & TAK_ROOMOPT_LINE_OF_SIGHT) != 0;
+    cfg->map_revealed           = (sg->options & TAK_ROOMOPT_MAP_REVEALED) != 0;
+    cfg->monarch_expendable     = (sg->options & TAK_ROOMOPT_MONARCH_EXPEND) != 0;
+    cfg->random_start_locations = (sg->options & TAK_ROOMOPT_RANDOM_STARTS) != 0;
+    cfg->power_codes            = (sg->options & TAK_ROOMOPT_POWER_CODES) != 0;
+    cfg->slow_game              = (sg->options & TAK_ROOMOPT_SLOW_GAME) != 0;
+    cfg->crusades_balance       = (sg->options & TAK_ROOMOPT_CRUSADES_BALANCE) != 0;
+
+    for (int i = 0; i < TAK_MAX_PLAYERS && i < TAK_NET_SEATS; i++) {
+        PlayerSlot *p = &cfg->players[i];
+        memset(p, 0, sizeof *p);
+        switch (sg->slot[i].kind) {
+        case TAK_NSLOT_HUMAN:    p->kind = TAK_SLOT_HUMAN;  break;
+        case TAK_NSLOT_COMPUTER: p->kind = TAK_SLOT_AI;     break;
+        default:                 p->kind = TAK_SLOT_CLOSED; break;
+        }
+        p->side  = sg->slot[i].side;
+        p->team  = sg->slot[i].team;
+        p->color = sg->slot[i].colour;
+        snprintf(p->name, sizeof p->name, "%s", sg->slot[i].name);
+    }
+}
+
+/* Build it. Returns 0, or -1 when this install cannot, which is worth
+ * a message and a way back rather than a screen that never finishes. */
+static int mp_begin_match_world(TAK_Platform *platform,
+                                const TAK_MsgStartGame *sg) {
+    if (!sg->map_name[0]) return -1;
+    BattleConfig cfg;
+    mp_config_from_start(sg, &cfg);
+    char kingdom[32];
+    mp_map_kingdom(sg->map_name, kingdom, sizeof kingdom);
+    if (World_BeginLoad(platform, &cfg, sg->map_name, kingdom) != 0) return -1;
+    /* Seats count from zero on the wire and players from one in the
+     * simulation. Without this every client plays the first seat: same
+     * world, same fog, same sidebar, and one army nobody is driving. */
+    Units_SetLocalPlayer((int)sg->your_seat + 1);
+    return 0;
+}
+
 /* What the session did since the last frame. The room is a view of the
  * server's snapshot, so everything here either refills the rows or
  * moves the screen on. */
-static int mp_take_events(void) {
+static int mp_take_events(TAK_Platform *platform) {
     TAK_NetClient *c = NetSession_Client();
     if (!c) return GAMESTATE_MULTIPLAYER;
     int next = GAMESTATE_MULTIPLAYER;
@@ -328,8 +402,19 @@ static int mp_take_events(void) {
             break;
         case TAK_NC_EV_START_GAME:
             /* Every client builds the same world from the same seed,
-             * so the loading screen takes it from here. */
-            next = GAMESTATE_GAME_LOADING;
+             * so the loading screen takes it from here. Building it is
+             * this screen's job: the loading screen loads a world, it
+             * does not make one, and handing it none is a bar stuck at
+             * ten per cent with nothing said. */
+            if (mp_begin_match_world(platform, &c->start) == 0) {
+                next = GAMESTATE_GAME_LOADING;
+            } else {
+                fprintf(stderr,
+                        "Multiplayer: no world could be built for %s\n",
+                        c->start.map_name);
+                (void)TAK_NetClient_LeaveRoom(c);
+                next = GAMESTATE_SELECT_GAME;
+            }
             break;
         case TAK_NC_EV_LEFT_ROOM:
             next = GAMESTATE_SELECT_GAME;
@@ -346,7 +431,7 @@ static int mp_take_events(void) {
 
 int Multiplayer_Tick(TAK_Platform *platform, float frame_dt) {
     NetSession_Tick(SDL_GetTicks64());
-    int next = mp_take_events();
+    int next = mp_take_events(platform);
     if (next != GAMESTATE_MULTIPLAYER) return next;
     return SimpleScreen_Tick(&mp, platform, frame_dt);
 }

@@ -40,8 +40,12 @@ function archives(dir) {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   const page = await (await browser.newContext()).newPage();
   const log = [];
+  const errors = [];
   page.on('console', m => log.push(m.text()));
-  page.on('pageerror', e => log.push('PAGEERROR ' + e.message));
+  /* A throw inside the page is a failure, not a line in a log. Every
+   * inbound message threw for a while and the run still said it
+   * passed, because nothing here read what it printed. */
+  page.on('pageerror', e => { errors.push(e.message); log.push('PAGEERROR ' + e.message); });
 
   /* The socket the page opens is the thing being proven, so it is
    * watched directly rather than inferred from a screenshot. */
@@ -75,6 +79,12 @@ function archives(dir) {
   await page.screenshot({ path: shot });
   console.log('screenshot: ' + shot);
   for (const line of log.slice(-20)) console.log('  > ' + line);
+  if (errors.length) {
+    const seen = new Map();
+    for (const e of errors) seen.set(e, (seen.get(e) || 0) + 1);
+    console.log('the page threw ' + errors.length + ' time(s):');
+    for (const [e, n] of seen) console.log('  x' + n + ' ' + e);
+  }
   await browser.close();
-  process.exit(reached ? 0 : 1);
+  process.exit(reached && errors.length === 0 ? 0 : 1);
 })().catch(e => { console.log('FAILED ' + e.message); process.exit(2); });

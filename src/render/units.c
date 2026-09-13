@@ -221,6 +221,12 @@ void Units_SetLocalPlayer(int player_id) {
     Units_SelectSingle(-1);
 }
 
+int Units_PlayerSide(int player_id) {
+    const GameWorld *w = World_Get();
+    if (!w || player_id < 1 || player_id > TAK_MAX_PLAYERS) return 0;
+    return w->cfg.players[player_id - 1].side;
+}
+
 int Units_PlayerColorIndex(int player_id) {
     const GameWorld *w = World_Get();
     if (!w || player_id < 1 || player_id > TAK_MAX_PLAYERS) return 0;
@@ -1156,7 +1162,7 @@ static void unit_alarm_on_damage_impl(const Unit *victim, int shooter_handle) {
     }
     if (unit_is_selected(victim)) return;
     const GameWorld *world = World_Get();
-    int side = world ? world->cfg.players[0].side : 0;
+    int side = world ? Units_PlayerSide(Units_LocalPlayer()) : 0;
     if (side != g_alarm_side_loaded) load_side_alarm(side);
     if (!g_alarm_wav[0]) return;
     if (g_sound_tick < g_alarm_next_tick) return;

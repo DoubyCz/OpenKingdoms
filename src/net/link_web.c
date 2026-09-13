@@ -49,6 +49,25 @@ void TAK_NetLink_WebClosed(void) {
     }
 }
 
+/* Where the page puts a message on its way in. The glue names the
+ * functions this file keeps alive, and the heap views, and nothing
+ * else: _free is not one of them, and reaching for it threw on every
+ * message the first browser match ran. A buffer this file owns needs
+ * no allocator on either side, and no allocation per message. */
+static uint8_t g_web_stage[TAK_NET_FRAME_MAX];
+
+EMSCRIPTEN_KEEPALIVE
+uint8_t *TAK_NetLink_WebStage(void) { return g_web_stage; }
+
+EMSCRIPTEN_KEEPALIVE
+int TAK_NetLink_WebStageCap(void) { return (int)sizeof g_web_stage; }
+
+/* A message too big for the staging buffer. Dropping it quietly would
+ * leave a hole in the turn stream, and a simulation cannot run over a
+ * hole, so it is the same answer as an inbox that overflowed. */
+EMSCRIPTEN_KEEPALIVE
+void TAK_NetLink_WebOverflow(void) { g_link.overflow = 1; }
+
 EMSCRIPTEN_KEEPALIVE
 void TAK_NetLink_WebMessage(const uint8_t *data, int len) {
     if (len <= 0 || !data) return;
@@ -64,12 +83,13 @@ void TAK_NetLink_WebMessage(const uint8_t *data, int len) {
     g_link.in_len += (size_t)len;
 }
 
-/* HEAPU8, _malloc and the exported C functions are the glue's own
- * names and are in scope here. Reaching them through Module only works
- * when they are in EXPORTED_RUNTIME_METHODS, which they are not, and
- * the first browser run failed on exactly that: the socket opened and
- * every send threw on an undefined Module.HEAPU8. The socket itself is
- * parked on Module because it has to outlive one call. */
+/* HEAPU8 and the exported C functions are the glue's own names and are
+ * in scope here. Reaching them through Module only works when they are
+ * in EXPORTED_RUNTIME_METHODS, which they are not, and the first
+ * browser run failed on exactly that: the socket opened and every send
+ * threw on an undefined Module.HEAPU8. The allocator is the same trap
+ * one level down, so nothing here calls it. The socket is parked on
+ * Module because it has to outlive one call. */
 EM_JS(int, web_open, (const char *url), {
     try {
         if (Module.okSocket) { try { Module.okSocket.close(); } catch (e) {} }
@@ -81,10 +101,13 @@ EM_JS(int, web_open, (const char *url), {
         s.onerror = function () { _TAK_NetLink_WebClosed(); };
         s.onmessage = function (e) {
             var bytes = new Uint8Array(e.data);
-            var p = _malloc(bytes.length);
+            if (bytes.length > _TAK_NetLink_WebStageCap()) {
+                _TAK_NetLink_WebOverflow();
+                return;
+            }
+            var p = _TAK_NetLink_WebStage();
             HEAPU8.set(bytes, p);
             _TAK_NetLink_WebMessage(p, bytes.length);
-            _free(p);
         };
         return 0;
     } catch (e) {

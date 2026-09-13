@@ -1556,6 +1556,61 @@ TEST(select_game_hosting_a_game_gives_it_a_map) {
     VFS_Shutdown();
 }
 
+/* A room carries the rules it is played under, and the host is the
+ * one who names them. Sending nothing reads as every rule off, which
+ * is a different battle from the one the same build plays alone. */
+TEST(select_game_hosting_a_game_names_the_rules_it_plays_by) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, SelectGame_Init(&platform));
+
+    NetSession_BeginWithoutLink("Player");
+    TAK_NetClient *c = NetSession_Client();
+    ASSERT_NOT_NULL(c);
+    uint8_t msg[TAK_NET_FRAME_MAX];
+    size_t n = sg_encode_welcome(msg, sizeof msg, 33);
+    ASSERT_EQ_INT(0, TAK_NetClient_OnMessage(c, msg, n, 1000));
+    (void)SelectGame_Tick(&platform, 1.0f / 60.0f);
+    while (TAK_NetClient_TakeMessage(c, msg, sizeof msg) > 0) { }
+
+    SelectGame_HandleClick("HostGame");
+
+    n = TAK_NetClient_TakeMessage(c, msg, sizeof msg);
+    ASSERT(n > 0);
+    TAK_NetFrame f;
+    ASSERT_EQ_INT(0, TAK_Net_Split(msg, n, &f));
+    ASSERT_EQ_INT(TAK_MSG_CREATE_ROOM, f.type);
+    TAK_MsgCreateRoom cr;
+    ASSERT_EQ_INT(0, TAK_Msg_CreateRoomDecode(&cr, f.payload, f.payload_len));
+
+    /* The same rules this build would play a skirmish under. */
+    BattleConfig defaults;
+    BattleConfig_SetDefaults(&defaults);
+    ASSERT_EQ_INT(defaults.units_per_side, (int)cr.unit_cap);
+    ASSERT_EQ_INT(defaults.line_of_sight,
+                  (cr.options & TAK_ROOMOPT_LINE_OF_SIGHT) != 0);
+    ASSERT_EQ_INT(defaults.map_revealed,
+                  (cr.options & TAK_ROOMOPT_MAP_REVEALED) != 0);
+    ASSERT_EQ_INT(defaults.monarch_expendable,
+                  (cr.options & TAK_ROOMOPT_MONARCH_EXPEND) != 0);
+    ASSERT_EQ_INT(defaults.random_start_locations,
+                  (cr.options & TAK_ROOMOPT_RANDOM_STARTS) != 0);
+    ASSERT_EQ_INT(defaults.power_codes,
+                  (cr.options & TAK_ROOMOPT_POWER_CODES) != 0);
+    ASSERT_EQ_INT(defaults.slow_game,
+                  (cr.options & TAK_ROOMOPT_SLOW_GAME) != 0);
+    ASSERT_EQ_INT(defaults.crusades_balance,
+                  (cr.options & TAK_ROOMOPT_CRUSADES_BALANCE) != 0);
+
+    SelectGame_Shutdown();
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 /* The host cannot start until every human has said it has the map, and
  * saying nothing reads as no, so a joiner has to say so itself. */
 TEST(mp_room_says_whether_it_has_the_rooms_map) {
@@ -1766,6 +1821,165 @@ TEST(mp_room_hands_a_started_match_to_the_loading_screen) {
 
     Multiplayer_Shutdown();
     NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* The loading screen loads a world, it does not make one, so the room
+ * has to build one before it hands over. Everything it builds from
+ * comes off the wire: a value a machine picks for itself is a desync
+ * waiting for the first tick. */
+TEST(mp_room_builds_the_world_the_server_described) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, Multiplayer_Init(&platform));
+    NetSession_BeginWithoutLink("Player");
+    TAK_NetClient *c = NetSession_Client();
+    uint8_t msg[TAK_NET_FRAME_MAX];
+    size_t n = sg_encode_welcome(msg, sizeof msg, 606);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1000);
+    n = mp_encode_room(msg, sizeof msg, 1, 2, 606);
+    (void)TAK_NetClient_OnMessage(c, msg, n, 1100);
+    (void)Multiplayer_Tick(&platform, 1.0f / 60.0f);
+
+    /* A match on a real map, with two seats the server has already
+     * decided everything about. */
+    TAK_MsgStartGame sg;
+    memset(&sg, 0, sizeof sg);
+    sg.match_id = 4;
+    sg.seed = 987654321u;
+    sg.your_seat = 1;
+    sg.turn_ticks = 3;
+    memcpy(sg.map_name, "two castles", 12);
+    sg.unit_cap = 700;
+    sg.options = TAK_ROOMOPT_LINE_OF_SIGHT | TAK_ROOMOPT_POWER_CODES;
+    sg.slot[0].kind = TAK_NSLOT_HUMAN;
+    sg.slot[0].side = TAK_SIDE_VERUNA;
+    sg.slot[0].team = 2;
+    sg.slot[0].colour = 4;
+    sg.slot[1].kind = TAK_NSLOT_COMPUTER;
+    sg.slot[1].side = TAK_SIDE_ZHON;
+    sg.slot[1].team = 3;
+    sg.slot[1].colour = 7;
+    n = TAK_Msg_StartGameEncode(&sg, msg, sizeof msg);
+    ASSERT(n > 0);
+    ASSERT_EQ_INT(0, TAK_NetClient_OnMessage(c, msg, n, 1200));
+
+    ASSERT_EQ_INT(GAMESTATE_GAME_LOADING,
+                  Multiplayer_Tick(&platform, 1.0f / 60.0f));
+
+    const GameWorld *w = World_Get();
+    if (!w) printf("(it went to the loading screen with no world) ");
+    ASSERT_NOT_NULL(w);
+    ASSERT_EQ_STR("two castles", w->map_name);
+    ASSERT_EQ_INT(987654321, (int)w->cfg.seed);
+    ASSERT_EQ_INT(700, w->cfg.units_per_side);
+    ASSERT_EQ_INT(1, w->cfg.line_of_sight);
+    ASSERT_EQ_INT(1, w->cfg.power_codes);
+    ASSERT_EQ_INT(0, w->cfg.map_revealed);
+    ASSERT_EQ_INT(0, w->cfg.monarch_expendable);
+    ASSERT_EQ_INT(TAK_SLOT_HUMAN, (int)w->cfg.players[0].kind);
+    ASSERT_EQ_INT(TAK_SIDE_VERUNA, w->cfg.players[0].side);
+    ASSERT_EQ_INT(2, w->cfg.players[0].team);
+    ASSERT_EQ_INT(4, w->cfg.players[0].color);
+    ASSERT_EQ_INT(TAK_SLOT_AI, (int)w->cfg.players[1].kind);
+    ASSERT_EQ_INT(TAK_SIDE_ZHON, w->cfg.players[1].side);
+    ASSERT_EQ_INT(3, w->cfg.players[1].team);
+    ASSERT_EQ_INT(7, w->cfg.players[1].color);
+    /* Seats nobody took are closed, not a third army. */
+    ASSERT_EQ_INT(TAK_SLOT_CLOSED, (int)w->cfg.players[2].kind);
+    /* And this machine plays the seat the server gave it. Seats count
+     * from zero on the wire and players from one in the simulation, so
+     * seat 1 is player 2. Getting this wrong gives every client the
+     * first seat's sidebar and fog, and one army nobody drives. */
+    if (Units_LocalPlayer() != 2)
+        printf("(it is playing player %d) ", Units_LocalPlayer());
+    ASSERT_EQ_INT(2, Units_LocalPlayer());
+
+    World_End(&platform);
+    Multiplayer_Shutdown();
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* A battle opens on the seat this machine is playing: its own start
+ * position, its own monarch picked, its own kingdom's sidebar. Every
+ * one of those read the first seat, so in a match the joiner opened on
+ * the host's corner with the host's monarch named in the bottom strip
+ * and the host's sidebar art. */
+TEST(loading_opens_on_the_seat_this_machine_plays) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    NetSession_Disconnect();
+
+    /* Two humans on a real map, and this machine is the second. */
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, "two castles", sizeof cfg.map_name - 1);
+    cfg.players[0].kind = TAK_SLOT_HUMAN;
+    cfg.players[0].side = TAK_SIDE_ARAMON;
+    cfg.players[1].kind = TAK_SLOT_HUMAN;
+    cfg.players[1].side = TAK_SIDE_TAROS;
+    ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg, "two castles", "aramon"));
+    Units_SetLocalPlayer(2);
+    ASSERT_EQ_INT(0, Loading_Init(&platform));
+
+    int next = GAMESTATE_GAME_LOADING;
+    for (int i = 0; i < 3000 && next == GAMESTATE_GAME_LOADING; i++) {
+        next = Loading_Tick(&platform, 1.0f / 60.0f);
+    }
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, next);
+
+    /* The monarch the screen picked is this machine's, not seat one's. */
+    int n_sel = 0;
+    const int *sel = Units_GetSelection(&n_sel);
+    if (n_sel != 1) printf("(nothing was picked) ");
+    ASSERT_EQ_INT(1, n_sel);
+    int owner = g_units_get_player(sel[0]);
+    if (owner != 2) printf("(it picked player %d's monarch) ", owner);
+    ASSERT_EQ_INT(2, owner);
+
+    /* And the kingdom every screen reads is the one being played. */
+    ASSERT_EQ_INT(TAK_SIDE_TAROS, Units_PlayerSide(Units_LocalPlayer()));
+
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* A loading screen with no world cannot load one and cannot wait for
+ * one. It used to hold the bar at ten per cent for ever with nothing
+ * on screen to say why, which is the worst way to fail. */
+TEST(loading_with_no_world_goes_back_rather_than_holding_the_bar) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    NetSession_Disconnect();
+    World_End(&platform);
+    ASSERT_NULL(World_Get());
+    ASSERT_EQ_INT(0, Loading_Init(&platform));
+
+    int next = GAMESTATE_GAME_LOADING;
+    int frames = 0;
+    for (; frames < 600 && next == GAMESTATE_GAME_LOADING; frames++) {
+        next = Loading_Tick(&platform, 1.0f / 60.0f);
+    }
+    if (next == GAMESTATE_GAME_LOADING)
+        printf("(it held the bar for %d frames) ", frames);
+    ASSERT_EQ_INT(GAMESTATE_MENU, next);
+
+    Loading_Shutdown();
     UI_Shutdown();
     teardown_platform(&platform);
     VFS_Shutdown();
@@ -17503,11 +17717,13 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_A, a_skirmish_still_starts_the_moment_its_world_is_built);
     RUN_UI_TEST(UI_GROUP_C, mp_room_follows_the_servers_later_snapshot);
     RUN_UI_TEST(UI_GROUP_D, mp_room_hands_a_started_match_to_the_loading_screen);
+    RUN_UI_TEST(UI_GROUP_C, mp_room_builds_the_world_the_server_described);
     RUN_UI_TEST(UI_GROUP_D, mp_room_leaving_goes_back_to_the_game_list);
     RUN_UI_TEST(UI_GROUP_D, mp_room_a_press_on_another_players_row_sends_nothing);
     RUN_UI_TEST(UI_GROUP_A, select_game_draws_the_widgets_the_shipped_file_authors);
     RUN_UI_TEST(UI_GROUP_A, select_game_lists_the_rooms_a_server_offers);
     RUN_UI_TEST(UI_GROUP_A, select_game_hosting_a_game_gives_it_a_map);
+    RUN_UI_TEST(UI_GROUP_C, select_game_hosting_a_game_names_the_rules_it_plays_by);
     RUN_UI_TEST(UI_GROUP_B, mp_room_says_whether_it_has_the_rooms_map);
     RUN_UI_TEST(UI_GROUP_B, a_game_this_build_cannot_join_is_listed_rather_than_hidden);
     RUN_UI_TEST(UI_GROUP_B, a_room_the_server_puts_us_in_opens_the_room_screen);
@@ -17531,6 +17747,8 @@ int main(int argc, char **argv) {
     TEST_SUITE("Loading screen");
     RUN_UI_TEST(UI_GROUP_A, loading_progress_clamps_and_transitions);
     RUN_UI_TEST(UI_GROUP_D, loading_backdrop_is_the_arch_and_its_glass);
+    RUN_UI_TEST(UI_GROUP_B, loading_with_no_world_goes_back_rather_than_holding_the_bar);
+    RUN_UI_TEST(UI_GROUP_D, loading_opens_on_the_seat_this_machine_plays);
     RUN_UI_TEST(UI_GROUP_D, campaign_loading_spawns_units_and_renders);
     RUN_UI_TEST(UI_GROUP_B, campaign_mapping_off_starts_the_map_explored);
     RUN_UI_TEST(UI_GROUP_B, campaign_mapping_on_starts_the_map_black);

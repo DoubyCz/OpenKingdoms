@@ -419,7 +419,18 @@ int InGame_Init(TAK_Platform *platform) {
      * battle runs, Enter just paints nothing. */
     (void)Chat_Init();
     Chat_Reset();
-    Chat_SetLocalPlayer(1, "Player");
+    {
+        /* Signed by the seat this machine plays, with the name the room
+         * gave it when there is one. */
+        const GameWorld *cw = World_Get();
+        int me = Units_LocalPlayer();
+        const char *who = "Player";
+        if (cw && me >= 1 && me <= TAK_MAX_PLAYERS &&
+            cw->cfg.players[me - 1].name[0]) {
+            who = cw->cfg.players[me - 1].name;
+        }
+        Chat_SetLocalPlayer(me, who);
+    }
 
     /* The banner dialogs are one label each in font48
      * (legacy:152731, legacy:152762). */
@@ -918,9 +929,9 @@ static void ig_battle_keys(int has_focus, const GameWorld *world,
     case IG_DEBUG_SPAWN_GRID_500:
     case IG_DEBUG_SPAWN_GRID_2000: {
         static const char *side_prefixes[] = { "ARA", "TAR", "VER", "ZON" };
-        int side = world->cfg.players[0].side;
+        int side = Units_PlayerSide(Units_LocalPlayer());
         const char *prefix = (side >= 0 && side < 4) ? side_prefixes[side] : "ARA";
-        int color = world->cfg.players[0].color;
+        int color = Units_PlayerColorIndex(Units_LocalPlayer());
         int32_t cx = world->cam_x + world->viewport_w / 2;
         int32_t cy = world->cam_y + world->viewport_h / 2;
         int n = (dbg == IG_DEBUG_SPAWN_GRID_500) ? 500 : 2000;

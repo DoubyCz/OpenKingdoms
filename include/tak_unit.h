@@ -1093,6 +1093,8 @@ int               Units_PlayerColorIndex(int player_id);
  * simulation may. Defaults to 1. Setting it turns the fog view to that
  * seat too. */
 int               Units_LocalPlayer(void);
+/* The kingdom a player is playing, as a TakSide. 0 with no world. */
+int               Units_PlayerSide(int player_id);
 void              Units_SetLocalPlayer(int player_id);
 
 /* ── 3D render path (Phase C M4) ──────────────────────────────────── */
