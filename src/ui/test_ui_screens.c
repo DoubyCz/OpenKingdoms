@@ -9335,22 +9335,27 @@ TEST(the_revive_cursor_shows_over_a_body_the_selection_can_raise) {
     int builder = Units_Spawn(bdef, 1, 0, s.cx + 110, s.cy + 60);
     ASSERT(builder >= 0);
 
+    /* The pointer is read flat off the screen and the body found on
+     * the ground under it, so the body is pointed at where it is
+     * drawn: its centre lifted by the ground's height (#106). */
+    int32_t sy = s.fy - (int32_t)((float)Terrain_SampleHeight(world, s.fx, s.fy)
+                                  * Units_GetTanTilt());
     Units_SelectSingle(-1);
-    ASSERT(InGame_HoverCursorAt(s.fx, s.fy) != HUD_CUR_REVIVE);
+    ASSERT(InGame_HoverCursorAt(s.fx, sy) != HUD_CUR_REVIVE);
 
     Units_SelectSingle(s.raiser);
-    ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(s.fx, s.fy));
+    ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(s.fx, sy));
     ASSERT_EQ_INT(HUD_CUR_REVIVE,
-                  InGame_CommandCursorAt(HUD_CMD_CLEAR, s.fx, s.fy));
+                  InGame_CommandCursorAt(HUD_CMD_CLEAR, s.fx, sy));
     ASSERT_EQ_INT(HUD_CMD_MOVE,
-                  InGame_CommandCursorAt(HUD_CMD_MOVE, s.fx, s.fy));
+                  InGame_CommandCursorAt(HUD_CMD_MOVE, s.fx, sy));
 
     /* A builder sweeps bodies but cannot raise them. */
     Units_SelectSingle(builder);
-    ASSERT(InGame_HoverCursorAt(s.fx, s.fy) != HUD_CUR_REVIVE);
+    ASSERT(InGame_HoverCursorAt(s.fx, sy) != HUD_CUR_REVIVE);
     ASSERT_EQ_INT(HUD_CMD_CLEAR,
-                  InGame_CommandCursorAt(HUD_CMD_CLEAR, s.fx, s.fy));
-    InGame_WorldClick(s.fx, s.fy, 0);
+                  InGame_CommandCursorAt(HUD_CMD_CLEAR, s.fx, sy));
+    InGame_WorldClick(s.fx, sy, 0);
     units = Units_GetActive(&unit_count);
     ASSERT(units[builder].cmd_kind != UNIT_CMD_RESURRECT);
 
@@ -9364,12 +9369,12 @@ TEST(the_revive_cursor_shows_over_a_body_the_selection_can_raise) {
                          (s.fx / world->fog_cell_px)] = TAK_FOG_UNEXPLORED;
     ASSERT_EQ_INT(TAK_FOG_UNEXPLORED,
                   Fog_StateAtForPlayer(world, 1, s.fx, s.fy));
-    ASSERT(InGame_HoverCursorAt(s.fx, s.fy) != HUD_CUR_REVIVE);
+    ASSERT(InGame_HoverCursorAt(s.fx, sy) != HUD_CUR_REVIVE);
     world->cfg.line_of_sight = 0;
 
     /* A plain click on the body raises it. */
-    ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(s.fx, s.fy));
-    InGame_WorldClick(s.fx, s.fy, 0);
+    ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(s.fx, sy));
+    InGame_WorldClick(s.fx, sy, 0);
     TAK_CmdQueue_Run();   /* the order lands on its tick */
     units = Units_GetActive(&unit_count);
     ASSERT_EQ_INT(UNIT_CMD_RESURRECT, units[s.raiser].cmd_kind);
