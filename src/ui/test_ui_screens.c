@@ -11507,9 +11507,10 @@ static void check_turret_faces(TAK_Platform *platform, Timer *timer,
                                int32_t cx, int32_t cy,
                                int dir_x, int dir_y, const char *dir_name) {
     int tower_def = Units_FindDefByName(tower_name);
-    /* A wall for prey: it cannot walk away, so the angle the assertion
-     * compares against stays exactly the one we placed. */
-    int prey_def  = Units_FindDefByName("ARAWALL");
+    /* A lodestone for prey: it cannot walk away, so the angle the
+     * assertion compares against stays exactly the one we placed. Not a
+     * wall, which nothing picks on its own (#107). */
+    int prey_def  = Units_FindDefByName("ARALODE");
     ASSERT(tower_def >= 0);
     ASSERT(prey_def >= 0);
     const UnitDef *twd = Units_GetDef(tower_def);
