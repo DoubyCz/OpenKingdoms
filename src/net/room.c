@@ -633,6 +633,8 @@ void TAK_Room_Summary(const TAK_Room *r, uint32_t viewer_build,
     out->watchers = r->watcher_count;
     out->status = r->status;
     out->flags = r->cfg.flags;
+    out->options = r->cfg.options;
+    out->unit_cap = r->cfg.unit_cap;
     out->engine_build_id = r->engine_build_id;
     out->determinism_class = r->determinism_class;
     /* Greyed with a reason rather than hidden, which is what the original

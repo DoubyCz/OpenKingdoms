@@ -324,6 +324,10 @@ typedef struct TAK_RoomSummary {
     uint8_t  watchers;
     uint8_t  status;
     uint32_t flags;
+    /* The rules and the unit cap, so a lobby can describe the game
+     * before anyone joins it. */
+    uint32_t options;
+    uint16_t unit_cap;
     uint32_t engine_build_id;
     uint8_t  determinism_class;
     /* Zero when this client may join. Otherwise the reason, so the list

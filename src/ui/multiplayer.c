@@ -868,6 +868,10 @@ static struct {
     MpMapRow   *rows;
     int         count, selected, scroll;
     int         idx_list;
+    /* The list's own bar: the widgets choosemap.gui authors beside the
+     * list, told from the description's bar by where they sit. */
+    int         idx_track, idx_thumb, idx_inc, idx_dec;
+    int         dragging, grab_dy;
     int         prev_mouse;
     /* The selected map's picture and words. */
     TNTFile     tnt;
@@ -887,7 +891,21 @@ static int mc_row_height(void) {
 static SDL_Rect mc_list_rect(void) {
     SDL_Rect r = { 0, 0, 0, 0 };
     if (mc.idx_list >= 0) r = mc.dialog.children[mc.idx_list].rect;
+    if (mc.idx_track >= 0) {
+        const GUIWidget *t = &mc.dialog.children[mc.idx_track];
+        if (t->rect.x > r.x) r.w = t->rect.x - r.x;
+    }
     return r;
+}
+
+/* Where a widget's art lands, since the bar's art sits inside its
+ * nubs by a hotspot and the .gui rect alone is off. */
+static void mc_draw_rect(int idx, SDL_Rect *out) {
+    out->x = out->y = 0;
+    out->w = out->h = 1;
+    if (idx < 0 || idx >= mc.dialog.num_children) return;
+    if (!mc.rt || GUIRuntime_WidgetDrawRect(mc.rt, idx, out) != 0)
+        *out = mc.dialog.children[idx].rect;
 }
 
 static int mc_rows_visible(void) {
@@ -940,9 +958,81 @@ static void mc_load_selected(void) {
         if (tdf) TDF_Close(tdf);
     }
     if (mc.rt) {
-        GUIRuntime_SetWidgetText(mc.rt, "MapName", mc.rows[mc.selected].display);
         GUIRuntime_SetWidgetText(mc.rt, "HelpText", "");
     }
+}
+
+static int mc_max_scroll(void) {
+    int m = mc.count - mc_rows_visible();
+    return m > 0 ? m : 0;
+}
+
+/* The thumb sits on the track where the list is, unless a drag has it. */
+static void mc_sync_thumb(void) {
+    if (mc.idx_thumb < 0 || mc.idx_track < 0 || mc.dragging) return;
+    SDL_Rect track, thumb;
+    mc_draw_rect(mc.idx_track, &track);
+    mc_draw_rect(mc.idx_thumb, &thumb);
+    int travel = track.h - thumb.h;
+    if (travel < 0) travel = 0;
+    int m = mc_max_scroll();
+    GUIWidget *w = &mc.dialog.children[mc.idx_thumb];
+    int rel = m > 0 ? (travel * mc.scroll) / m : 0;
+    /* Rect, not draw position: the renderer re-applies the hotspot. */
+    w->rect.y = track.y + rel + (w->rect.y - thumb.y);
+}
+
+/* The pointer over the chooser: the thumb drags, a press on the track
+ * above or below it pages, and a press in the list picks a row. */
+static void mc_pointer(int mx, int my, int down) {
+    SDL_Point pt = { mx, my };
+    if (mc.idx_thumb >= 0 && mc.idx_track >= 0) {
+        SDL_Rect thumb;
+        mc_draw_rect(mc.idx_thumb, &thumb);
+        if (down && !mc.prev_mouse && !mc.dragging && SDL_PointInRect(&pt, &thumb)) {
+            mc.dragging = 1;
+            mc.grab_dy = my - thumb.y;
+        }
+        if (!down) mc.dragging = 0;
+        if (mc.dragging) {
+            SDL_Rect track;
+            mc_draw_rect(mc.idx_track, &track);
+            int th = thumb.h > 0 ? thumb.h : 1;
+            int travel = track.h - th;
+            int m = mc_max_scroll();
+            if (travel > 0 && m > 0) {
+                int rel = my - mc.grab_dy - track.y;
+                if (rel < 0) rel = 0;
+                if (rel > travel) rel = travel;
+                mc.scroll = (rel * m + travel / 2) / travel;
+                mc_clamp_scroll();
+                GUIWidget *w = &mc.dialog.children[mc.idx_thumb];
+                w->rect.y = track.y + rel + (w->rect.y - thumb.y);
+            }
+        }
+    }
+    if (down && !mc.prev_mouse && !mc.dragging && mx >= 0) {
+        SDL_Rect lr = mc_list_rect();
+        SDL_Rect track = { 0, 0, 0, 0 }, thumb = { 0, 0, 0, 0 };
+        if (mc.idx_track >= 0) mc_draw_rect(mc.idx_track, &track);
+        if (mc.idx_thumb >= 0) mc_draw_rect(mc.idx_thumb, &thumb);
+        if (mc.idx_list >= 0 && SDL_PointInRect(&pt, &lr)) {
+            int row = mc.scroll + (my - lr.y) / mc_row_height();
+            if (row >= 0 && row < mc.count) Multiplayer_MapChooserSelect(row);
+        } else if (mc.idx_track >= 0 && SDL_PointInRect(&pt, &track)) {
+            int vis = mc_rows_visible();
+            if (my < thumb.y) mc.scroll -= vis;
+            else if (my >= thumb.y + thumb.h) mc.scroll += vis;
+            mc_clamp_scroll();
+        }
+    }
+    mc.prev_mouse = down;
+}
+
+void Multiplayer_MapChooserPointer(int x, int y, int down) {
+    if (!mc.open) return;
+    mc_pointer(x, y, down);
+    mc_sync_thumb();
 }
 
 void Multiplayer_MapChooserSelect(int row) {
@@ -951,10 +1041,26 @@ void Multiplayer_MapChooserSelect(int row) {
     if (row < mc.scroll) mc.scroll = row;
     if (row >= mc.scroll + mc_rows_visible()) mc.scroll = row - mc_rows_visible() + 1;
     mc_clamp_scroll();
+    mc_sync_thumb();
     mc_load_selected();
 }
 
 int         Multiplayer_MapChooserOpen(void)      { return mc.open; }
+int         Multiplayer_MapChooserScroll(void)    { return mc.scroll; }
+int         Multiplayer_MapChooserRowsVisible(void) { return mc_rows_visible(); }
+int Multiplayer_MapChooserThumbRect(SDL_Rect *out) {
+    if (!mc.open || mc.idx_thumb < 0 || !out) return 0;
+    mc_draw_rect(mc.idx_thumb, out);
+    return 1;
+}
+int Multiplayer_MapChooserTrackRect(SDL_Rect *out) {
+    if (!mc.open || mc.idx_track < 0 || !out) return 0;
+    mc_draw_rect(mc.idx_track, out);
+    return 1;
+}
+int Multiplayer_MapChooserWidgetHidden(const char *name) {
+    return (mc.open && mc.rt) ? GUIRuntime_WidgetHidden(mc.rt, name) : 0;
+}
 int         Multiplayer_MapChooserRowCount(void)  { return mc.count; }
 const char *Multiplayer_MapChooserRowKey(int row) {
     return (row >= 0 && row < mc.count) ? mc.rows[row].key : NULL;
@@ -984,11 +1090,28 @@ void Multiplayer_OpenMapChooser(int as_host) {
     mc.host = as_host;
     mc.selected = -1;
     mc.idx_list = -1;
+    mc.idx_track = mc.idx_thumb = mc.idx_inc = mc.idx_dec = -1;
+    mc.dragging = 0;
+    mc.prev_mouse = 0;
     for (int i = 0; i < mc.dialog.num_children; i++) {
         if (tak_stricmp(mc.dialog.children[i].name, "MapList") == 0) mc.idx_list = i;
     }
+    if (mc.idx_list >= 0) {
+        SDL_Rect lr = mc.dialog.children[mc.idx_list].rect;
+        for (int i = 0; i < mc.dialog.num_children; i++) {
+            const GUIWidget *w = &mc.dialog.children[i];
+            int beside = w->rect.x >= lr.x + lr.w - 40 && w->rect.x < lr.x + lr.w + 40 &&
+                         w->rect.y >= lr.y - 4 && w->rect.y < lr.y + lr.h + 4;
+            if (!beside) continue;
+            if (tak_stricmp(w->name, "slider") == 0)    mc.idx_track = i;
+            if (tak_stricmp(w->name, "sbutton") == 0)   mc.idx_thumb = i;
+            if (tak_stricmp(w->name, "incbutton") == 0) mc.idx_inc = i;
+            if (tak_stricmp(w->name, "decbutton") == 0) mc.idx_dec = i;
+        }
+    }
     /* The row template and its label are art the list draws over. */
     GUIRuntime_SetWidgetVisible(mc.rt, "MapNameEntryTemplate", 0);
+    GUIRuntime_SetWidgetVisible(mc.rt, "MapName", 0);
     GUIRuntime_SetWidgetVisible(mc.rt, "LineTemplate", 0);
     GUIRuntime_SetWidgetVisible(mc.rt, "TextLine", 0);
 
@@ -1133,26 +1256,33 @@ int Multiplayer_MapChooserTick(TAK_Platform *platform, float dt) {
         return GAMESTATE_MULTIPLAYER;
     }
 
-    /* A press in the list picks a row. */
-    if (mouse_down && !mc.prev_mouse && mx >= 0 && mc.idx_list >= 0) {
-        SDL_Rect lr = mc_list_rect();
+    mc_pointer(mx, my, mouse_down);
+
+    /* The wheel over the list or its bar scrolls it. */
+    SDL_Event ev;
+    while (SDL_PeepEvents(&ev, 1, SDL_GETEVENT, SDL_MOUSEWHEEL, SDL_MOUSEWHEEL) > 0) {
+        SDL_Rect lr = mc_list_rect(), track = { 0, 0, 0, 0 };
+        if (mc.idx_track >= 0) mc_draw_rect(mc.idx_track, &track);
         SDL_Point pt = { mx, my };
-        if (SDL_PointInRect(&pt, &lr)) {
-            int row = mc.scroll + (my - lr.y) / mc_row_height();
-            if (row >= 0 && row < mc.count) Multiplayer_MapChooserSelect(row);
+        if (SDL_PointInRect(&pt, &lr) || SDL_PointInRect(&pt, &track)) {
+            mc.scroll -= ev.wheel.y;
+            mc_clamp_scroll();
         }
     }
-    mc.prev_mouse = mouse_down;
 
     char clicked[64];
+    int  clicked_idx = -1;
     clicked[0] = '\0';
-    (void)GUIRuntime_Update(mc.rt, mx, my, mouse_down, clicked, sizeof clicked);
-    if (clicked[0]) {
-        if (tak_stricmp(clicked, "incbutton") == 0) { mc.scroll--; mc_clamp_scroll(); }
-        else if (tak_stricmp(clicked, "decbutton") == 0) { mc.scroll++; mc_clamp_scroll(); }
+    (void)GUIRuntime_UpdateEx(mc.rt, mx, my, mouse_down, clicked, sizeof clicked,
+                              &clicked_idx);
+    if (clicked[0] && !mc.dragging) {
+        if (clicked_idx == mc.idx_inc)        { mc.scroll--; mc_clamp_scroll(); }
+        else if (clicked_idx == mc.idx_dec)   { mc.scroll++; mc_clamp_scroll(); }
+        else if (clicked_idx == mc.idx_thumb) { /* the drag has it */ }
         else Multiplayer_MapChooserPress(clicked);
         if (!mc.open) return GAMESTATE_MULTIPLAYER;
     }
+    mc_sync_thumb();
 
     /* The room stays under it, as the original draws the chooser over
      * the battle menu. */

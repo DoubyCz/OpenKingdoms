@@ -198,6 +198,8 @@ static void summary_write(TAK_ByteWriter *w, const TAK_RoomSummary *s) {
     TAK_BW_U8(w, s->watchers);
     TAK_BW_U8(w, s->status);
     TAK_BW_U32(w, s->flags);
+    TAK_BW_U32(w, s->options);
+    TAK_BW_U16(w, s->unit_cap);
     TAK_BW_U32(w, s->engine_build_id);
     TAK_BW_U8(w, s->determinism_class);
     TAK_BW_U8(w, s->compat);
@@ -215,6 +217,8 @@ static void summary_read(TAK_ByteReader *r, TAK_RoomSummary *s) {
     s->watchers = TAK_BR_U8(r);
     s->status = TAK_BR_U8(r);
     s->flags = TAK_BR_U32(r);
+    s->options = TAK_BR_U32(r);
+    s->unit_cap = TAK_BR_U16(r);
     s->engine_build_id = TAK_BR_U32(r);
     s->determinism_class = TAK_BR_U8(r);
     s->compat = TAK_BR_U8(r);

@@ -23,6 +23,11 @@ void SelectGame_Shutdown(void);
  * and the text a row draws. NULL when the index is not a row. */
 int         SelectGame_RowCount(void);
 int         SelectGame_Selected(void);
+/* Test seams: choose a row as a click would, and read a label of the
+ * Game Information panel. LabelText returns 0 when the dialog has no
+ * such label. */
+void        SelectGame_SelectRow(int row);
+int         SelectGame_LabelText(const char *name, char *out, size_t cap);
 const char *SelectGame_RowName(int index);
 
 /* Press a button by name, the way the runtime would on a click. A test
