@@ -17791,6 +17791,79 @@ TEST(the_menu_opens_the_load_dialog) {
 /* A saved game shows up in the list by the name the player typed, with
  * the map and the clock the right hand panel carries
  * (legacy:159131-159160). */
+/* The load dialog's right hand panel is a picture of the battle the
+ * save holds, which is what the original paints there
+ * (legacy:164966-164975, the radar image in the save's Summary). It
+ * was an empty frame: no code drew the panel and no save carried a
+ * picture to draw. */
+TEST(the_load_dialog_shows_the_saved_battle) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+    BattleConfig cfg;
+    ASSERT_EQ_INT(0, igm_boot(&platform, &cfg));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, sb_open_menu_and_press("SaveGame"));
+    SaveBrowser_SetName("Hill Fight");
+    ASSERT_EQ_INT(SAVEBROWSER_SAVED, SaveBrowser_Press("SaveGame"));
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME,
+                  InGameMenu_TakeBrowserResult(SAVEBROWSER_SAVED));
+
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGameMenu_Press("LoadGame"));
+    ASSERT_EQ_INT(1, SaveBrowser_HasWidget("RadarView"));
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    SaveBrowser_SelectRow(0);
+    (void)SaveBrowser_Tick(&platform);
+
+    SDL_Rect r;
+    if (!SaveBrowser_RadarViewRect(&r)) printf("(no panel to paint) ");
+    ASSERT_EQ_INT(1, SaveBrowser_RadarViewRect(&r));
+
+    /* The save carries a picture of the battle. */
+    TAK_SaveEntry *written = NULL;
+    ASSERT_EQ_INT(1, SaveList_Scan(&written));
+    char err[TAK_SAVE_ERR_MAX] = { 0 };
+    TAK_SaveGame *sg = Save_Read(written[0].path, err, sizeof err);
+    SaveList_Free(written);
+    ASSERT_NOT_NULL(sg);
+    int tw = 0, th = 0;
+    const uint8_t *rgb = Save_Thumbnail(sg, &tw, &th);
+    if (!rgb) printf("(the save carries no picture) ");
+    ASSERT_NOT_NULL(rgb);
+    ASSERT(tw > 0 && th > 0);
+
+    /* And the panel is that picture, pixel for pixel, at the panel's
+     * own size. Anything weaker passes on the authored frame, which
+     * already has more than one colour in it. */
+    SDL_Surface *off = UI_Offscreen();
+    ASSERT_NOT_NULL(off);
+    int pitch = off->pitch / 4;
+    const uint32_t *px = (const uint32_t *)off->pixels;
+    int wrong = 0, distinct = 0;
+    uint32_t first = px[(size_t)r.y * pitch + r.x];
+    for (int y = 0; y < r.h; y++) {
+        for (int x = 0; x < r.w; x++) {
+            const uint8_t *t =
+                rgb + ((size_t)(y * th / r.h) * tw + (x * tw / r.w)) * 3u;
+            uint32_t want = SDL_MapRGBA(off->format, t[0], t[1], t[2], 255);
+            uint32_t got = px[(size_t)(r.y + y) * pitch + (r.x + x)];
+            if (got != want) wrong++;
+            if (got != first) distinct++;
+        }
+    }
+    if (wrong) printf("(%d of %d panel pixels are not the save's picture) ",
+                      wrong, r.w * r.h);
+    ASSERT_EQ_INT(0, wrong);
+    /* And the picture is a map, not one flat colour. */
+    if (distinct <= 100) printf("(the panel is one colour) ");
+    ASSERT(distinct > 100);
+    Save_ReadClose(sg);
+
+    sb_teardown(&platform);
+}
+
 TEST(a_saved_game_appears_in_the_load_list) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -18430,6 +18503,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_B, a_load_brings_back_one_army_not_two);
     RUN_UI_TEST(UI_GROUP_A, the_load_dialog_waits_for_its_saves_before_calling_them_none);
     RUN_UI_TEST(UI_GROUP_B, the_load_dialog_still_says_when_there_are_no_saves);
+    RUN_UI_TEST(UI_GROUP_C, the_load_dialog_shows_the_saved_battle);
     RUN_UI_TEST(UI_GROUP_A, a_save_name_that_will_not_do_says_which_way);
     RUN_UI_TEST(UI_GROUP_B, saving_over_a_game_replaces_it_without_asking);
     RUN_UI_TEST(UI_GROUP_C, delete_takes_the_selected_game_at_once);

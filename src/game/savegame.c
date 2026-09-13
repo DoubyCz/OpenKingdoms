@@ -13,6 +13,7 @@
 
 #include "tak_savegame.h"
 
+
 #include "tak_ai.h"
 #include "tak_battle_config.h"
 #include "tak_bytes.h"
@@ -425,6 +426,7 @@ _Static_assert(CT_END == TAK_COB_THREAD_BYTES,
 #define VER_CFGB 1
 #define VER_WRLD 1
 #define VER_CAMR 1
+#define VER_THMB 1
 #define VER_STRT 1
 #define VER_SUMM 1
 #define VER_UNIT 1
@@ -2075,6 +2077,23 @@ static void apply_wrld(const uint8_t *p, GameWorld *w) {
     w->occ_version++;
 }
 
+/* The picture the next save carries, if the caller gave one. */
+static uint8_t *s_thumb;
+static int      s_thumb_w, s_thumb_h;
+
+void Save_SetThumbnail(const uint8_t *rgb, int w, int h) {
+    tak_free(s_thumb);
+    s_thumb = NULL;
+    s_thumb_w = s_thumb_h = 0;
+    if (!rgb || w <= 0 || h <= 0) return;
+    size_t n = (size_t)w * (size_t)h * 3u;
+    s_thumb = (uint8_t *)tak_malloc(n);
+    if (!s_thumb) return;
+    memcpy(s_thumb, rgb, n);
+    s_thumb_w = w;
+    s_thumb_h = h;
+}
+
 int Save_Write(const char *path, char *err, size_t err_cap) {
     if (err && err_cap) err[0] = '\0';
     if (!path) {
@@ -2281,6 +2300,27 @@ int Save_Write(const char *path, char *err, size_t err_cap) {
     /* The camera is local view state, so an older reader may skip it. */
     if (rc == 0) rc = Save_AddSection(writer, TAK_SECT_CAMR, VER_CAMR, 0,
                                       camr, sizeof(camr));
+
+    /* And the picture of the battle, when the caller gave one. It is
+     * the last thing added and the only one that may be missing: a
+     * save without a picture is a save, and a battle the player cannot
+     * write because no panel could be painted is not. */
+    if (rc == 0 && s_thumb && s_thumb_w > 0 && s_thumb_h > 0) {
+        size_t thmb_px = (size_t)s_thumb_w * (size_t)s_thumb_h * 3u;
+        uint8_t *thmb = (uint8_t *)tak_malloc(TAK_THMB_HEADER_BYTES + thmb_px);
+        if (thmb) {
+            tak_put_u16(thmb + 0, (uint16_t)s_thumb_w);
+            tak_put_u16(thmb + 2, (uint16_t)s_thumb_h);
+            thmb[4] = 3;
+            thmb[5] = 0;
+            memcpy(thmb + TAK_THMB_HEADER_BYTES, s_thumb, thmb_px);
+            rc = Save_AddSection(writer, TAK_SECT_THMB, VER_THMB, 0, thmb,
+                                 TAK_THMB_HEADER_BYTES + thmb_px);
+            tak_free(thmb);
+        }
+    }
+    /* Used or not, it belongs to that save and not to the next one. */
+    Save_SetThumbnail(NULL, 0, 0);
     tak_free(strt);
     tak_free(defs);
     tak_free(unit_recs);
@@ -2321,6 +2361,7 @@ static void declare_known(TAK_SaveReader *r) {
     Save_DeclareKnown(r, TAK_SECT_CFGB, VER_CFGB);
     Save_DeclareKnown(r, TAK_SECT_WRLD, VER_WRLD);
     Save_DeclareKnown(r, TAK_SECT_CAMR, VER_CAMR);
+    Save_DeclareKnown(r, TAK_SECT_THMB, VER_THMB);
     Save_DeclareKnown(r, TAK_SECT_UNIT, VER_UNIT);
     Save_DeclareKnown(r, TAK_SECT_UPTH, VER_UPTH);
     Save_DeclareKnown(r, TAK_SECT_UCOB, VER_UCOB);
@@ -2434,6 +2475,24 @@ TAK_SaveGame *Save_Read(const char *path, char *err, size_t err_cap) {
     }
 
     return sg;
+}
+
+const uint8_t *Save_Thumbnail(TAK_SaveGame *sg, int *w, int *h) {
+    if (w) *w = 0;
+    if (h) *h = 0;
+    if (!sg || !sg->reader) return NULL;
+    size_t len = 0;
+    const uint8_t *p = (const uint8_t *)Save_Section(sg->reader, TAK_SECT_THMB,
+                                                     NULL, &len);
+    if (!p || len < TAK_THMB_HEADER_BYTES) return NULL;
+    int tw = (int)tak_get_u16(p + 0);
+    int th = (int)tak_get_u16(p + 2);
+    int bpp = p[4];
+    if (tw <= 0 || th <= 0 || bpp != 3) return NULL;
+    if (len - TAK_THMB_HEADER_BYTES < (size_t)tw * (size_t)th * 3u) return NULL;
+    if (w) *w = tw;
+    if (h) *h = th;
+    return p + TAK_THMB_HEADER_BYTES;
 }
 
 const TAK_SaveInfo *Save_Info(const TAK_SaveGame *sg) {

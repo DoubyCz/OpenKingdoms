@@ -24,11 +24,14 @@
 
 #include "tak_save_browser.h"
 
+#include "tak_blit.h"
 #include "tak_font.h"
 #include "tak_game_sound.h"
 #include "tak_gui.h"
 #include "tak_gui_render.h"
+#include "tak_memory.h"
 #include "tak_message_box.h"
+#include "tak_minimap.h"
 #include "tak_paths.h"
 #include "tak_savegame.h"
 #include "tak_savelist.h"
@@ -77,6 +80,12 @@ static struct {
     int              idx_thumb;
     int              idx_inc;
     int              idx_dec;
+    /* The load dialog's picture panel, and the selected save's picture
+     * decoded into it. Not idx_thumb above, which is the scrollbar's
+     * "sbutton" and a different thing entirely. */
+    int              idx_radar;
+    uint32_t        *radar_px;
+    int              radar_w, radar_h;
     int              dragging;
     int              grab_dy;
 
@@ -152,6 +161,7 @@ static const char *dialog_file(SaveBrowserMode mode) {
  * authors exactly one set, so the name is enough here. */
 static void cache_indices(void) {
     sb.idx_list = sb.idx_track = sb.idx_thumb = sb.idx_inc = sb.idx_dec = -1;
+    sb.idx_radar = -1;
     for (int i = 0; i < sb.dialog.num_children; i++) {
         const GUIWidget *w = &sb.dialog.children[i];
         if (tak_stricmp(w->name, "GameList")  == 0) sb.idx_list  = i;
@@ -159,6 +169,7 @@ static void cache_indices(void) {
         if (tak_stricmp(w->name, "sbutton")   == 0) sb.idx_thumb = i;
         if (tak_stricmp(w->name, "incbutton") == 0) sb.idx_inc   = i;
         if (tak_stricmp(w->name, "decbutton") == 0) sb.idx_dec   = i;
+        if (tak_stricmp(w->name, "RadarView")  == 0) sb.idx_radar = i;
     }
 }
 
@@ -231,6 +242,56 @@ static void sync_thumb(void) {
 
 /* -- the list itself ----------------------------------------------- */
 
+/* The selected save's picture, decoded once per selection change
+ * rather than per frame: it means opening the file, and the list can
+ * be walked with the arrow keys. A save that carries none, or one that
+ * will not open, leaves the panel as the art authored it. */
+static void sync_radar(void) {
+    tak_free(sb.radar_px);
+    sb.radar_px = NULL;
+    sb.radar_w = sb.radar_h = 0;
+    if (sb.idx_radar < 0) return;
+    if (sb.selected < 0 || sb.selected >= sb.row_count) return;
+    if (!sb.rows[sb.selected].readable) return;
+
+    char err[TAK_SAVE_ERR_MAX];
+    TAK_SaveGame *sg = Save_Read(sb.rows[sb.selected].path, err, sizeof err);
+    if (!sg) return;
+    int w = 0, h = 0;
+    const uint8_t *rgb = Save_Thumbnail(sg, &w, &h);
+    if (rgb && w > 0 && h > 0) {
+        uint32_t *px = (uint32_t *)tak_malloc((size_t)w * (size_t)h * sizeof *px);
+        if (px) {
+            SDL_PixelFormat *fmt = UI_RGBAFormat();
+            for (size_t i = 0; i < (size_t)w * (size_t)h; i++) {
+                px[i] = SDL_MapRGBA(fmt, rgb[i * 3], rgb[i * 3 + 1],
+                                    rgb[i * 3 + 2], 255);
+            }
+            sb.radar_px = px;
+            sb.radar_w = w;
+            sb.radar_h = h;
+        }
+    }
+    Save_ReadClose(sg);
+}
+
+/* Over the panel art, at the panel's own size. */
+static void draw_radar(void) {
+    if (!sb.radar_px || sb.idx_radar < 0) return;
+    SDL_Surface *off = UI_Offscreen();
+    if (!off) return;
+    SDL_Rect r;
+    widget_draw_rect(sb.idx_radar, &r);
+    if (r.w <= 0 || r.h <= 0) return;
+    Blit_RGBA_Scaled(off, r, sb.radar_px, sb.radar_w, sb.radar_h);
+}
+
+int SaveBrowser_RadarViewRect(SDL_Rect *out) {
+    if (!out || !sb.open || !sb.rt || sb.idx_radar < 0) return 0;
+    widget_draw_rect(sb.idx_radar, out);
+    return (out->w > 0 && out->h > 0);
+}
+
 static void sync_details(void) {
     const char *side = "";
     const char *map  = "";
@@ -247,6 +308,7 @@ static void sync_details(void) {
     GUIRuntime_SetWidgetText(sb.rt, "GameTime", time);
     /* The row template carries the art placeholder text, never a row. */
     GUIRuntime_SetWidgetText(sb.rt, "FileName", "");
+    sync_radar();
 }
 
 void SaveBrowser_SelectRow(int row) {
@@ -340,6 +402,7 @@ void SaveBrowser_Close(void) {
     if (sb.font_row)  Font_Free(sb.font_row);
     if (sb.font_help) Font_Free(sb.font_help);
     SaveList_Free(sb.rows);
+    tak_free(sb.radar_px);
     /* A save nobody took is closed here rather than leaked. */
     if (sb.loaded) Save_ReadClose(sb.loaded);
     memset(&sb, 0, sizeof(sb));
@@ -385,6 +448,22 @@ static SaveBrowserResult do_save(void) {
      * string (legacy:159247-159292). */
     char err[256];
     err[0] = '\0';
+    /* The picture the load dialog will show for this save. The
+     * container knows about bytes and nothing about maps, so the
+     * screen that has the renderer draws it and hands it over. A
+     * battle with no overview image to draw from simply has none. */
+    {
+        size_t n = (size_t)TAK_THMB_W * (size_t)TAK_THMB_H * 3u;
+        uint8_t *rgb = (uint8_t *)tak_malloc(n);
+        if (rgb && Minimap_RenderThumbnail(rgb, (int)TAK_THMB_W,
+                                           (int)TAK_THMB_H) == 0) {
+            Save_SetThumbnail(rgb, (int)TAK_THMB_W, (int)TAK_THMB_H);
+        } else {
+            Save_SetThumbnail(NULL, 0, 0);
+        }
+        tak_free(rgb);
+    }
+
     if (Save_Write(path, err, sizeof(err)) != 0) {
         /* A full disk, a directory that cannot be written and a path
          * that is too long all arrive here already worded. */
@@ -546,6 +625,7 @@ static void draw_help_strip(void) {
 static void render_all(void) {
     sync_thumb();
     GUIRuntime_Render(sb.rt);
+    draw_radar();
     draw_rows();
     draw_name_field();
     draw_help_strip();
@@ -592,6 +672,7 @@ SaveBrowserResult SaveBrowser_Tick(TAK_Platform *platform) {
     if (MessageBox_IsOpen()) {
         sync_thumb();
         GUIRuntime_Render(sb.rt);
+        draw_radar();
         draw_rows();
         draw_name_field();
         int read = MessageBox_Tick(mx, my, mouse_down, enter_edge, esc_edge);

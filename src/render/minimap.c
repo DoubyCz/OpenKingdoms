@@ -24,6 +24,7 @@
 #include "tak_memory.h"
 #include "tak_fog.h"
 #include "tak_hud.h"
+#include "tak_ui.h"
 #include "tak_unit.h"
 #include <stdio.h>
 #include <string.h>
@@ -167,6 +168,104 @@ static void minimap_draw_unit_dots(TAK_Platform *plat, const GameWorld *world,
         SDL_RenderFillRect(plat->renderer, &dot);
     }
     SDL_SetRenderDrawBlendMode(plat->renderer, prev);
+}
+
+/* ── The picture, without a renderer ──────────────────────────────── */
+
+static void thumb_put(uint8_t *out, int tw, int th, int x, int y,
+                      uint8_t r, uint8_t g, uint8_t b) {
+    if (x < 0 || y < 0 || x >= tw || y >= th) return;
+    uint8_t *p = out + ((size_t)y * (size_t)tw + (size_t)x) * 3u;
+    p[0] = r; p[1] = g; p[2] = b;
+}
+
+int Minimap_RenderThumbnail(uint8_t *out_rgb, int tw, int th) {
+    const GameWorld *world = World_Get();
+    if (!out_rgb || tw <= 0 || th <= 0) return -1;
+    if (!world || !world->tnt.ingame_minimap_bg ||
+        world->tnt.minimap_bg_w <= 0 || world->tnt.minimap_bg_h <= 0) {
+        return -1;
+    }
+    SDL_PixelFormat *fmt = UI_RGBAFormat();
+    if (!fmt) return -1;
+
+    const int sw = world->tnt.minimap_bg_w;
+    const int sh = world->tnt.minimap_bg_h;
+    const uint8_t *src = world->tnt.ingame_minimap_bg;
+
+    /* Nearest sample of the overview image. The sidebar radar fits the
+     * image to its slot and leaves the margin black; here the panel is
+     * the picture, so the whole image is stretched into it. */
+    for (int y = 0; y < th; y++) {
+        int sy = (int)(((int64_t)y * sh) / th);
+        if (sy >= sh) sy = sh - 1;
+        for (int x = 0; x < tw; x++) {
+            int sx = (int)(((int64_t)x * sw) / tw);
+            if (sx >= sw) sx = sw - 1;
+            uint8_t r, g, b;
+            SDL_GetRGB(world->terrain_rgba[src[(size_t)sy * (size_t)sw + sx]],
+                       fmt, &r, &g, &b);
+            thumb_put(out_rgb, tw, th, x, y, r, g, b);
+        }
+    }
+
+    /* Fog, the same three cases the radar composites: never seen is
+     * black, seen and not currently visible is darkened, visible is
+     * left alone. Off with line of sight, as there it is off. */
+    int viewer = Fog_Viewer();
+    if (world->cfg.line_of_sight && viewer >= 0 &&
+        viewer <= TAK_MAX_PLAYERS && world->fog_layers[viewer] &&
+        world->map_pixels_w > 0 && world->map_pixels_h > 0) {
+        const uint8_t *fog = world->fog_layers[viewer];
+        for (int y = 0; y < th; y++) {
+            int wy = (int)(((int64_t)y * world->map_pixels_h) / th);
+            int fy = wy / world->fog_cell_px;
+            if (fy < 0) fy = 0;
+            if (fy >= world->fog_h) fy = world->fog_h - 1;
+            for (int x = 0; x < tw; x++) {
+                int wx = (int)(((int64_t)x * world->map_pixels_w) / tw);
+                int fx = wx / world->fog_cell_px;
+                if (fx < 0) fx = 0;
+                if (fx >= world->fog_w) fx = world->fog_w - 1;
+                int st = fog[(size_t)fy * (size_t)world->fog_w + fx];
+                if (st == TAK_FOG_VISIBLE) continue;
+                uint8_t *p = out_rgb + ((size_t)y * (size_t)tw + x) * 3u;
+                if (st == TAK_FOG_EXPLORED) {
+                    /* The radar's stand in for the shade table, which
+                     * is a 120 of 255 black over what is there. */
+                    p[0] = (uint8_t)((int)p[0] * 135 / 255);
+                    p[1] = (uint8_t)((int)p[1] * 135 / 255);
+                    p[2] = (uint8_t)((int)p[2] * 135 / 255);
+                } else {
+                    p[0] = p[1] = p[2] = 0;
+                }
+            }
+        }
+    }
+
+    /* One dot per unit the viewer may see, in its owner's colour. Two
+     * pixels at this scale, where the radar draws four. */
+    int count = 0;
+    const Unit *units = Units_GetActive(&count);
+    if (units && count > 0 && world->map_pixels_w > 0 && world->map_pixels_h > 0) {
+        for (int i = 0; i < count; i++) {
+            const Unit *u = &units[i];
+            if (u->alive != UNIT_ALIVE_ACTIVE) continue;
+            if (!Units_IsVisibleToLocalPlayer(u)) continue;
+            int dx = (int)(((int64_t)u->world_x * tw) / world->map_pixels_w);
+            int dy = (int)(((int64_t)u->world_y * th) / world->map_pixels_h);
+            uint32_t rgba = Units_GetTeamColorRGBA(u->team_color_idx);
+            uint8_t r = (uint8_t)(rgba & 0xFFu);
+            uint8_t g = (uint8_t)((rgba >> 8) & 0xFFu);
+            uint8_t b = (uint8_t)((rgba >> 16) & 0xFFu);
+            for (int oy = 0; oy < 2; oy++) {
+                for (int ox = 0; ox < 2; ox++) {
+                    thumb_put(out_rgb, tw, th, dx + ox, dy + oy, r, g, b);
+                }
+            }
+        }
+    }
+    return 0;
 }
 
 int Minimap_DebugDotRect(TAK_Platform *plat, int32_t world_x, int32_t world_y,

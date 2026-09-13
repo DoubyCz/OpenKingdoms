@@ -893,6 +893,24 @@ TEST(the_camera_comes_back_where_it_was) {
     Save_ReadClose(sg);
 }
 
+/* The picture is the one section allowed to fail quietly. A world with
+ * no overview image to draw from has nothing to put in it, and a
+ * battle the player cannot write because a panel could not be painted
+ * would be a far worse answer than a save with no picture. */
+TEST(a_battle_with_no_picture_still_saves) {
+    char err[TAK_SAVE_ERR_MAX] = { 0 };
+    ASSERT_EQ_INT(0, setup(NULL));
+    ASSERT_EQ_INT(0, write_scratch(err, sizeof(err)));
+
+    TAK_SaveGame *sg = Save_Read(SCRATCH, err, sizeof(err));
+    ASSERT_NOT_NULL(sg);
+    int w = -1, h = -1;
+    ASSERT_NULL(Save_Thumbnail(sg, &w, &h));
+    ASSERT_EQ_INT(0, w);
+    ASSERT_EQ_INT(0, h);
+    Save_ReadClose(sg);
+}
+
 /* World_SeedRand cannot restore a live state: it xors and forces the
  * value odd, and a running generator is as often even. */
 TEST(the_generator_comes_back_on_an_even_state) {
@@ -1424,6 +1442,7 @@ int main(int argc, char **argv) {
     RUN(every_battle_config_field_survives);
     RUN(every_world_scalar_survives);
     RUN(the_camera_comes_back_where_it_was);
+    RUN(a_battle_with_no_picture_still_saves);
     RUN(the_generator_comes_back_on_an_even_state);
     RUN(the_header_records_the_state_hash_and_the_tick);
     RUN(every_definition_the_battle_uses_is_named);
