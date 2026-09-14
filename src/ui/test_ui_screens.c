@@ -8295,6 +8295,121 @@ TEST(swordsman_strikes_an_enemy_standing_beside_it) {
  * swordsman's corpse still lies there and can be raised a second
  * before its time runs out. Reported from play: bodies rotted before a
  * raiser could reach them. */
+/* Clear ground whose raw height sits inside [lo, hi] over a 48 px
+ * square, for a body on the flat and one on a hill. */
+static int revive_ground_in_band(const GameWorld *world, int lo, int hi,
+                                 int32_t *ox, int32_t *oy) {
+    for (int32_t y = 160; y + 160 < world->map_pixels_h; y += 32) {
+        for (int32_t x = 160; x + 160 < world->map_pixels_w; x += 32) {
+            int ok = 1;
+            for (int dy = -24; dy <= 24 && ok; dy += 8) {
+                for (int dx = -24; dx <= 24 && ok; dx += 8) {
+                    int h = Terrain_SampleHeight(world, x + dx, y + dy);
+                    if (h < lo || h > hi) ok = 0;
+                    else if (!Terrain_IsWalkable(world, x + dx, y + dy, 40))
+                        ok = 0;
+                }
+            }
+            if (!ok) continue;
+            *ox = x;
+            *oy = y;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Boots two castles with line of sight off, so every body on the map
+ * is in explored ground. 1 means the data dir is missing. */
+static int revive_boot(TAK_Platform *platform) {
+    if (setup_vfs() != 0) { SKIP_MARK("no data dir"); return 1; }
+    if (setup_platform(platform) != 0) { VFS_Shutdown(); return 1; }
+    if (UI_Init() != 0) { corpse_teardown(platform); return -1; }
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
+    cfg.line_of_sight = 0;
+    if (World_BeginLoad(platform, &cfg, "two castles", "aramon") != 0 ||
+        Loading_Init(platform) != 0) {
+        corpse_teardown(platform);
+        return -1;
+    }
+    int next = GAMESTATE_GAME_LOADING;
+    for (int i = 0; i < 600 && next == GAMESTATE_GAME_LOADING; i++) {
+        next = Loading_Tick(platform, 1.0f / 60.0f);
+    }
+    if (next != GAMESTATE_IN_GAME) { corpse_teardown(platform); return -1; }
+    return 0;
+}
+
+/* Issue #106. The pointer is over a body when it is over the body as
+ * drawn. Terrain is drawn lifted by half its height (legacy:197689),
+ * and the original finds the cell under the pointer by walking the
+ * terrain for the one that projects there (legacy:212277). Ours read
+ * the pointer flat, so on a hill the sensitive spot sat half the
+ * height below the drawn body. */
+TEST(the_revive_cursor_covers_the_drawn_body_on_a_hill) {
+    TAK_Platform platform;
+    int boot_rc = revive_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int sdef = Units_FindDefByName("ARASWORD");
+    int kdef = Units_FindDefByName("ARAKING");
+    ASSERT(sdef >= 0 && kdef >= 0);
+    const UnitDef *sd = Units_GetDef(sdef);
+    const UnitDef *kd = Units_GetDef(kdef);
+    ASSERT_NOT_NULL(sd);
+    ASSERT_NOT_NULL(kd);
+    ASSERT(kd->cap_flags & UNIT_CAP_RESURRECT);
+    int cdef = Features_FindByName(sd->corpse);
+    ASSERT(cdef >= 0);
+    const FeatureDef *cd = Features_GetByIndex(cdef);
+    ASSERT_NOT_NULL(cd);
+    ASSERT(cd->resurrectable);
+    int fpx = cd->footprint_x > 0 ? cd->footprint_x : 1;
+    int fpz = cd->footprint_z > 0 ? cd->footprint_z : 1;
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    int raiser = Units_Spawn(kdef, 1, 0, units[0].world_x + 200,
+                             units[0].world_y);
+    ASSERT(raiser >= 0);
+    Units_SelectSingle(raiser);
+
+    int32_t site[2][2];
+    ASSERT(revive_ground_in_band(world, -8, 12, &site[0][0], &site[0][1]));
+    ASSERT(revive_ground_in_band(world, 60, 255, &site[1][0], &site[1][1]));
+    for (int s = 0; s < 2; s++) {
+        int32_t x = site[s][0], y = site[s][1];
+        int fi = Features_AddInstance(world, cdef,
+                                      Occ_TileOf(x - fpx * 8),
+                                      Occ_TileOf(y - fpz * 8), x, y, 0, -1);
+        ASSERT(fi >= 0);
+        int32_t cx = 0, cy = 0;
+        ASSERT_EQ_INT(0, Features_InstanceCentre(world, fi, &cx, &cy));
+        /* Where the body is drawn: its centre lifted by half the
+         * ground height, the projector's tilt (legacy:197689). */
+        int h = Terrain_SampleHeight(world, cx, cy);
+        int32_t dy = cy - (int32_t)((float)h * 0.5f);
+        int hw = fpx * 8 - 6, hh = fpz * 8 - 6;
+        printf("[%s h=%d body (%d,%d) drawn at y %d] ",
+               s ? "hill" : "flat", h, (int)cx, (int)cy, (int)dy);
+        ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(cx, dy));
+        ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(cx - hw, dy - hh));
+        ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(cx + hw, dy + hh));
+        ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(cx + hw, dy - hh));
+        ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(cx - hw, dy + hh));
+        /* The sweep cursor turns to revive over the same drawn body. */
+        ASSERT_EQ_INT(HUD_CUR_REVIVE,
+                      InGame_CommandCursorAt(HUD_CMD_CLEAR, cx, dy));
+    }
+
+    corpse_shutdown(&platform);
+}
+
 TEST(a_corpse_waits_for_a_raiser) {
     TAK_Platform platform;
     int boot_rc = corpse_boot(&platform);
@@ -9220,22 +9335,27 @@ TEST(the_revive_cursor_shows_over_a_body_the_selection_can_raise) {
     int builder = Units_Spawn(bdef, 1, 0, s.cx + 110, s.cy + 60);
     ASSERT(builder >= 0);
 
+    /* The pointer is read flat off the screen and the body found on
+     * the ground under it, so the body is pointed at where it is
+     * drawn: its centre lifted by the ground's height (#106). */
+    int32_t sy = s.fy - (int32_t)((float)Terrain_SampleHeight(world, s.fx, s.fy)
+                                  * Units_GetTanTilt());
     Units_SelectSingle(-1);
-    ASSERT(InGame_HoverCursorAt(s.fx, s.fy) != HUD_CUR_REVIVE);
+    ASSERT(InGame_HoverCursorAt(s.fx, sy) != HUD_CUR_REVIVE);
 
     Units_SelectSingle(s.raiser);
-    ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(s.fx, s.fy));
+    ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(s.fx, sy));
     ASSERT_EQ_INT(HUD_CUR_REVIVE,
-                  InGame_CommandCursorAt(HUD_CMD_CLEAR, s.fx, s.fy));
+                  InGame_CommandCursorAt(HUD_CMD_CLEAR, s.fx, sy));
     ASSERT_EQ_INT(HUD_CMD_MOVE,
-                  InGame_CommandCursorAt(HUD_CMD_MOVE, s.fx, s.fy));
+                  InGame_CommandCursorAt(HUD_CMD_MOVE, s.fx, sy));
 
     /* A builder sweeps bodies but cannot raise them. */
     Units_SelectSingle(builder);
-    ASSERT(InGame_HoverCursorAt(s.fx, s.fy) != HUD_CUR_REVIVE);
+    ASSERT(InGame_HoverCursorAt(s.fx, sy) != HUD_CUR_REVIVE);
     ASSERT_EQ_INT(HUD_CMD_CLEAR,
-                  InGame_CommandCursorAt(HUD_CMD_CLEAR, s.fx, s.fy));
-    InGame_WorldClick(s.fx, s.fy, 0);
+                  InGame_CommandCursorAt(HUD_CMD_CLEAR, s.fx, sy));
+    InGame_WorldClick(s.fx, sy, 0);
     units = Units_GetActive(&unit_count);
     ASSERT(units[builder].cmd_kind != UNIT_CMD_RESURRECT);
 
@@ -9249,12 +9369,12 @@ TEST(the_revive_cursor_shows_over_a_body_the_selection_can_raise) {
                          (s.fx / world->fog_cell_px)] = TAK_FOG_UNEXPLORED;
     ASSERT_EQ_INT(TAK_FOG_UNEXPLORED,
                   Fog_StateAtForPlayer(world, 1, s.fx, s.fy));
-    ASSERT(InGame_HoverCursorAt(s.fx, s.fy) != HUD_CUR_REVIVE);
+    ASSERT(InGame_HoverCursorAt(s.fx, sy) != HUD_CUR_REVIVE);
     world->cfg.line_of_sight = 0;
 
     /* A plain click on the body raises it. */
-    ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(s.fx, s.fy));
-    InGame_WorldClick(s.fx, s.fy, 0);
+    ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(s.fx, sy));
+    InGame_WorldClick(s.fx, sy, 0);
     TAK_CmdQueue_Run();   /* the order lands on its tick */
     units = Units_GetActive(&unit_count);
     ASSERT_EQ_INT(UNIT_CMD_RESURRECT, units[s.raiser].cmd_kind);
@@ -19227,6 +19347,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_D, a_taros_priest_animates_a_body_into_a_ghoul);
     RUN_UI_TEST(UI_GROUP_C, a_corpse_left_alone_rots_on_schedule);
     RUN_UI_TEST(UI_GROUP_C, a_corpse_waits_for_a_raiser);
+    RUN_UI_TEST(UI_GROUP_D, the_revive_cursor_covers_the_drawn_body_on_a_hill);
     RUN_UI_TEST(UI_GROUP_A, noair_weapon_drops_a_flyer_that_takes_off);
     RUN_UI_TEST(UI_GROUP_B, a_refused_step_banks_no_distance);
     RUN_UI_TEST(UI_GROUP_B, a_column_gets_past_a_stuck_unit_in_its_way);
