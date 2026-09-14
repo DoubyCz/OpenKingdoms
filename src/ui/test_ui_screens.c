@@ -6230,9 +6230,10 @@ TEST(render_probe_lodestone_covers_pad) {
 
     ASSERT_EQ_INT(0, InGame_Init(&platform));
     Units_SetHealthBarsOn(0);
-    /* Shadows off: this probe measures the model's own coverage, and
-     * the lodestone's shadow would widen the mask to the east. */
+    /* Shadows and build sparkles off: this probe measures the model's
+     * own coverage, and either would widen the mask. */
     Units_SetShadowsOn(0);
+    Units_SetBuildSparklesOn(0);
     /* Take the pad out of the frame first. The mask below is then the
      * lodestone's own coverage against bare ground: with the pad drawn
      * its dark rim and the model's dark outline match colour where
@@ -10513,6 +10514,262 @@ TEST(a_building_under_construction_casts_no_shadow) {
 
 /* A feature draws the sprite its seqnameshad names under its own
  * sprite while shadows are on (legacy:211159-211176). */
+/* -- Build sparkles ---------------------------------------------------
+ *
+ * The original hangs an effect on every building being built: a ring
+ * of the model's half diagonal, with room for as many sparkles as the
+ * ring is wide in pixels, standing on the ground (legacy:198540-198576,
+ * legacy:201441-201455), and the ground draws lifted by half its
+ * height (legacy:197689). Ours blitted one frame at the unit origin
+ * with no lift, so on high ground the sparkles sat well below the
+ * body, and their number was one whatever the building. */
+
+/* The lowest and the highest site on the map where site_def can be
+ * built with 64 px of clear ground round it. Returns how many were
+ * looked at. */
+static int sparkle_extreme_sites(const GameWorld *world, int site_def,
+                                 int32_t *lo_x, int32_t *lo_y, int *lo_h,
+                                 int32_t *hi_x, int32_t *hi_y, int *hi_h) {
+    int seen = 0;
+    *lo_h = 999; *hi_h = -999;
+    for (int32_t cy = 160; cy + 160 < world->map_pixels_h; cy += 48) {
+        for (int32_t cx = 160; cx + 160 < world->map_pixels_w; cx += 48) {
+            int ok = 1;
+            for (int oy = -64; oy <= 64 && ok; oy += 16)
+                for (int ox = -64; ox <= 64 && ok; ox += 16)
+                    if (!Terrain_IsWalkable(world, cx + ox, cy + oy, 40)) ok = 0;
+            for (int i = 0; i < world->feature_count && ok; i++) {
+                const FeatureDef *fd =
+                    Features_GetByIndex(world->features[i].global_idx);
+                int fpx = (fd && fd->footprint_x > 0) ? fd->footprint_x : 1;
+                int fpz = (fd && fd->footprint_z > 0) ? fd->footprint_z : 1;
+                int32_t fx0 = (int32_t)world->features[i].tile_x * 16;
+                int32_t fy0 = (int32_t)world->features[i].tile_z * 16;
+                if (fx0 + fpx * 16 <= cx - 80 || fx0 >= cx + 80) continue;
+                if (fy0 + fpz * 16 <= cy - 80 || fy0 >= cy + 80) continue;
+                ok = 0;
+            }
+            if (!ok || !Units_IsBuildSiteClear(site_def, cx, cy)) continue;
+            int h = Terrain_SampleHeight(world, cx, cy);
+            seen++;
+            if (h < *lo_h) { *lo_h = h; *lo_x = cx; *lo_y = cy; }
+            if (h > *hi_h) { *hi_h = h; *hi_x = cx; *hi_y = cy; }
+        }
+    }
+    return seen;
+}
+
+/* Pixels that changed between two frames inside box, leaving out
+ * the pixels inside skip. With the body held still only the sparkles
+ * move, and the builder working beside it is skipped. */
+static int sparkle_mask_box(const uint32_t *a, const uint32_t *b,
+                            int W, int H, SDL_Rect box, SDL_Rect skip,
+                            float *out_cx, float *out_cy) {
+    int n = 0;
+    double sx = 0.0, sy = 0.0;
+    for (int y = box.y; y < box.y + box.h; y++) {
+        if (y < 0 || y >= H) continue;
+        for (int x = box.x; x < box.x + box.w; x++) {
+            if (x < 0 || x >= W) continue;
+            if (x >= skip.x && x < skip.x + skip.w &&
+                y >= skip.y && y < skip.y + skip.h) continue;
+            if (a[y * W + x] == b[y * W + x]) continue;
+            n++;
+            sx += x;
+            sy += y;
+        }
+    }
+    if (out_cx) *out_cx = n ? (float)(sx / n) : 0.0f;
+    if (out_cy) *out_cy = n ? (float)(sy / n) : 0.0f;
+    return n;
+}
+
+/* A builder at work on a site. Spawns the builder beside the site,
+ * gives it the build, and ticks until it has sparkles going. Returns
+ * the site handle, or -1. */
+static int sparkle_site(GameWorld *world, int build_def, int site_def,
+                        int32_t x, int32_t y, int *out_builder) {
+    const UnitDef *sd = Units_GetDef(site_def);
+    int32_t off = (sd && sd->footprint_x > 0 ? sd->footprint_x : 1) * 8 + 40;
+    int builder = Units_Spawn(build_def, 1, 0, x - off, y);
+    if (builder < 0) return -1;
+    int site = Units_BeginBuildingForUnit(builder, site_def, x, y);
+    if (site < 0) return -1;
+    for (int t = 0; t < 600 && Units_DebugBuildSparkles(site) == 0; t++)
+        Units_TickEngines();
+    *out_builder = builder;
+    return site;
+}
+
+/* Run one site under the camera: hold the body still and capture two
+ * frames far enough apart for the sparkles to have moved. Returns the
+ * changed pixel count with their centre in cx/cy. */
+static int sparkle_probe_site(TAK_Platform *platform, GameWorld *world,
+                              Timer *timer, int site, int builder,
+                              SDL_Rect box, float *cx, float *cy) {
+    int n = 0;
+    const Unit *units = Units_GetActive(&n);
+    const int32_t cam_x = units[site].world_x - world->viewport_w / 2;
+    const int32_t cam_y = units[site].world_y - world->viewport_h / 2;
+    uint32_t *first = NULL, *second = NULL;
+    int changed = -1;
+    for (int f = 0; f < 12; f++) {
+        world->cam_x = cam_x;
+        world->cam_y = cam_y;
+        /* The builder keeps working, so the body is held at one
+         * height and its construction fade stays put. */
+        Units_SetHealthPercent(site, 84);
+        timer->accumulator = timer->sim_dt;
+        if (InGame_Tick(platform, timer) != GAMESTATE_IN_GAME) goto done;
+        if (f == 5) first = probe_read_pixels(platform);
+        if (f == 11) second = probe_read_pixels(platform);
+    }
+    if (!first || !second) goto done;
+    units = Units_GetActive(&n);
+    {
+        SDL_Rect skip = probe_unit_box(world, &units[builder], 40, 80, 24);
+        changed = sparkle_mask_box(first, second, platform->window_w,
+                                   platform->window_h, box, skip, cx, cy);
+    }
+done:
+    free(first);
+    free(second);
+    return changed;
+}
+
+TEST(build_sparkles_stand_on_the_building_at_any_terrain_height) {
+    TAK_Platform platform;
+    if (shadow_boot(&platform) != 0) return;
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int tower_def = Units_FindDefByName("ARAAT");
+    int build_def = Units_FindDefByName("ARABUILD");
+    ASSERT(tower_def >= 0 && build_def >= 0);
+
+    int32_t lo_x = 0, lo_y = 0, hi_x = 0, hi_y = 0;
+    int lo_h = 0, hi_h = 0;
+    int sites = sparkle_extreme_sites(world, tower_def, &lo_x, &lo_y, &lo_h,
+                                      &hi_x, &hi_y, &hi_h);
+    printf("[%d sites, low (%d,%d) h=%d, high (%d,%d) h=%d] ", sites,
+           (int)lo_x, (int)lo_y, lo_h, (int)hi_x, (int)hi_y, hi_h);
+    ASSERT(sites >= 2);
+    /* Under about 60 the whole error hides inside the puff. */
+    ASSERT(hi_h - lo_h >= 60);
+
+    int lo_builder = -1, hi_builder = -1;
+    int lo_site = sparkle_site(world, build_def, tower_def, lo_x, lo_y, &lo_builder);
+    int hi_site = sparkle_site(world, build_def, tower_def, hi_x, hi_y, &hi_builder);
+    ASSERT(lo_site >= 0 && hi_site >= 0);
+    ASSERT(Units_DebugBuildSparkles(lo_site) > 0);
+    ASSERT(Units_DebugBuildSparkles(hi_site) > 0);
+
+    ASSERT_EQ_INT(0, InGame_Init(&platform));
+    Units_SetHealthBarsOn(0);
+    Units_SetShadowsOn(0);
+    Timer timer;
+    Timer_Init(&timer);
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    /* The body's screen box: the anchor every other draw path uses,
+     * opened up the height of a tower. */
+    SDL_Rect lo_box = probe_unit_box(world, &units[lo_site], 80, 150, 26);
+    SDL_Rect hi_box = probe_unit_box(world, &units[hi_site], 80, 150, 26);
+    /* Widened, to catch an effect that landed outside its building. */
+    SDL_Rect lo_scan = { lo_box.x - 60, lo_box.y - 60, lo_box.w + 120,
+                         lo_box.h + 280 };
+    SDL_Rect hi_scan = { hi_box.x - 60, hi_box.y - 60, hi_box.w + 120,
+                         hi_box.h + 280 };
+    /* The camera moves between the two sites, so the boxes are taken
+     * with the camera on each in turn. */
+    world->cam_x = units[lo_site].world_x - world->viewport_w / 2;
+    world->cam_y = units[lo_site].world_y - world->viewport_h / 2;
+    lo_box = probe_unit_box(world, &units[lo_site], 80, 150, 26);
+    lo_scan.x = lo_box.x - 60; lo_scan.y = lo_box.y - 60;
+    world->cam_x = units[hi_site].world_x - world->viewport_w / 2;
+    world->cam_y = units[hi_site].world_y - world->viewport_h / 2;
+    hi_box = probe_unit_box(world, &units[hi_site], 80, 150, 26);
+    hi_scan.x = hi_box.x - 60; hi_scan.y = hi_box.y - 60;
+
+    float lcx = 0.0f, lcy = 0.0f, hcx = 0.0f, hcy = 0.0f;
+    int ln = sparkle_probe_site(&platform, world, &timer, lo_site, lo_builder,
+                                lo_scan, &lcx, &lcy);
+    int hn = sparkle_probe_site(&platform, world, &timer, hi_site, hi_builder,
+                                hi_scan, &hcx, &hcy);
+    printf("[low sparkles %d px at (%.1f,%.1f), body y %d..%d] ",
+           ln, (double)lcx, (double)lcy, lo_box.y, lo_box.y + lo_box.h);
+    printf("[high sparkles %d px at (%.1f,%.1f), body y %d..%d] ",
+           hn, (double)hcx, (double)hcy, hi_box.y, hi_box.y + hi_box.h);
+
+    ASSERT(ln >= 40);
+    ASSERT(hn >= 40);
+    /* The effect belongs on its building at either height. */
+    ASSERT(lcy >= (float)lo_box.y && lcy <= (float)(lo_box.y + lo_box.h));
+    ASSERT(hcy >= (float)hi_box.y && hcy <= (float)(hi_box.y + hi_box.h));
+
+    InGame_Shutdown();
+    corpse_shutdown(&platform);
+}
+
+/* The number of sparkles follows the building: the ring holds as many
+ * as it is wide in pixels (legacy:198576), so a keep carries more than
+ * a tower, and a finished building carries none. */
+TEST(build_sparkles_follow_the_size_of_the_building) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int tower_def = Units_FindDefByName("ARAAT");
+    int keep_def = Units_FindDefByName("ARAKEEP");
+    int build_def = Units_FindDefByName("ARABUILD");
+    ASSERT(tower_def >= 0 && keep_def >= 0 && build_def >= 0);
+    const UnitDef *td = Units_GetDef(tower_def);
+    const UnitDef *kd = Units_GetDef(keep_def);
+    ASSERT_NOT_NULL(td);
+    ASSERT_NOT_NULL(kd);
+    ASSERT(kd->footprint_x > td->footprint_x);
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    int32_t tx = 0, ty = 0, kx = 0, ky = 0;
+    ASSERT(corpse_find_clear_ground(world, units[0].world_x + 256,
+                                    units[0].world_y, 80, &tx, &ty));
+    ASSERT(corpse_find_clear_ground(world, units[0].world_x + 256,
+                                    units[0].world_y + 640, 160, &kx, &ky));
+    int tb = -1, kb = -1;
+    int tower = sparkle_site(world, build_def, tower_def, tx, ty, &tb);
+    int keep = sparkle_site(world, build_def, keep_def, kx, ky, &kb);
+    ASSERT(tower >= 0 && keep >= 0);
+    int tower_cap = Units_DebugBuildSparkleCap(tower);
+    int keep_cap = Units_DebugBuildSparkleCap(keep);
+    printf("[tower cap %d, keep cap %d] ", tower_cap, keep_cap);
+    ASSERT(keep_cap > tower_cap);
+
+    /* Both builders at work long enough for the rings to fill. */
+    for (int t = 0; t < 240; t++) Units_TickEngines();
+    int tower_live = Units_DebugBuildSparkles(tower);
+    int keep_live = Units_DebugBuildSparkles(keep);
+    printf("[tower %d live, keep %d live] ", tower_live, keep_live);
+    ASSERT(tower_live > 0);
+    ASSERT(tower_live <= tower_cap);
+    ASSERT(keep_live <= keep_cap);
+    ASSERT(keep_live > tower_live);
+
+    /* A finished building has no sparkles. */
+    Units_SetHealthPercent(tower, 100);
+    for (int t = 0; t < 600 && Units_IsUnderConstruction(tower); t++)
+        Units_TickEngines();
+    ASSERT_EQ_INT(0, Units_IsUnderConstruction(tower));
+    for (int t = 0; t < 120; t++) Units_TickEngines();
+    ASSERT_EQ_INT(0, Units_DebugBuildSparkles(tower));
+
+    corpse_shutdown(&platform);
+}
+
 TEST(a_feature_draws_its_shadow_sprite) {
     TAK_Platform platform;
     if (shadow_boot(&platform) != 0) return;
@@ -19801,6 +20058,8 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_B, a_creon_site_shows_the_creon_build_sparkle);
     RUN_UI_TEST(UI_GROUP_D, a_building_under_construction_casts_no_shadow);
     RUN_UI_TEST(UI_GROUP_B, a_feature_draws_its_shadow_sprite);
+    RUN_UI_TEST(UI_GROUP_C, build_sparkles_stand_on_the_building_at_any_terrain_height);
+    RUN_UI_TEST(UI_GROUP_D, build_sparkles_follow_the_size_of_the_building);
     RUN_UI_TEST(UI_GROUP_D, perf_probe_shadows);
     RUN_UI_TEST(UI_GROUP_C, weapon_art_resolves_per_weapon);
     RUN_UI_TEST(UI_GROUP_D, render_probe_projectile_art);
