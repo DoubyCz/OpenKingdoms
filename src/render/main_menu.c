@@ -31,6 +31,7 @@
 #include "tak_ui.h"
 #include "tak_hpi.h"
 #include "tak_memory.h"
+#include "tak_paths.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -242,12 +243,12 @@ static void open_bink_clip(CharacterAnim *ch, int clip_index) {
     }
     char path[512];
     snprintf(path, sizeof(path), "%s/Movies/Gui/%s%d.bik",
-             TAK_GAME_DIR, ch->bink_base, clip_index + 4);
+             Paths_GameDir(), ch->bink_base, clip_index + 4);
     ch->active_player = BinkPlayer_Open(path);
     if (!ch->active_player) {
         /* Try uppercase extension */
         snprintf(path, sizeof(path), "%s/Movies/Gui/%s%d.BIK",
-                 TAK_GAME_DIR, ch->bink_base, clip_index + 4);
+                 Paths_GameDir(), ch->bink_base, clip_index + 4);
         ch->active_player = BinkPlayer_Open(path);
     }
     ch->active_clip = ch->active_player ? clip_index : -1;
@@ -277,6 +278,9 @@ static void shutdown_character(CharacterAnim *ch) {
  * and finish the cycle after the cursor leaves. */
 static void character_gaf_fallback(CharacterAnim *ch, int is_hovered,
                                    float frame_dt) {
+    /* The Credits snort has no sheet: its clip is all it is ever drawn
+     * from, so there is nothing here to cycle. */
+    if (!ch->gaf || ch->num_entries <= 0) return;
     if (is_hovered && !ch->animating) {
         ch->animating = 1;
         ch->returning = 0;

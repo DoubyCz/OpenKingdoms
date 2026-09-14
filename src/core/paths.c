@@ -201,6 +201,14 @@ int Paths_ResolveGameDir(const char *cli, char *out, size_t cap) {
                              out, cap);
 }
 
+static char s_game[PATHS_SUB_MAX] = TAK_GAME_DIR;
+
+void Paths_SetGameDir(const char *dir) {
+    snprintf(s_game, sizeof(s_game), "%s", (dir && dir[0]) ? dir : TAK_GAME_DIR);
+}
+
+const char *Paths_GameDir(void) { return s_game; }
+
 void Paths_SetOverride(const char *dir) {
     if (dir && dir[0]) {
         snprintf(s_pref, sizeof(s_pref), "%s", dir);
