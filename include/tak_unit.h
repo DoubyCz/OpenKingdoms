@@ -1139,6 +1139,8 @@ void              Units_SetHealthBarsOn(int on);
 /* Ground shadows under units and features, the DrawShadows video
  * setting (legacy:197182). Default on. */
 void              Units_SetShadowsOn(int on);
+/* Build sparkles off, for a probe that measures a model alone. */
+void              Units_SetBuildSparklesOn(int on);
 int               Units_GetShadowsOn(void);
 /* Where the unit's damage bar would draw this frame, in viewport
  * pixels, or 0 when the original's rule draws none (setting off, not

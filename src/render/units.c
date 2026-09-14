@@ -1478,6 +1478,7 @@ static int g_backface_cull_on     = 1;
 static int g_backface_cull_invert = 0;
 static int g_health_bars_on       = 0;   /* Visual Options: Show Damage */
 static int g_shadows_on           = 1;   /* Visual Options: Shadows */
+static int g_build_sparkles_on    = 1;   /* probes of a model alone turn them off */
 /* What a shadow leaves of the ground under it, measured against the
  * ground beside it in a frame of the original. */
 #define SHADOW_ALPHA 115
@@ -1489,6 +1490,7 @@ int  Units_GetHealthBarsOn(void)        { return g_health_bars_on; }
 void Units_ToggleHealthBars(void)       { g_health_bars_on = !g_health_bars_on; }
 void  Units_SetHealthBarsOn(int on)      { g_health_bars_on = on ? 1 : 0; }
 void  Units_SetShadowsOn(int on)         { g_shadows_on = on ? 1 : 0; }
+void  Units_SetBuildSparklesOn(int on)   { g_build_sparkles_on = on ? 1 : 0; }
 int   Units_GetShadowsOn(void)           { return g_shadows_on; }
 
 /* ── Selection state ──────────────────────────────────────────── */
@@ -2546,8 +2548,21 @@ static void raise_sparkles(const Unit *u, const UnitDef *def,
  * no more than it is wide (legacy:12253-12257, legacy:198999,
  * legacy:201441-201455). Ours emits once per 60 Hz tick, the pieces
  * counted from the script. */
+/* The side's build sparkle art from sidedata, or the raise art. */
+static int build_sparkle_sprite(const UnitDef *d) {
+    const TakSideInfo *side = Sides_Get(Sides_FindByPrefix(d->side));
+    if (side && side->buildsparkle[0]) {
+        int s = proj_sprite_index(side->buildsparkle,
+                                  side->buildsparkle_anim[0] ? side->buildsparkle_anim
+                                                             : side->buildsparkle);
+        if (s >= 0) return s;
+    }
+    return raise_sparkle_sprite(d);
+}
+
 static void build_sparkles(Unit *bt, int bt_idx, const UnitDef *btd) {
-    int sprite = raise_sparkle_sprite(btd);
+    if (!g_build_sparkles_on) return;
+    int sprite = build_sparkle_sprite(btd);
     if (sprite < 0) return;
     const GameWorld *w = World_Get();
     int cap = build_sparkle_cap(btd);
@@ -2563,8 +2578,7 @@ static void build_sparkles(Unit *bt, int bt_idx, const UnitDef *btd) {
         int32_t x = bt->world_x + (int32_t)(r * sinf(a));
         int32_t y = bt->world_y - (int32_t)(r * cosf(a));
         ProjectileEffect *e = spawn_unit_fx_moving(
-            sprite, x, y, unit_fx_height(w, x, y, 0.0f),
-            2 + (int)((n >> 16) % 3u));
+            sprite, x, y, unit_fx_height(w, x, y, 0.0f), 1);
         if (!e) return;
         e->owner = (int16_t)bt_idx;
     }
@@ -11664,11 +11678,8 @@ int Units_DebugBuildSparkleCap(int handle) {
 
 int Units_ConstructFxFrames(const char *side_prefix) {
     if (!side_prefix) return 0;
-    for (int i = 0; i < g_construct_fx_count; i++) {
-        if (strcmp(g_construct_fx[i].prefix, side_prefix) == 0)
-            return g_construct_fx[i].num_frames;
-    }
-    return 0;
+    const ConstructFX *fx = load_construct_fx(side_prefix);
+    return fx ? fx->num_frames : 0;
 }
 
 /* The build sparkles are effects now, spawned from the work tick and

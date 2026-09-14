@@ -6230,9 +6230,10 @@ TEST(render_probe_lodestone_covers_pad) {
 
     ASSERT_EQ_INT(0, InGame_Init(&platform));
     Units_SetHealthBarsOn(0);
-    /* Shadows off: this probe measures the model's own coverage, and
-     * the lodestone's shadow would widen the mask to the east. */
+    /* Shadows and build sparkles off: this probe measures the model's
+     * own coverage, and either would widen the mask. */
     Units_SetShadowsOn(0);
+    Units_SetBuildSparklesOn(0);
     /* Take the pad out of the frame first. The mask below is then the
      * lodestone's own coverage against bare ground: with the pad drawn
      * its dark rim and the model's dark outline match colour where
