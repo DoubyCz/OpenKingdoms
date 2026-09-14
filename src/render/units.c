@@ -5937,9 +5937,6 @@ int Units_DebugKillHandle(int handle) {
     /* The same death as a lethal hit: the body it leaves is the one its
      * script asks for, and the tallies and the monarch rule apply. */
     u->health = 0;
-    u->cmd_kind = UNIT_CMD_NONE;
-    u->target = -1;
-    unit_clear_path(u);
     apply_killed(u, handle);
     fprintf(stderr, "Units_DebugKillHandle: unit %d killed (Killed thread slot=%d)\n",
             handle, u->killed_thread_slot);
@@ -6350,6 +6347,18 @@ static void apply_killed(Unit *t, int t_idx) {
             lw->stats[t->player_id].losses++;    /* legacy:227296 */
         }
     }
+    /* The order dies with the unit (legacy:227258, legacy:227285). The
+     * original frees the record whole, ours keeps the slot, so what a
+     * live unit acts on is cleared by hand. */
+    t->cmd_kind = UNIT_CMD_NONE;
+    t->target = -1;
+    t->build_target = -1;
+    t->attack_explicit = 0;
+    t->velocity = 0;
+    t->cur_speed_ppt = 0.0f;
+    t->move_rate_tier = 0;
+    t->turn_dir_sign = 0;
+    unit_clear_path(t);
     t->corpse_type = 0;
     if (t->cob) {
         Cob_KillAllThreads(t->cob);
@@ -7562,6 +7571,7 @@ static void fire_weapon_shot(Unit *u, int shooter_idx, int slot,
                              const UnitWeapon *wp, int target_handle,
                              int burst_ordinal, int run_fire_script) {
     if (!u || !wp) return;
+    if (u->alive != UNIT_ALIVE_ACTIVE) return;
     if (target_handle < 0 || target_handle >= g_unit_count) return;
     Unit *t = &g_units[target_handle];
     if (t->alive != UNIT_ALIVE_ACTIVE) return;
@@ -7746,6 +7756,7 @@ static void fire_ground_shot(Unit *u, int shooter_idx, int slot,
 static void tick_weapon_burst(Unit *u, int shooter_idx, int slot,
                               const UnitDef *def, UnitWeaponState *ws) {
     if (!u || !def || !ws) return;
+    if (u->alive != UNIT_ALIVE_ACTIVE) { ws->burst_remaining = 0; return; }
     if (slot < 0 || slot >= def->num_weapons) return;
     if (ws->burst_remaining <= 0) return;
     if (ws->burst_ticks > 0) {
@@ -8279,17 +8290,20 @@ static void Units_TickCombat(void) {
              * traced. */
             continue;
         }
-        if (u->alive != UNIT_ALIVE_ACTIVE && u->alive != UNIT_ALIVE_DYING) continue;
+        /* Combat, orders and the mover are for the living. A dying unit
+         * only runs its death script, in Units_TickEngines: let it
+         * through here and enter_state below overwrites UNIT_ANIM_DYING,
+         * re-arms the walk and aim threads, and the death never
+         * finishes (#109, legacy:233748). */
+        if (u->alive != UNIT_ALIVE_ACTIVE) continue;
         const UnitDef *def = Units_GetDef(u->def_idx);
         if (!def) continue;
         /* Not built yet: the order is kept but nothing acts on it until
          * getbuilt runs, so a product cannot be walked off the pad. */
         if (u->under_construction) continue;
-        if (u->alive == UNIT_ALIVE_ACTIVE) {
-            flight_tick(u, def, flight_world);
-            caster_mana_tick(u, def);
-            self_heal_tick(u, def);
-        }
+        flight_tick(u, def, flight_world);
+        caster_mana_tick(u, def);
+        self_heal_tick(u, def);
 
         /* Per-weapon cooldown decrements every tick regardless of state. */
         for (int w = 0; w < def->num_weapons; w++) {
