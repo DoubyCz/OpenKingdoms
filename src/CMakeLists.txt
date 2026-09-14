@@ -306,9 +306,26 @@ if(WIN32)
     )
 endif()
 
+# ── The simulation's own trigonometry ───────────────────────────────────────
+# Built for the browser too, and deliberately before the return below:
+# it needs no game data and no SDL, and the browser is one of the
+# platforms whose arithmetic has to agree. See src/core/trig.c.
+add_executable(test_trig
+    core/test_trig.c
+    core/trig.c
+)
+
+target_include_directories(test_trig PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+if(NOT MSVC AND NOT EMSCRIPTEN)
+    target_link_libraries(test_trig PRIVATE m)
+endif()
+
 # ── Tests + tools (native only) ─────────────────────────────────────────────
-# The browser build produces just the game; ctest targets and inspectors
-# stay desktop-side.
+# The browser build produces just the game, the trig gate above, and
+# nothing else; ctest targets and inspectors stay desktop-side.
 if(EMSCRIPTEN)
     return()
 endif()
@@ -724,20 +741,6 @@ add_executable(test_framework_self
 target_include_directories(test_framework_self PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
-
-# The simulation's own trigonometry. No game data, no SDL.
-add_executable(test_trig
-    core/test_trig.c
-    core/trig.c
-)
-
-target_include_directories(test_trig PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-
-if(NOT MSVC)
-    target_link_libraries(test_trig PRIVATE m)
-endif()
 
 # The shared glob matcher. No game data, so it runs everywhere.
 add_executable(test_util

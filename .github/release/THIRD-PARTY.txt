@@ -1,0 +1,63 @@
+OpenKingdoms third-party components
+===================================
+
+OpenKingdoms itself is under the GNU General Public License version 3.
+The full text is in LICENSE beside this file.
+
+These components are built into the game and keep their own licences.
+
+
+SDL2
+----
+Simple DirectMedia Layer, https://www.libsdl.org/
+zlib license.
+
+Shipped as a library file beside the game on Windows and macOS, and
+linked from the system on Linux where the archive carries its own copy.
+
+
+FFmpeg
+------
+https://ffmpeg.org/
+GNU Lesser General Public License version 2.1 or later.
+
+Used to decode the Bink video clips in your own copy of the game: the
+animated doors on the main menu and the cut scenes. No part of FFmpeg
+under its optional GPL configuration is enabled, and no external codec
+libraries are compiled in.
+
+This build is configured with only the Bink decoder:
+
+  --disable-everything --enable-decoder=bink --enable-demuxer=bink
+  --enable-protocol=file
+
+The LGPL asks that you be able to relink the program against a modified
+FFmpeg. The full source of OpenKingdoms and the exact build steps that
+produce these archives are public at
+
+  https://github.com/OpenKingdoms/OpenKingdoms
+
+in .github/workflows/release.yml, which names the FFmpeg version and
+the configure line above. Building from that source produces the same
+program linked against an FFmpeg of your choosing.
+
+FFmpeg's own licence text ships with its source at
+https://ffmpeg.org/download.html
+
+
+miniaudio
+---------
+https://miniaud.io/
+Public domain or MIT-0, at your option.
+
+
+miniz
+-----
+https://github.com/richgel999/miniz
+MIT license.
+
+
+No game content is included in these archives. The units, models,
+textures, sounds, maps and music remain the property of their rights
+holders, and you supply your own copy of Total Annihilation: Kingdoms.
+See ASSETS.md.

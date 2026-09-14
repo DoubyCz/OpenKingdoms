@@ -37,10 +37,17 @@ jobs:
         run: |
           emcmake cmake -B build-wasm -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=OFF
+            -DBUILD_TESTING=ON
 
       - name: Build
-        run: cmake --build build-wasm --parallel --target tak-re
+        run: cmake --build build-wasm --parallel --target tak-re test_trig
+
+      # The browser is one of the platforms a room holds together, so
+      # it has to reach the same bits from the same arithmetic. The
+      # hash is pinned in src/core/test_trig.c and every other
+      # platform asserts the same one.
+      - name: The browser agrees on the simulation's trigonometry
+        run: node build-wasm/src/test_trig.js
 
       # A map fingerprint has to come out the same in the browser as it
       # does natively, or matched players would be told their maps differ.

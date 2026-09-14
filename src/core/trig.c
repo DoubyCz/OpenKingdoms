@@ -8,15 +8,24 @@
  * cannot fold a multiply and an add into one rounding.
  *
  * The polynomials are the fdlibm minimax sets for sin, cos and atan.
- * They are accurate to a double's last places, far past what a float
- * result can show, so the float this returns is the correctly rounded
- * one for every input the game produces.
+ * The result is the correctly rounded float up to about 8e6, where the
+ * reduction stops being exact; past that it drifts to a few last
+ * places while staying within 4e-8 in absolute terms. Both are far
+ * inside what the game can see, and both are the same everywhere.
  */
 
 #include "tak_trig.h"
+#include <stdint.h>
 
-/* pi/2 in three pieces whose sum is pi/2 to about 150 bits. Each is
- * exact in a double, so the subtractions below lose nothing. */
+/* gcc and clang take this from the command line. MSVC has no
+ * switch for it, so say it here. */
+#ifdef _MSC_VER
+#  pragma fp_contract(off)
+#endif
+
+/* pi/2 in three pieces whose sum is pi/2 to 123 bits. Each is exact in
+ * a double, so the subtractions below lose nothing while the products
+ * stay exact, which holds to about 8e6. */
 #define PIO2_1  1.57079632673412561417e+00
 #define PIO2_2  6.07710050630396597660e-11
 #define PIO2_3  2.02226624879595063154e-21
@@ -116,6 +125,8 @@ float tak_tanf(float x) {
     double s = poly_sin(r), c = poly_cos(r);
     double num = (quad & 1) ? -c : s;
     double den = (quad & 1) ?  s : c;
+    /* Unreachable for any angle the game holds, since an odd quadrant
+     * needs r to cancel to exactly zero. Answered rather than left. */
     if (den == 0.0) return (num < 0.0) ? -3.4028234663852886e+38f
                                        :  3.4028234663852886e+38f;
     return (float)(num / den);
@@ -178,36 +189,65 @@ float tak_atanf(float x) {
     return (float)atan_double(d);
 }
 
-float tak_atan2f(float y, float x) {
-    double dy = (double)y, dx = (double)x;
-    if (!(dy == dy) || !(dx == dx)) return 0.0f;
-
-    if (dx == 0.0 && dy == 0.0) return 0.0f;
-    if (dx == 0.0) return (dy > 0.0) ? (float)PIO2 : (float)(-PIO2);
-    if (dy == 0.0) {
-        /* A negative zero x is still the negative side. */
-        return (dx > 0.0) ? 0.0f : (float)PI;
-    }
-
-    double a = atan_double(dy / dx);
-    if (dx > 0.0) return (float)a;
-    return (dy > 0.0) ? (float)(a + PI) : (float)(a - PI);
+/* Is this value negative, counting a negative zero? */
+static int is_neg(double v) {
+    if (v < 0.0) return 1;
+    if (v != 0.0) return 0;
+    return (1.0 / v) < 0.0;
 }
 
-/* A fixed workload every platform must hash the same way. Keeping it
- * here rather than in the test lets the game print it too. */
-unsigned int tak_trig_probe(void) {
-    unsigned int h = 2166136261u;
-    for (int i = 0; i < 720; i++) {
+float tak_atan2f(float y, float x) {
+    double dy = (double)y, dx = (double)x;
+    /* A not-a-number result would carry a payload the platforms do not
+     * agree on, so none is ever produced or passed through. */
+    if (!(dy == dy) || !(dx == dx)) return 0.0f;
+
+    int ny = is_neg(dy), nx = is_neg(dx);
+    int iy = (dy > 1.0e300 || dy < -1.0e300);
+    int ix = (dx > 1.0e300 || dx < -1.0e300);
+
+    if (iy && ix) {
+        /* Both without bound: the answer is the diagonal of the
+         * quadrant, and the quotient would be not a number. */
+        double m = nx ? (3.0 * PIO4) : PIO4;
+        return (float)(ny ? -m : m);
+    }
+    if (iy) return (float)(ny ? -PIO2 : PIO2);
+    if (ix) {
+        double m = nx ? PI : 0.0;
+        return (float)(ny ? -m : m);
+    }
+
+    if (dy == 0.0) {
+        /* C99 F.10.1.4: the sign of y is kept, and a negative x, zero
+         * or not, is the far side of the cut. */
+        double m = nx ? PI : 0.0;
+        return (float)(ny ? -m : m);
+    }
+    if (dx == 0.0) return (float)(ny ? -PIO2 : PIO2);
+
+    double a = atan_double(dy / dx);
+    if (!nx) return (float)a;
+    return ny ? (float)(a - PI) : (float)(a + PI);
+}
+
+/* A fixed workload every platform must hash the same way. It runs both
+ * ways round zero, so the quadrant index taken from a negative angle is
+ * covered, and out past where the reduction stops being exact. Keeping
+ * it here rather than in the test lets the game print it too. */
+uint32_t tak_trig_probe(void) {
+    uint32_t h = 2166136261u;
+    for (int i = -720; i < 720; i++) {
         float a = (float)i * 0.0087266462f;   /* half a degree */
-        float vals[5];
+        float vals[6];
         vals[0] = tak_sinf(a);
         vals[1] = tak_cosf(a);
         vals[2] = tak_atanf(a - 3.0f);
         vals[3] = tak_atan2f(vals[0], vals[1]);
         vals[4] = tak_tanf(a * 0.25f);
-        for (int v = 0; v < 5; v++) {
-            union { float f; unsigned int u; } bits;
+        vals[5] = tak_sinf(a * 131071.0f);
+        for (int v = 0; v < 6; v++) {
+            union { float f; uint32_t u; } bits;
             bits.f = vals[v];
             for (int b = 0; b < 4; b++) {
                 h ^= (bits.u >> (b * 8)) & 0xffu;

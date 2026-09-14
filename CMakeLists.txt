@@ -65,12 +65,32 @@ endif()
 # Lockstep needs two machines to get the same bits from the same
 # arithmetic. IEEE 754 gives that for + - * / and sqrt, but only if the
 # compiler leaves them alone: contraction folds a multiply and an add
-# into one rounding, and fast maths reassociates freely. Both are off
-# here, on every compiler, for every target.
+# into one rounding, and fast maths reassociates freely.
+include(CheckCCompilerFlag)
+
 if(MSVC)
+    # /fp:precise keeps the operations in the order they are written.
+    # It says nothing about contraction, and the toolset has no command
+    # line switch for that, so src/core/trig.c turns it off with a
+    # pragma of its own.
     add_compile_options(/fp:precise)
+    # x87 keeps 80 bits in its registers, which is a different answer
+    # from every 64 bit target. MSVC has defaulted to SSE2 on x86 for
+    # years; say so rather than lean on the default.
+    if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+        add_compile_options(/arch:SSE2)
+    endif()
 else()
-    add_compile_options(-ffp-contract=off -fno-fast-math)
+    # Order matters: clang reads these left to right and -fno-fast-math
+    # turns contraction back on, so it has to come first.
+    add_compile_options(-fno-fast-math -ffp-contract=off)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND
+       CMAKE_SYSTEM_PROCESSOR MATCHES "^(i.86|x86)$")
+        check_c_compiler_flag("-mfpmath=sse" HAVE_MFPMATH_SSE)
+        if(HAVE_MFPMATH_SSE)
+            add_compile_options(-msse2 -mfpmath=sse)
+        endif()
+    endif()
 endif()
 
 # ── Original game directory ──────────────────────────────────────────────────

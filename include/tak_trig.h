@@ -1,6 +1,8 @@
 #ifndef TAK_TRIG_H
 #define TAK_TRIG_H
 
+#include <stdint.h>
+
 /* The simulation's own trigonometry.
  *
  * Lockstep needs every machine to reach the same state from the same
@@ -14,7 +16,9 @@
  * construction. Anything that writes simulation state calls these.
  * Drawing may call libm.
  *
- * Accuracy is within one ulp of a float, so gameplay is unchanged. */
+ * The answer is the correctly rounded float for any angle under about
+ * 8e6, and within a few last places past that, so gameplay is
+ * unchanged. An angle of 1e8 or more is refused rather than guessed. */
 
 float tak_sinf(float x);
 float tak_cosf(float x);
@@ -23,6 +27,6 @@ float tak_atanf(float x);
 float tak_atan2f(float y, float x);
 
 /* Bit-pattern hash of a fixed workload, for the cross-platform gate. */
-unsigned int tak_trig_probe(void);
+uint32_t tak_trig_probe(void);
 
 #endif /* TAK_TRIG_H */
