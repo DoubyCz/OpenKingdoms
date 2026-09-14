@@ -81,3 +81,6 @@ __pycache__/
 
 # Render probe pictures a test run leaves beside it.
 /test_*.bmp
+
+# Scratch directory the paths test builds beside the binary.
+test_paths_scratch/

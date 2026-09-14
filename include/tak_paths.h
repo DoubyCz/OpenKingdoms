@@ -34,6 +34,24 @@ int Paths_SaveFile(const char *slug, char *out, size_t cap);
  * Settings_SetDirectory is a thin wrapper over it. */
 void Paths_SetOverride(const char *dir);
 
+/* Where the resolved game directory is remembered between runs. */
+#define TAK_SETTING_GAME_DIR "GameDirectory"
+
+/* Does this directory hold the game's .hpi archives? */
+int Paths_IsGameDir(const char *dir);
+
+/* The first candidate that does. Returns 0 and fills `out`, or -1 and
+ * leaves it empty. */
+int Paths_PickGameDir(const char *const *candidates, int count,
+                      char *out, size_t cap);
+
+/* The player's own copy of the game. A shipped binary cannot carry the
+ * path its build machine used, so this searches in order: `cli`, the
+ * TAK_GAME_DIR environment variable, what was saved last run, what this
+ * build was configured with, a `game` folder beside the binary, then the
+ * usual install locations. Returns 0 and fills `out`. */
+int Paths_ResolveGameDir(const char *cli, char *out, size_t cap);
+
 /* Tell the host that something under the preference directory changed.
  * A no-op on the desktop, where the write already reached the disk. In
  * the browser the write landed in a filesystem that dies with the tab,

@@ -23,6 +23,7 @@
  */
 
 #include "tak_platform.h"
+#include "tak_paths.h"
 #include "tak_settings.h"
 #include "tak_gameloop.h"
 #include "tak_game_speed.h"
@@ -108,6 +109,8 @@ static void print_help(const char *prog) {
         "  --relay <url>       which server Select Game connects to, as\n"
         "                      ws://host:port/path. A browser defaults\n"
         "                      to the page own origin and needs none.\n"
+        "  --game-dir <path>   the folder holding your copy of the game\n"
+        "                      (remembered after the first run)\n"
         "  --perf-probe <name> run a performance scenario (ffa, crowd)\n"
         "                      and print one line per 600 sim ticks\n"
         "  --perf-ticks <n>    shorten that scenario to n sim ticks\n"
@@ -123,6 +126,8 @@ static int g_start_skirmish = 0;   /* --skirmish */
  * in a browser. It is an argument and never a default compiled in, so
  * no address is written down in this repository. */
 static const char *g_relay_address = NULL;
+/* --game-dir: the folder holding the player's own copy. */
+static const char *g_game_dir_arg = NULL;
 /* --multiplayer: open on Select Game rather than the main menu, the
  * way --skirmish opens on the lobby. It is what lets a browser be
  * driven to the screen without clicking a canvas. */
@@ -132,6 +137,22 @@ static int g_perf_ticks = 0;                 /* --perf-ticks */
 
 /* Populate cfg from command-line flags. Returns 1 if main should
  * continue, 0 if we should exit early (e.g. --help printed). */
+/* No copy of the game found. The player has the files or does not, so
+ * say where to put them. */
+static void print_no_game_dir(void) {
+    fprintf(stderr,
+        "OpenKingdoms could not find Total Annihilation: Kingdoms.\n"
+        "\n"
+        "It needs the .hpi archives from your own copy of the game.\n"
+        "Point it at the folder holding them, in any of these ways:\n"
+        "\n"
+        "  OpenKingdoms --game-dir \"<folder>\"\n"
+        "  set TAK_GAME_DIR=<folder>     (export on macOS and Linux)\n"
+        "  put a copy in a folder called \"game\" beside OpenKingdoms\n"
+        "\n"
+        "The folder is remembered after the first run.\n");
+}
+
 static int parse_cli(int argc, char **argv, TAK_DisplayConfig *cfg) {
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -156,6 +177,8 @@ static int parse_cli(int argc, char **argv, TAK_DisplayConfig *cfg) {
             g_start_skirmish = 1;
         } else if (strcmp(a, "--relay") == 0 && i + 1 < argc) {
             g_relay_address = argv[++i];
+        } else if (strcmp(a, "--game-dir") == 0 && i + 1 < argc) {
+            g_game_dir_arg = argv[++i];
         } else if (strcmp(a, "--multiplayer") == 0) {
             g_start_multiplayer = 1;
         } else if (strcmp(a, "--perf-probe") == 0 && i + 1 < argc) {
@@ -450,8 +473,25 @@ int main(int argc, char *argv[]) {
     Settings_Load();
     Camera_ResetDefaults();
 
-    /* Initialize VFS so we can load game assets from HPI archives */
-    if (VFS_Init(TAK_GAME_DIR, TAK_DATA_DIR) != 0) {
+    /* The player's own copy, found at run time: a shipped binary cannot
+     * carry the path its build machine used. */
+    char game_dir[1024];
+#ifdef __EMSCRIPTEN__
+    snprintf(game_dir, sizeof(game_dir), "%s", TAK_GAME_DIR);
+#else
+    if (Paths_ResolveGameDir(g_game_dir_arg, game_dir, sizeof(game_dir)) != 0) {
+        print_no_game_dir();
+        tak_mem_shutdown();
+        return 1;
+    }
+    printf("Game directory: %s\n", game_dir);
+    if (strcmp(Settings_GetStr(TAK_SETTING_GAME_DIR, ""), game_dir) != 0) {
+        Settings_SetStr(TAK_SETTING_GAME_DIR, game_dir);
+        Settings_Save();
+    }
+#endif
+
+    if (VFS_Init(game_dir, TAK_DATA_DIR) != 0) {
         fprintf(stderr, "Failed to initialize VFS\n");
         tak_mem_shutdown();
         return 1;
@@ -463,7 +503,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Initialize music streaming (non-fatal — scans Music/ for tracks) */
-    if (TAK_Music_Init(TAK_GAME_DIR) != 0) {
+    if (TAK_Music_Init(game_dir) != 0) {
         fprintf(stderr, "Warning: music system unavailable\n");
     } else {
         TAK_Music_SetMode(TAK_MUSIC_SEQUENTIAL);
