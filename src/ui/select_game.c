@@ -42,6 +42,7 @@
 #define SG_NAME_MAX    TAK_NET_NAME_MAX
 /* The key the name is kept under, so it survives a restart. */
 #define SG_NAME_KEY    "PlayerName" 
+#define SG_ADDRESS_KEY "ServerAddress"
 
 static struct {
     int         open;
@@ -101,6 +102,19 @@ const char *SelectGame_PlayerName(void) {
 static void load_name(void) {
     const char *saved = Settings_GetStr(SG_NAME_KEY, "");
     snprintf(sg.name, sizeof sg.name, "%s", saved ? saved : "");
+}
+
+/* The same for the server, so it is typed once. A browser fills this
+ * from the page it came from and never reaches here. */
+static void load_address(void) {
+    const char *saved = Settings_GetStr(SG_ADDRESS_KEY, "");
+    snprintf(sg.address, sizeof sg.address, "%s", saved ? saved : "");
+}
+
+static void save_address(void) {
+    if (strcmp(Settings_GetStr(SG_ADDRESS_KEY, ""), sg.address) == 0) return;
+    Settings_SetStr(SG_ADDRESS_KEY, sg.address);
+    (void)Settings_Save();
 }
 
 /* Which box has the caret, and whether SDL should be sending typed
@@ -423,6 +437,7 @@ int SelectGame_Init(TAK_Platform *platform) {
     fill_info();
 
     NetSession_DefaultAddress(sg.address, sizeof sg.address);
+    if (!sg.address[0]) load_address();
     if (sg.address[0]) {
         /* A browser came from somewhere, so there is an address to try
          * and the player never has to know its name. Whether anything
@@ -441,6 +456,7 @@ void SelectGame_Shutdown(void) {
     /* A name typed and not confirmed with Enter is still the name the
      * player meant, so leaving the screen writes it out. */
     save_name();
+    save_address();
     SDL_StopTextInput();
     if (sg.rt) GUIRuntime_Destroy(sg.rt);
     if (sg.has_dialog) GUIDialog_Free(&sg.dialog);

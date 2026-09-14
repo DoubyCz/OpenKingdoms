@@ -1545,6 +1545,39 @@ TEST(select_game_remembers_the_name_it_was_given) {
     VFS_Shutdown();
 }
 
+/* The server address is typed once, like the name. A desktop player
+ * has no page origin to fall back on. */
+TEST(select_game_remembers_the_address_it_was_given) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    Settings_SetDirectory(SG_SCRATCH_DIR);
+    remove(Settings_FilePath());
+    Settings_SetStr("ServerAddress", "");
+
+    ASSERT_EQ_INT(0, SelectGame_Init(&platform));
+    ASSERT_EQ_STR("", SelectGame_Address());
+    SelectGame_HandleClick("EnterTCPIPAddress");
+    sg_feed_text(&platform, "ws://relay.example:8443/relay");
+    ASSERT_EQ_STR("ws://relay.example:8443/relay", SelectGame_Address());
+    SelectGame_Shutdown();
+
+    /* A fresh screen, from the file rather than from memory. */
+    ASSERT_EQ_INT(0, Settings_Load());
+    ASSERT_EQ_INT(0, SelectGame_Init(&platform));
+    if (strcmp(SelectGame_Address(), "ws://relay.example:8443/relay") != 0)
+        printf("(it came back as \"%s\") ", SelectGame_Address());
+    ASSERT_EQ_STR("ws://relay.example:8443/relay", SelectGame_Address());
+
+    SelectGame_Shutdown();
+    Settings_SetDirectory(NULL);
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 TEST(select_game_with_no_address_says_what_to_do) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -20000,6 +20033,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_C, select_game_with_no_address_says_what_to_do);
     RUN_UI_TEST(UI_GROUP_A, select_game_takes_typing_in_both_of_its_boxes);
     RUN_UI_TEST(UI_GROUP_B, select_game_remembers_the_name_it_was_given);
+    RUN_UI_TEST(UI_GROUP_C, select_game_remembers_the_address_it_was_given);
     RUN_UI_TEST(UI_GROUP_C, mp_room_chat_template_is_not_drawn);
     RUN_UI_TEST(UI_GROUP_C, mp_room_map_info_names_the_chosen_map);
     RUN_UI_TEST(UI_GROUP_A, mp_room_widgets_after_the_chat_box_load);
