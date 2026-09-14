@@ -8192,6 +8192,329 @@ TEST(a_dead_unit_leaves_its_corpse_when_the_death_finishes) {
     ASSERT_EQ_INT(0, Units_DebugCorpseMeshCount());
 }
 
+/* Count near-white pixels inside a screen rect. The whiteout death
+ * rasterises the unit's own silhouette as one solid block of the
+ * palette's white (legacy:197033-197035), so the measurement is a
+ * pixel count, not the presence of a sprite. */
+static int probe_count_white(const uint32_t *px, int W, int H,
+                             int x0, int y0, int x1, int y1) {
+    int n = 0;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > W) x1 = W;
+    if (y1 > H) y1 = H;
+    for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+            const uint32_t c = px[y * W + x];
+            const int r = (int)(c & 0xFFu);
+            const int g = (int)((c >> 8) & 0xFFu);
+            const int b = (int)((c >> 16) & 0xFFu);
+            if (r >= 224 && g >= 224 && b >= 224) n++;
+        }
+    }
+    return n;
+}
+
+/* Count pixels inside a screen rect that are brighter in every channel
+ * than the same pixel of the live frame by a clear margin. A whiteout
+ * that fades is white for a few ticks and brighter for most of them. */
+static int probe_count_brighter(const uint32_t *live, const uint32_t *px,
+                                int W, int H, int x0, int y0, int x1, int y1) {
+    int n = 0;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > W) x1 = W;
+    if (y1 > H) y1 = H;
+    for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+            const uint32_t a = live[y * W + x], c = px[y * W + x];
+            if ((int)(c & 0xFFu) - (int)(a & 0xFFu) < 40) continue;
+            if ((int)((c >> 8) & 0xFFu) - (int)((a >> 8) & 0xFFu) < 40) continue;
+            if ((int)((c >> 16) & 0xFFu) - (int)((a >> 16) & 0xFFu) < 40) continue;
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Boot in-game on clear ground with the camera parked on it. Returns
+ * the chosen spot; 1 means the data dir is missing. */
+static int deathfx_boot(TAK_Platform *platform, GameWorld **out_world,
+                        int32_t *out_x, int32_t *out_y) {
+    if (setup_vfs() != 0) { printf("SKIP (no data dir) "); return 1; }
+    if (setup_platform(platform) != 0) { VFS_Shutdown(); return -1; }
+    if (UI_Init() != 0) return -1;
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
+    cfg.line_of_sight = 0;
+    if (World_BeginLoad(platform, &cfg, "two castles", "aramon") != 0 ||
+        Loading_Init(platform) != 0) return -1;
+    int next = GAMESTATE_GAME_LOADING;
+    for (int i = 0; i < 600 && next == GAMESTATE_GAME_LOADING; i++) {
+        next = Loading_Tick(platform, 1.0f / 60.0f);
+    }
+    if (next != GAMESTATE_IN_GAME) return -1;
+    GameWorld *world = World_Get();
+    if (!world) return -1;
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    if (unit_count <= 0) return -1;
+    if (!corpse_find_clear_ground(world, units[0].world_x + 512,
+                                  units[0].world_y, 48, out_x, out_y))
+        return -1;
+    if (InGame_Init(platform) != 0) return -1;
+    Units_SetHealthBarsOn(0);
+    Units_SetShadowsOn(0);
+    *out_world = world;
+    return 0;
+}
+
+static void deathfx_shutdown(TAK_Platform *platform) {
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(platform);
+    UI_Shutdown();
+    teardown_platform(platform);
+    VFS_Shutdown();
+}
+
+/* What the frame actually shows at the moment of death.
+ *
+ * The reported effect is a white flash on a lodestone, and it is not
+ * an explosion sprite: the unit's own model is rasterised solid white
+ * and alpha faded out over about a second (legacy:197033-197035,
+ * :211265-211295, :236366-236372). So this probe reads the framebuffer
+ * over the whole death and measures near-white coverage inside the
+ * unit's own projected bounds, frame by frame. It pins three things a
+ * spawn-happened assertion cannot: that the flash is there at all,
+ * that it dims instead of holding, and that it lasts the full fade
+ * rather than one frame. The same measurement over an ordinary
+ * building's death has to stay near zero, which is what stops a fix
+ * from whiting out everything. */
+TEST(render_probe_death_flash) {
+    TAK_Platform platform;
+    GameWorld *world = NULL;
+    int32_t cx = 0, cy = 0;
+    int boot_rc = deathfx_boot(&platform, &world, &cx, &cy);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+
+    const int W = platform.window_w, H = platform.window_h;
+    Timer timer;
+    Timer_Init(&timer);
+
+    const char *names[2] = { "ARALODE", "ARAAT" };
+    int flash_peak[2] = { 0, 0 };
+    int flash_first[2] = { 0, 0 };
+    int flash_late[2] = { 0, 0 };
+    int flash_frames[2] = { 0, 0 };
+    int base_white[2] = { 0, 0 };
+    int box_area[2] = { 0, 0 };
+    int death_ticks[2] = { 0, 0 };
+
+    for (int which = 0; which < 2; which++) {
+        int def = Units_FindDefByName(names[which]);
+        ASSERT(def >= 0);
+        int32_t spot_x = cx + which * 256;
+        int h = Units_Spawn(def, 1, 0, spot_x, cy);
+        ASSERT(h >= 0);
+        for (int f = 0; f < 40; f++) {
+            world->cam_x = spot_x - world->viewport_w / 2;
+            world->cam_y = cy - world->viewport_h / 2;
+            timer.accumulator = timer.sim_dt;
+            ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
+        }
+        /* The model's own screen box, through the very transform the
+         * frame draws with. Everything is measured inside it. */
+        float bmin[2], bmax[2];
+        ASSERT_EQ_INT(0, Units_DebugProjectedBounds(h, world, bmin, bmax));
+        int x0 = (int)bmin[0] - 4, y0 = (int)bmin[1] - 4;
+        int x1 = (int)bmax[0] + 5, y1 = (int)bmax[1] + 5;
+        box_area[which] = (x1 - x0) * (y1 - y0);
+
+        uint32_t *live = probe_read_pixels(&platform);
+        ASSERT_NOT_NULL(live);
+        base_white[which] = probe_count_white(live, W, H, x0, y0, x1, y1);
+
+        ASSERT_EQ_INT(h, Units_DebugKillHandle(h));
+        int unit_count = 0;
+        const Unit *units = Units_GetActive(&unit_count);
+        int t = 0;
+        while (t < 200) {
+            world->cam_x = spot_x - world->viewport_w / 2;
+            world->cam_y = cy - world->viewport_h / 2;
+            timer.accumulator = timer.sim_dt;
+            ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
+            t++;
+            uint32_t *frame = probe_read_pixels(&platform);
+            ASSERT_NOT_NULL(frame);
+            int white = probe_count_white(frame, W, H, x0, y0, x1, y1);
+            int lit = probe_count_brighter(live, frame, W, H, x0, y0, x1, y1);
+            free(frame);
+            if (t == 1) flash_first[which] = white;
+            if (t == 34) flash_late[which] = white;
+            if (white > flash_peak[which]) flash_peak[which] = white;
+            if (lit > box_area[which] / 5) flash_frames[which]++;
+            units = Units_GetActive(&unit_count);
+            if (units[h].alive == UNIT_ALIVE_DEAD) break;
+        }
+        death_ticks[which] = t;
+        free(live);
+        (void)save_and_check_renderer(&platform,
+            which == 0 ? "test_render_probe_death_flash_lodestone.bmp"
+                       : "test_render_probe_death_flash_tower.bmp");
+        fprintf(stderr, "probe: %s box %dx%d (%d px), white live %d, "
+                "tick 1 %d, tick 34 %d, peak %d, lit frames %d, "
+                "death %d ticks\n",
+                names[which], x1 - x0, y1 - y0, box_area[which],
+                base_white[which], flash_first[which], flash_late[which],
+                flash_peak[which], flash_frames[which], death_ticks[which]);
+    }
+
+    /* The lodestone. A live one is not white, and the first tick of
+     * its death covers a large part of its own box. */
+    ASSERT(base_white[0] * 20 < box_area[0]);
+    ASSERT(flash_first[0] > base_white[0] + box_area[0] / 5);
+    /* It fades rather than holding: halfway through the fade the
+     * coverage is well down. */
+    ASSERT(flash_late[0] * 2 < flash_first[0]);
+    /* And it is not one frame long. The fade is 68 of our ticks
+     * (legacy:236366-236372, doubled for our 60 Hz), so most of them
+     * have to be lit. */
+    ASSERT(flash_frames[0] >= UNIT_MAGIC_DEATH_TICKS / 2);
+    ASSERT_EQ_INT(UNIT_MAGIC_DEATH_TICKS, death_ticks[0]);
+
+    /* The ordinary building. Its Dying script ends on port 26, so
+     * nothing about its death turns it white or lights it up. */
+    ASSERT(flash_peak[1] <= base_white[1] + box_area[1] / 20);
+    ASSERT_EQ_INT(0, flash_frames[1]);
+
+    deathfx_shutdown(&platform);
+}
+
+/* Two ways a Dying script can end, and they look nothing alike.
+ *
+ * A lodestone ends on SET-UNIT-VALUE port 31, which raises the
+ * whiteout flags and starts a fade (legacy:223406-223410). The unit
+ * stays on the map, drawn as a solid white copy of itself, until the
+ * fade reaches zero and the engine destroys it
+ * (legacy:236366-236372). Its scripts are frozen for the whole fade
+ * (legacy:236339). Before this, port 31 fell through to the unhandled
+ * warning and the lodestone blinked out on the first tick after death
+ * with nothing drawn at all, because its script has no SLEEP and its
+ * unit file names no corpse. */
+TEST(a_lodestone_death_whites_out_and_fades) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int lode_def = Units_FindDefByName("ARALODE");
+    ASSERT(lode_def >= 0);
+    const UnitDef *ld = Units_GetDef(lode_def);
+    ASSERT_NOT_NULL(ld);
+    /* No corpse key, so nothing is meant to be left behind. */
+    ASSERT_EQ_INT(0, (int)(ld->corpse[0] != '\0'));
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    int32_t cx = 0, cy = 0;
+    ASSERT(corpse_find_clear_ground(world, units[0].world_x + 512,
+                                    units[0].world_y, 40, &cx, &cy));
+    int feat_before = world->feature_count;
+    int h = Units_Spawn(lode_def, 1, 3, cx, cy);
+    ASSERT(h >= 0);
+    for (int t = 0; t < 30; t++) Units_TickEngines();
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(0, (int)units[h].magic_death);
+
+    ASSERT_EQ_INT(h, Units_DebugKillHandle(h));
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(UNIT_ALIVE_DYING, units[h].alive);
+
+    /* One tick is enough for the Dying script to reach port 31. */
+    Units_TickEngines();
+    units = Units_GetActive(&unit_count);
+    ASSERT_EQ_INT(UNIT_ALIVE_DYING, units[h].alive);
+    ASSERT_EQ_INT(1, (int)units[h].magic_death);
+    int fade = (int)units[h].magic_death_fade;
+    printf("[fade starts at %d] ", fade);
+    ASSERT(fade > 0);
+
+    /* The fade steps down once per tick and never stalls, and the
+     * unit is still on the map the whole way. */
+    int ticks = 1;
+    while (units[h].alive == UNIT_ALIVE_DYING && ticks < 400) {
+        Units_TickEngines();
+        units = Units_GetActive(&unit_count);
+        ticks++;
+        if (units[h].alive != UNIT_ALIVE_DYING) break;
+        ASSERT_EQ_INT(fade - 1, (int)units[h].magic_death_fade);
+        fade = (int)units[h].magic_death_fade;
+        ASSERT(fade > 0);
+    }
+    printf("[gone after %d ticks] ", ticks);
+    ASSERT_EQ_INT(UNIT_ALIVE_DEAD, units[h].alive);
+    /* Pinned so the flash cannot silently become one frame long: the
+     * original's 34 steps at 30 Hz are 68 of ours, and the first of
+     * them is the tick the script raised the flag. */
+    ASSERT_EQ_INT(UNIT_MAGIC_DEATH_TICKS, ticks);
+    /* And nothing is left lying there. */
+    ASSERT_EQ_INT(feat_before, world->feature_count);
+
+    corpse_shutdown(&platform);
+}
+
+/* The other ending, and the one that stops a fix from whiting out
+ * every death. An ordinary swordsman's Dying script ends on port 26,
+ * which only says the death is over (legacy:223401-223403). No flags,
+ * no fade. */
+TEST(an_ordinary_death_never_whites_out) {
+    TAK_Platform platform;
+    int boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    int sword_def = Units_FindDefByName("ARASWORD");
+    ASSERT(sword_def >= 0);
+    int tower_def = Units_FindDefByName("ARAAT");
+    ASSERT(tower_def >= 0);
+
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    int32_t cx = 0, cy = 0;
+    ASSERT(corpse_find_clear_ground(world, units[0].world_x + 768,
+                                    units[0].world_y, 40, &cx, &cy));
+
+    const int defs[2] = { sword_def, tower_def };
+    for (int d = 0; d < 2; d++) {
+        int h = Units_Spawn(defs[d], 1, 3, cx + d * 128, cy);
+        ASSERT(h >= 0);
+        for (int t = 0; t < 30; t++) Units_TickEngines();
+        ASSERT_EQ_INT(h, Units_DebugKillHandle(h));
+        int seen_flag = 0, seen_fade = 0;
+        units = Units_GetActive(&unit_count);
+        for (int t = 0; t < 900 && units[h].alive == UNIT_ALIVE_DYING; t++) {
+            Units_TickEngines();
+            units = Units_GetActive(&unit_count);
+            if (units[h].magic_death) seen_flag = 1;
+            if (units[h].magic_death_fade) seen_fade = 1;
+        }
+        ASSERT_EQ_INT(UNIT_ALIVE_DEAD, units[h].alive);
+        ASSERT_EQ_INT(0, seen_flag);
+        ASSERT_EQ_INT(0, seen_fade);
+        /* Port 26 did land: the script said the death was over. */
+        ASSERT_EQ_INT(1, (int)units[h].death_finished);
+    }
+
+    corpse_shutdown(&platform);
+}
+
 /* A swordsman beside an enemy strikes it. Walkers block each other
  * since the steering change, so a sword's 30 px has to reach the
  * body and not the centre. Reported with a Taros Black Knight and a
@@ -19489,6 +19812,9 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_B, nanoframe_decay_refunds_mana);
     RUN_UI_TEST(UI_GROUP_A, reclaim_clears_feature_and_pays_mana);
     RUN_UI_TEST(UI_GROUP_A, a_dead_unit_leaves_its_corpse_when_the_death_finishes);
+    RUN_UI_TEST(UI_GROUP_B, a_lodestone_death_whites_out_and_fades);
+    RUN_UI_TEST(UI_GROUP_C, an_ordinary_death_never_whites_out);
+    RUN_UI_TEST(UI_GROUP_D, render_probe_death_flash);
     RUN_UI_TEST(UI_GROUP_D, swordsman_strikes_an_enemy_standing_beside_it);
     RUN_UI_TEST(UI_GROUP_B, a_dying_unit_stops_fighting_and_leaves_its_corpse);
     RUN_UI_TEST(UI_GROUP_A, a_wall_is_never_picked_but_falls_when_ordered);

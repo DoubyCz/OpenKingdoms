@@ -541,6 +541,12 @@ typedef struct UnitWeaponState {
 #define UNIT_ALIVE_DYING       2
 #define UNIT_ALIVE_TRANSPORTED 3
 
+/* Whiteout death length. The original subtracts 0.03 from a fade that
+ * starts at 1.0 once per 30 Hz tick and destroys the unit at zero
+ * (legacy:236366-236372), which is 34 ticks. Our simulation runs at
+ * 60 Hz, so the same wall time is 68. */
+#define UNIT_MAGIC_DEATH_TICKS 68
+
 typedef struct Unit {
     uint32_t   stable_id;   /* deterministic replay/network identity */
     int32_t    world_x;     /* pixel position, top-left of footprint */
@@ -618,6 +624,15 @@ typedef struct Unit {
     uint8_t    cob_build_stance;  /* port 5  INBUILDSTANCE */
     uint8_t    cob_yard_open;     /* port 18 YARD_OPEN     */
     uint8_t    cob_bugger_off;    /* port 19 BUGGER_OFF    */
+    /* Death ports. A Dying script ends on one of two SET-UNIT-VALUEs.
+     * Port 31 raises the whiteout and starts the fade at full
+     * (legacy:223406-223410), port 26 just says the death is over
+     * (legacy:223401-223403). The fade is a tick countdown, not a
+     * float, because simulation state has to stay integer for
+     * lockstep. */
+    uint8_t    magic_death;       /* port 31 MAGIC_DEATH   */
+    uint8_t    death_finished;    /* port 26 FINISHED_DYING */
+    uint8_t    magic_death_fade;  /* ticks of whiteout left */
     /* Flight. A flyer takes off when it gets something to do and lands
      * when it goes idle (legacy:24117, legacy:24302). flight_alt is the
      * height above the ground it is drawn and hit at; sfx_occupy is the
