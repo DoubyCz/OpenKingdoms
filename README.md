@@ -305,7 +305,9 @@ from the original that were made on purpose, and why.
 OpenKingdoms is licensed under the **GNU General Public License v3.0**. See
 [LICENSE](LICENSE).
 
-Third-party components keep their own licences: SDL2 (zlib), miniaudio
+Third-party components keep their own licences: FFmpeg (LGPL 2.1 or
+later, built with only the Bink decoder so the menu doors and cut scenes
+play), SDL2 (zlib), miniaudio
 (public domain / MIT-0), stb_image (MIT / public domain), miniz (MIT).
 
 *Total Annihilation: Kingdoms* is a trademark of its respective owners.

@@ -32,6 +32,7 @@ set(TAK_CORE_SOURCES
     core/debug.c
     core/crash.c
     core/settings.c
+    core/trig.c
     core/paths.c
     core/util.c
     core/game_loop.c
@@ -184,6 +185,7 @@ find_library(AVCODEC_LIBRARY avcodec)
 find_library(AVFORMAT_LIBRARY avformat)
 find_library(AVUTIL_LIBRARY avutil)
 find_library(SWSCALE_LIBRARY swscale)
+find_library(SWRESAMPLE_LIBRARY swresample)
 
 target_link_libraries(tak-re PRIVATE
     SDL2::SDL2
@@ -191,13 +193,16 @@ target_link_libraries(tak-re PRIVATE
 )
 
 if(AVCODEC_LIBRARY AND AVFORMAT_LIBRARY AND SWSCALE_LIBRARY)
+    # A static archive is scanned once, so a library has to come before
+    # the one it needs. avformat uses avcodec, and both use avutil.
+    set(TAK_FFMPEG_LIBS ${AVFORMAT_LIBRARY} ${AVCODEC_LIBRARY} ${SWSCALE_LIBRARY})
+    if(SWRESAMPLE_LIBRARY)
+        list(APPEND TAK_FFMPEG_LIBS ${SWRESAMPLE_LIBRARY})
+    endif()
+    list(APPEND TAK_FFMPEG_LIBS ${AVUTIL_LIBRARY})
+
     target_include_directories(tak-re PRIVATE ${AVCODEC_INCLUDE_DIR})
-    target_link_libraries(tak-re PRIVATE
-        ${AVCODEC_LIBRARY}
-        ${AVFORMAT_LIBRARY}
-        ${AVUTIL_LIBRARY}
-        ${SWSCALE_LIBRARY}
-    )
+    target_link_libraries(tak-re PRIVATE ${TAK_FFMPEG_LIBS})
     # Directory-wide: every target compiling bink_player.c (game +
     # UI test binaries) gets the real FFmpeg implementation.
     add_compile_definitions(TAK_HAVE_FFMPEG=1)
@@ -305,9 +310,26 @@ if(WIN32)
     )
 endif()
 
+# ── The simulation's own trigonometry ───────────────────────────────────────
+# Built for the browser too, and deliberately before the return below:
+# it needs no game data and no SDL, and the browser is one of the
+# platforms whose arithmetic has to agree. See src/core/trig.c.
+add_executable(test_trig
+    core/test_trig.c
+    core/trig.c
+)
+
+target_include_directories(test_trig PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+if(NOT MSVC AND NOT EMSCRIPTEN)
+    target_link_libraries(test_trig PRIVATE m)
+endif()
+
 # ── Tests + tools (native only) ─────────────────────────────────────────────
-# The browser build produces just the game; ctest targets and inspectors
-# stay desktop-side.
+# The browser build produces just the game, the trig gate above, and
+# nothing else; ctest targets and inspectors stay desktop-side.
 if(EMSCRIPTEN)
     return()
 endif()
@@ -458,7 +480,7 @@ target_link_libraries(test_ui_screens PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(AVCODEC_LIBRARY)
     target_include_directories(test_ui_screens PRIVATE ${AVCODEC_INCLUDE_DIR})
     target_link_libraries(test_ui_screens PRIVATE
-        ${AVCODEC_LIBRARY} ${AVFORMAT_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
+        ${TAK_FFMPEG_LIBS})
 endif()
 if(WIN32)
     target_link_libraries(test_ui_screens PRIVATE user32 gdi32 winmm ws2_32 advapi32)
@@ -583,7 +605,7 @@ target_link_libraries(test_unit_stall PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(AVCODEC_LIBRARY)
     target_include_directories(test_unit_stall PRIVATE ${AVCODEC_INCLUDE_DIR})
     target_link_libraries(test_unit_stall PRIVATE
-        ${AVCODEC_LIBRARY} ${AVFORMAT_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
+        ${TAK_FFMPEG_LIBS})
 endif()
 if(WIN32)
     target_link_libraries(test_unit_stall PRIVATE user32 gdi32 winmm ws2_32 advapi32)
@@ -615,7 +637,7 @@ target_link_libraries(test_movement PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(AVCODEC_LIBRARY)
     target_include_directories(test_movement PRIVATE ${AVCODEC_INCLUDE_DIR})
     target_link_libraries(test_movement PRIVATE
-        ${AVCODEC_LIBRARY} ${AVFORMAT_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
+        ${TAK_FFMPEG_LIBS})
 endif()
 if(WIN32)
     target_link_libraries(test_movement PRIVATE user32 gdi32 winmm ws2_32 advapi32)
@@ -643,7 +665,7 @@ target_link_libraries(test_command_pipeline PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(AVCODEC_LIBRARY)
     target_include_directories(test_command_pipeline PRIVATE ${AVCODEC_INCLUDE_DIR})
     target_link_libraries(test_command_pipeline PRIVATE
-        ${AVCODEC_LIBRARY} ${AVFORMAT_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
+        ${TAK_FFMPEG_LIBS})
 endif()
 if(WIN32)
     target_link_libraries(test_command_pipeline PRIVATE user32 gdi32 winmm ws2_32 advapi32)
@@ -1062,7 +1084,7 @@ target_link_libraries(test_jpg PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(AVCODEC_LIBRARY)
     target_include_directories(test_jpg PRIVATE ${AVCODEC_INCLUDE_DIR})
     target_link_libraries(test_jpg PRIVATE
-        ${AVCODEC_LIBRARY} ${AVFORMAT_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
+        ${TAK_FFMPEG_LIBS})
 endif()
 if(WIN32)
     add_custom_command(TARGET test_jpg POST_BUILD
@@ -1574,7 +1596,7 @@ target_link_libraries(test_savestate PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(AVCODEC_LIBRARY)
     target_include_directories(test_savestate PRIVATE ${AVCODEC_INCLUDE_DIR})
     target_link_libraries(test_savestate PRIVATE
-        ${AVCODEC_LIBRARY} ${AVFORMAT_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
+        ${TAK_FFMPEG_LIBS})
 endif()
 if(WIN32)
     target_link_libraries(test_savestate PRIVATE user32 gdi32 winmm ws2_32 advapi32)
@@ -1608,7 +1630,7 @@ target_link_libraries(test_render_cache PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(AVCODEC_LIBRARY)
     target_include_directories(test_render_cache PRIVATE ${AVCODEC_INCLUDE_DIR})
     target_link_libraries(test_render_cache PRIVATE
-        ${AVCODEC_LIBRARY} ${AVFORMAT_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
+        ${TAK_FFMPEG_LIBS})
 endif()
 if(WIN32)
     target_link_libraries(test_render_cache PRIVATE user32 gdi32 winmm ws2_32 advapi32)
@@ -1896,7 +1918,7 @@ if(AVCODEC_LIBRARY AND AVCODEC_INCLUDE_DIR)
     target_include_directories(test_bink PRIVATE
         ${CMAKE_SOURCE_DIR}/include ${AVCODEC_INCLUDE_DIR})
     target_link_libraries(test_bink PRIVATE
-        ${AVCODEC_LIBRARY} ${AVFORMAT_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
+        ${TAK_FFMPEG_LIBS})
 endif()
 
 if(BUILD_TESTING)
@@ -1932,6 +1954,7 @@ if(BUILD_TESTING)
     add_test(NAME test_hpi_open    COMMAND test_hpi_open)
     add_test(NAME test_io          COMMAND test_io)
     add_test(NAME test_util        COMMAND test_util)
+    add_test(NAME test_trig        COMMAND test_trig)
     add_test(NAME test_framework_self COMMAND test_framework_self)
     add_test(NAME test_hpi_vfs     COMMAND test_hpi_vfs)
     add_test(NAME test_dataset     COMMAND test_dataset)

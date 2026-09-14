@@ -15,9 +15,16 @@ Each archive is now checked at build time for anything it points at outside
 itself or the operating system, which is the check that would have caught the
 macOS fault before it shipped.
 
+The video clips play. The doors on the main screen move when you point at
+them and the cut scenes run, which earlier builds showed still because they
+carried no decoder. The clips come from your own copy of the game.
+
 Resting the cursor on the Credits door, the snort in the top left, no longer
-takes the game down. That door is drawn from its video clip alone, and these
-builds carry no decoder, so it is simply not drawn.
+takes the game down.
+
+The doors also looked for their clips next to the machine the build was made
+on rather than next to your copy of the game, so they never played in a
+downloaded build even where a decoder was present.
 
 ## You bring the game
 
@@ -33,7 +40,7 @@ The first run looks for it in the usual places. If it cannot find yours, it says
 | macOS, Apple silicon | `openkingdoms-VERSION_HERE-macos-arm64.tar.gz` |
 | Linux, x86_64 | `openkingdoms-VERSION_HERE-linux-x86_64.tar.gz` |
 
-`SHA256SUMS` carries the checksums. `HOW-TO-RUN.txt` inside each archive covers the rest.
+`SHA256SUMS` carries the checksums. `HOW-TO-RUN.txt` inside each archive covers the rest, and `THIRD-PARTY.txt` names what is built in and under which licence.
 
 macOS asks about an unidentified developer, because this build is not signed by Apple. Clear the download flag once with `xattr -dr com.apple.quarantine OpenKingdoms`.
 
@@ -46,9 +53,5 @@ There is no Intel Mac build. The hosted Intel runners have been retired, so that
 Deterministic lockstep over one relay. Type the server address on Select Game and it is remembered.
 
 A room holds players whose builds agree on arithmetic, so Windows plays Windows, macOS plays macOS, Linux plays Linux and the browser plays the browser. Each platform's maths library rounds sines its own way, which is enough to pull two machines apart over a match, so the handshake refuses a mix rather than desyncing it. A game you cannot join is still listed, greyed, with the reason. Lifting that is tracked in [docs/notes/2026-09-14-float-determinism.md](https://github.com/OpenKingdoms/OpenKingdoms/blob/main/docs/notes/2026-09-14-float-determinism.md).
-
-## What is missing
-
-The Bink video clips are not decoded in these builds, so the animated menu doors and the intro movie are still. Everything else runs.
 
 Problems go to [issues](https://github.com/OpenKingdoms/OpenKingdoms/issues), with the version line from the main menu.
