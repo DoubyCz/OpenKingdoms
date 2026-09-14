@@ -154,7 +154,7 @@ name = "hud"
 paths = ["src/ui/hud.c", "src/ui/hud_text.c", "src/render/minimap.c"]
 ctest = "^(test_command_pipeline|test_movement|test_render_cache|test_savestate|test_unit_stall)$"
 ui = [
-  ["hud_", 6],
+  ["hud_", 7],
   ["render_probe_lodestone_covers_pad", 1],
   ["patrol_from_the_sidebar_loops_until_a_new_order", 1],
   ["caster_reserve_recharges_and_gates_shots", 1],

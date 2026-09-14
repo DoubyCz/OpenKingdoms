@@ -15668,6 +15668,32 @@ TEST(hud_magic_button_the_unit_cannot_pay_for_is_greyed_and_dead) {
     VFS_Shutdown();
 }
 
+/* Cursor textures belong to the renderer that made them. A second
+ * renderer in one process gets its own set. */
+TEST(hud_cursors_belong_to_the_renderer_that_made_them) {
+    TAK_Platform first;
+    int boot_rc = corpse_boot(&first);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    ASSERT_EQ_INT(0, InGame_Init(&first));
+    ASSERT_EQ_INT(1, HUD_CursorFrameCount(HUD_CUR_NORMAL));
+    ASSERT_EQ_INT((int)first.renderer_gen, (int)HUD_DebugCursorGen());
+    uint32_t first_gen = first.renderer_gen;
+    InGame_Shutdown();
+    corpse_shutdown(&first);
+
+    TAK_Platform platform;
+    boot_rc = corpse_boot(&platform);
+    if (boot_rc == 1) return;
+    ASSERT_EQ_INT(0, boot_rc);
+    ASSERT_EQ_INT(0, InGame_Init(&platform));
+    ASSERT((int)platform.renderer_gen != (int)first_gen);
+    ASSERT_EQ_INT((int)platform.renderer_gen, (int)HUD_DebugCursorGen());
+    ASSERT_EQ_INT(1, HUD_DrawCursorById(&platform, HUD_CUR_NORMAL, 20, 20));
+    InGame_Shutdown();
+    corpse_shutdown(&platform);
+}
+
 TEST(hud_kill_count_follows_the_selected_units_kills) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -19402,6 +19428,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_B, mp_room_offers_no_creon_in_the_base_game);
     RUN_UI_TEST(UI_GROUP_A, battle_screens_column_headers_keep_a_gap);
     RUN_UI_TEST(UI_GROUP_A, hud_static_art_fits_its_cell);
+    RUN_UI_TEST(UI_GROUP_C, hud_cursors_belong_to_the_renderer_that_made_them);
     RUN_UI_TEST(UI_GROUP_B, hud_magic_buttons_select_their_weapon_anywhere_on_the_art);
     RUN_UI_TEST(UI_GROUP_C, hud_magic_button_the_unit_cannot_pay_for_is_greyed_and_dead);
     RUN_UI_TEST(UI_GROUP_A, battle_room_button_art_keeps_its_authored_size);

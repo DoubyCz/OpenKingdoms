@@ -159,6 +159,8 @@ int  HUD_WidgetHidden(const char *name);
 int  HUD_WidgetFrame(const char *name);
 /* The HUD's widget runtime, for tests that measure where art lands. */
 struct GUIRuntime *HUD_DebugRuntime(void);
+/* The renderer generation the cursor textures were made for. */
+uint32_t HUD_DebugCursorGen(void);
 
 /* The sidebar .gui the HUD holds, "" before the first game. */
 const char *HUD_DialogPath(void);

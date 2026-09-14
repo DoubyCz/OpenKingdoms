@@ -14,6 +14,9 @@ typedef struct GPU_Texture GPU_Texture;
 GPU_Texture *GPU_UploadRGBA(TAK_Platform *plat, const uint32_t *pixels, int w, int h);
 
 void GPU_FreeTexture(TAK_Platform *plat, GPU_Texture *tex);
+/* Drop the handle of a texture whose renderer is already gone, and
+ * took the texture with it. */
+void GPU_AbandonTexture(GPU_Texture *tex);
 
 /* Introspection. Returns 0 on success, -1 on null tex. */
 int GPU_TextureSize(const GPU_Texture *tex, int *out_w, int *out_h);
