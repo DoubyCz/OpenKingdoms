@@ -66,12 +66,12 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-22.04
             slug: linux-x86_64
+          # Apple silicon only. GitHub has retired its Intel macOS
+          # runners, and a job asking for one waits for a machine that
+          # never comes. An Intel Mac builds from source, see the README.
           - name: macOS arm64
             os: macos-latest
             slug: macos-arm64
-          - name: macOS x86_64
-            os: macos-13
-            slug: macos-x86_64
 
     steps:
       - uses: actions/checkout@v7

@@ -14,7 +14,6 @@ The first run looks for it in the usual places. If it cannot find yours, it says
 |---|---|
 | Windows 10 and 11, 64 bit | `openkingdoms-VERSION_HERE-windows-x64.zip` |
 | macOS, Apple silicon | `openkingdoms-VERSION_HERE-macos-arm64.tar.gz` |
-| macOS, Intel | `openkingdoms-VERSION_HERE-macos-x86_64.tar.gz` |
 | Linux, x86_64 | `openkingdoms-VERSION_HERE-linux-x86_64.tar.gz` |
 
 `SHA256SUMS` carries the checksums. `HOW-TO-RUN.txt` inside each archive covers the rest.
@@ -22,6 +21,8 @@ The first run looks for it in the usual places. If it cannot find yours, it says
 macOS asks about an unidentified developer, because this build is not signed by Apple. Clear the download flag once with `xattr -dr com.apple.quarantine OpenKingdoms`.
 
 Linux binaries are built on Ubuntu 22.04 and need that glibc or newer.
+
+There is no Intel Mac build. The hosted Intel runners have been retired, so that one is built from source for now, which takes a few minutes and is covered in the README.
 
 ## Multiplayer
 
