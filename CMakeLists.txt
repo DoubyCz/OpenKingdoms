@@ -61,6 +61,18 @@ else()
     add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 endif()
 
+# ── Float arithmetic ─────────────────────────────────────────────────────────
+# Lockstep needs two machines to get the same bits from the same
+# arithmetic. IEEE 754 gives that for + - * / and sqrt, but only if the
+# compiler leaves them alone: contraction folds a multiply and an add
+# into one rounding, and fast maths reassociates freely. Both are off
+# here, on every compiler, for every target.
+if(MSVC)
+    add_compile_options(/fp:precise)
+else()
+    add_compile_options(-ffp-contract=off -fno-fast-math)
+endif()
+
 # ── Original game directory ──────────────────────────────────────────────────
 # The player's own TA:K install (HPI archives). Never bundled, never in the
 # repo, see docs/ASSETS.md. Empty by default; pass -DTAK_GAME_DIR=<path>

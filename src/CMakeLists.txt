@@ -32,6 +32,7 @@ set(TAK_CORE_SOURCES
     core/debug.c
     core/crash.c
     core/settings.c
+    core/trig.c
     core/paths.c
     core/util.c
     core/game_loop.c
@@ -723,6 +724,20 @@ add_executable(test_framework_self
 target_include_directories(test_framework_self PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
+
+# The simulation's own trigonometry. No game data, no SDL.
+add_executable(test_trig
+    core/test_trig.c
+    core/trig.c
+)
+
+target_include_directories(test_trig PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+if(NOT MSVC)
+    target_link_libraries(test_trig PRIVATE m)
+endif()
 
 # The shared glob matcher. No game data, so it runs everywhere.
 add_executable(test_util
@@ -1932,6 +1947,7 @@ if(BUILD_TESTING)
     add_test(NAME test_hpi_open    COMMAND test_hpi_open)
     add_test(NAME test_io          COMMAND test_io)
     add_test(NAME test_util        COMMAND test_util)
+    add_test(NAME test_trig        COMMAND test_trig)
     add_test(NAME test_framework_self COMMAND test_framework_self)
     add_test(NAME test_hpi_vfs     COMMAND test_hpi_vfs)
     add_test(NAME test_dataset     COMMAND test_dataset)
