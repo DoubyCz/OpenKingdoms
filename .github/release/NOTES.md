@@ -2,6 +2,23 @@ OpenKingdoms VERSION_HERE, an engine for Total Annihilation: Kingdoms.
 
 Play in a browser at [openkingdoms.net](https://openkingdoms.net), or download below and play on the desktop.
 
+## Changed in 0.1.1
+
+The macOS archive now carries a real SDL2. The 0.1.0 one carried Homebrew's
+sdl2-compat, which is a shim over SDL3 and went looking for an SDL3 that was
+not there, so the game could not start at all. That archive was withdrawn.
+
+The Windows archive carries the Visual C++ runtime. Without it the game would
+not start on a machine that had never installed one.
+
+Each archive is now checked at build time for anything it points at outside
+itself or the operating system, which is the check that would have caught the
+macOS fault before it shipped.
+
+Resting the cursor on the Credits door, the snort in the top left, no longer
+takes the game down. That door is drawn from its video clip alone, and these
+builds carry no decoder, so it is simply not drawn.
+
 ## You bring the game
 
 These archives hold the engine and the SDL runtime it needs. They hold no game content and never will. You need your own copy of Total Annihilation: Kingdoms, from GOG or from the discs.
