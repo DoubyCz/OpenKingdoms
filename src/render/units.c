@@ -724,6 +724,7 @@ static ProjectileEffect *proj_effect_slot(void) {
         e = &g_proj_effects[g_proj_effect_count++];
     }
     memset(e, 0, sizeof(*e));
+    e->owner = -1;
     return e;
 }
 
@@ -731,12 +732,12 @@ static ProjectileEffect *proj_effect_slot(void) {
  * :255772-255794, :161478-161485), which is 4 of our ticks. */
 #define UNIT_FX_TICKS_PER_FRAME 4
 /* The same, drifting `rise` height units a tick while it plays. */
-static void spawn_unit_fx_moving(int sprite, int32_t x, int32_t y,
-                                 int32_t height, int rise) {
+static ProjectileEffect *spawn_unit_fx_moving(int sprite, int32_t x, int32_t y,
+                                              int32_t height, int rise) {
     int frames = proj_sprite_frames(sprite);
-    if (frames <= 0) return;
+    if (frames <= 0) return NULL;
     ProjectileEffect *e = proj_effect_slot();
-    if (!e) return;
+    if (!e) return NULL;
     e->world_x = x;
     e->world_y = y;
     e->height = height;
@@ -746,6 +747,7 @@ static void spawn_unit_fx_moving(int sprite, int32_t x, int32_t y,
     e->life_ticks = (uint16_t)(frames * UNIT_FX_TICKS_PER_FRAME);
     e->rise = (int8_t)rise;
     e->alive = 1;
+    return e;
 }
 
 static void spawn_unit_fx(int sprite, int32_t x, int32_t y, int32_t height) {
@@ -2482,6 +2484,26 @@ static int raise_sparkle_sprite(const UnitDef *d) {
     return cache[k];
 }
 
+/* The build sparkles' ring: the building's half diagonal in pixels,
+ * which is also how many sparkles it holds (legacy:198540-198576). The
+ * original takes it from the model's box, ours from the footprint,
+ * since the model is baked by the renderer. */
+static int build_sparkle_cap(const UnitDef *d) {
+    int hx = (d->footprint_x > 0 ? d->footprint_x : 1) * 8;
+    int hz = (d->footprint_z > 0 ? d->footprint_z : 1) * 8;
+    int r = (int)(sqrtf((float)(hx * hx + hz * hz)) + 0.5f);
+    return r > 0 ? r : 1;
+}
+
+/* How many sparkles are playing on a site now. */
+static int build_sparkles_live(int handle) {
+    int n = 0;
+    for (int i = 0; i < g_proj_effect_count; i++) {
+        if (g_proj_effects[i].alive && g_proj_effects[i].owner == handle) n++;
+    }
+    return n;
+}
+
 /* How fast a raise sparkle drifts, and how high a falling one starts. */
 #define RAISE_SPARKLE_STEP 2
 #define RAISE_SPARKLE_DROP 32
@@ -2516,6 +2538,36 @@ static void raise_sparkles(const Unit *u, const UnitDef *def,
     int32_t by = mf->world_y - (int32_t)(br * cosf(b));
     spawn_unit_fx_moving(sprite, bx, by, unit_fx_height(w, bx, by, 0.0f),
                          RAISE_SPARKLE_STEP);
+}
+
+/* One work tick's build sparkles on a site. The original emits twice
+ * per 30 Hz work frame, one sparkle per piece of the model, each at a
+ * random angle on the ring, rising from the ground, and the ring holds
+ * no more than it is wide (legacy:12253-12257, legacy:198999,
+ * legacy:201441-201455). Ours emits once per 60 Hz tick, the pieces
+ * counted from the script. */
+static void build_sparkles(Unit *bt, int bt_idx, const UnitDef *btd) {
+    int sprite = raise_sparkle_sprite(btd);
+    if (sprite < 0) return;
+    const GameWorld *w = World_Get();
+    int cap = build_sparkle_cap(btd);
+    int want = (bt->cob && bt->cob->script) ? (int)bt->cob->script->num_pieces : 1;
+    if (want < 1) want = 1;
+    int live = build_sparkles_live(bt_idx);
+    float r = (float)cap;
+    for (int k = 0; k < want && live < cap; k++, live++) {
+        uint32_t n = unit_deterministic_noise(bt->stable_id,
+                                              (uint32_t)bt->build_fx_seq++,
+                                              0xb1d5u);
+        float a = (float)(n & 0xffffu) * (6.2831853f / 65536.0f);
+        int32_t x = bt->world_x + (int32_t)(r * sinf(a));
+        int32_t y = bt->world_y - (int32_t)(r * cosf(a));
+        ProjectileEffect *e = spawn_unit_fx_moving(
+            sprite, x, y, unit_fx_height(w, x, y, 0.0f),
+            2 + (int)((n >> 16) % 3u));
+        if (!e) return;
+        e->owner = (int16_t)bt_idx;
+    }
 }
 
 /* The purple flash a raised unit appears in: PurpleDeath from
@@ -8991,6 +9043,8 @@ static void Units_TickCombat(void) {
                 float hp_per_tick_f = (((float)hp_max * worker) /
                                       (buildtime * 60.0f)) * progress_scale;
                 bt->build_hp_accum += hp_per_tick_f;
+                if (btd && bt->under_construction)
+                    build_sparkles(bt, (int)(bt - g_units), btd);
                 int hp_per_tick = (int)floorf(bt->build_hp_accum);
                 if (hp_per_tick > 0) {
                     bt->build_hp_accum -= (float)hp_per_tick;
@@ -11598,6 +11652,16 @@ static ConstructFX *load_construct_fx(const char *prefix) {
     return fx;
 }
 
+int Units_DebugBuildSparkles(int handle) {
+    return build_sparkles_live(handle);
+}
+
+int Units_DebugBuildSparkleCap(int handle) {
+    if (handle < 0 || handle >= g_unit_count) return 0;
+    const UnitDef *d = Units_GetDef(g_units[handle].def_idx);
+    return d ? build_sparkle_cap(d) : 0;
+}
+
 int Units_ConstructFxFrames(const char *side_prefix) {
     if (!side_prefix) return 0;
     for (int i = 0; i < g_construct_fx_count; i++) {
@@ -11607,44 +11671,14 @@ int Units_ConstructFxFrames(const char *side_prefix) {
     return 0;
 }
 
-static void blit_construct_frame(SDL_Renderer *r,
-                                   const ConstructFX *fx,
-                                   int frame_idx, int sx, int sy) {
-    uint32_t *pix = fx->frame_pixels[frame_idx];
-    if (!pix) return;
-    int w = fx->frame_w[frame_idx];
-    int h = fx->frame_h[frame_idx];
-    int dx = sx - fx->frame_off_x[frame_idx];
-    int dy = sy - fx->frame_off_y[frame_idx];
-    SDL_Texture *tex = SDL_CreateTexture(r,
-        SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, w, h);
-    if (!tex) return;
-    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-    SDL_UpdateTexture(tex, NULL, pix, w * 4);
-    SDL_Rect dst = { dx, dy, w, h };
-    SDL_RenderCopy(r, tex, NULL, &dst);
-    SDL_DestroyTexture(tex);
-}
-
+/* The build sparkles are effects now, spawned from the work tick and
+ * drawn with the rest. What is left here is the frame counter the beam
+ * flicker reads. */
 static void render_construction_effects(const struct GameWorld *world,
                                          TAK_Platform *plat) {
+    (void)world;
     if (!plat || !plat->renderer) return;
     g_construct_anim_tick++;
-    SDL_Renderer *r = plat->renderer;
-    for (int i = 0; i < g_unit_count; i++) {
-        Unit *u = &g_units[i];
-        if (u->alive != 1 || !u->under_construction) continue;
-        if (!unit_visible_to_local_player(world, u)) continue;
-        const UnitDef *d = Units_GetDef(u->def_idx);
-        if (!d) continue;
-        ConstructFX *fx = load_construct_fx(d->side);
-        if (fx == NULL) continue;
-        if (fx->num_frames <= 0) continue;
-        int frame_idx = (int)((g_construct_anim_tick / 4) % fx->num_frames);
-        int sx = u->world_x - world->cam_x;
-        int sy = u->world_y - world->cam_y;
-        blit_construct_frame(r, fx, frame_idx, sx, sy);
-    }
 }
 
 /* ── Map-feature sprite cache ─────────────────────────────────────────

@@ -267,6 +267,7 @@ typedef struct ProjectileEffect {
     uint8_t  ticks_per_frame;  /* ticks each picture shows */
     int8_t   rise;             /* height change per tick (raise sparkles) */
     uint8_t  alive;
+    int16_t  owner;            /* the unit it plays for, -1 for none */
 } ProjectileEffect;
 
 typedef struct UnitDef {
@@ -668,6 +669,9 @@ typedef struct Unit {
      * from the builders' accumulator above, which build and repair own
      * between them (legacy:39571-39574). */
     uint8_t    heal_frac_256;
+    /* Presentation only, outside the hash and the save: the seed of
+     * the next build sparkle's place on the ring. */
+    uint16_t   build_fx_seq;
     /* Ticks since a builder last fed this nanoframe. Past a 10s grace
      * an abandoned frame decays at half build rate, refunding mana
      * proportionally (legacy :9629-9657 + :39510-39524). */
@@ -1194,6 +1198,10 @@ int               Units_IsUnderConstruction(int handle);
 /* Frames of the build sparkle cached for a side prefix ("CRE"), 0 when
  * none has loaded. */
 int               Units_ConstructFxFrames(const char *side_prefix);
+/* The build sparkles a site carries: how many are playing on it now,
+ * and how many its ring holds (legacy:198576). */
+int               Units_DebugBuildSparkles(int handle);
+int               Units_DebugBuildSparkleCap(int handle);
 int               Units_CanStandAt(int handle, int32_t x, int32_t y);
 /* Veteran rank 0..10 (0 = not a veteran). */
 int               Units_GetVeteranLevel(int handle);
