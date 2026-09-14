@@ -144,6 +144,7 @@ static int           g_action_slot_count = 0;
 /* Cursor sprite cache, indexed by HUD_CMD_*. NULL = no cursor for
  * that mode (immediate-action button — no cursor swap). */
 static GPU_Texture *g_cursors[128];
+static uint32_t     g_cursor_gen;     /* renderer_gen the cursors were made for */
 static int          g_cursors_w[128];
 static int          g_cursors_h[128];
 static int          g_cursors_off_x[128];
@@ -473,7 +474,23 @@ static void hud_load_messages(void) {
 
 /* Cursor sprites for every targeting mode in the binding table, the
  * context cursors, and every frame of the animated revive cursor. */
+/* Textures belong to the renderer that made them. Another renderer
+ * means the old set is gone and a fresh load. */
+static void hud_forget_cursors_of_other_renderers(const TAK_Platform *plat) {
+    if (!plat || g_cursor_gen == plat->renderer_gen) return;
+    for (int i = 0; i < 128; i++) {
+        if (g_cursors[i] && g_cursors[i] != g_cursor_revive.tex[0])
+            GPU_AbandonTexture(g_cursors[i]);
+        g_cursors[i] = NULL;
+    }
+    for (int k = 0; k < g_cursor_revive.count; k++)
+        GPU_AbandonTexture(g_cursor_revive.tex[k]);
+    memset(&g_cursor_revive, 0, sizeof g_cursor_revive);
+    g_cursor_gen = plat->renderer_gen;
+}
+
 static void hud_load_cursors(TAK_Platform *plat) {
+    hud_forget_cursors_of_other_renderers(plat);
     /* Load cursor sprites for every targeting mode in the binding
      * table. Hotspots come from the GAF frame headers (off=(x,y)
      * fields), which we read via FrameHeader after decoding. */
@@ -503,6 +520,7 @@ static void hud_load_cursors(TAK_Platform *plat) {
             GPU_SetTextureFilter(t, 0);
             GPU_SetTextureBlend(t, 1);
             g_cursors[m]       = t;
+            g_cursor_gen       = plat->renderer_gen;
             g_cursors_w[m]     = fh->width;
             g_cursors_h[m]     = fh->height;
             g_cursors_off_x[m] = fh->offset_x;
@@ -592,6 +610,8 @@ static void hud_load_cursors(TAK_Platform *plat) {
     }
     if (cgaf) GAF_Close(cgaf);
 }
+
+uint32_t HUD_DebugCursorGen(void) { return g_cursor_gen; }
 
 void HUD_LoadCursors(TAK_Platform *plat) {
     /* A fresh load: textures from an earlier renderer are dropped. */
@@ -753,8 +773,8 @@ void HUD_Init(TAK_Platform *plat, GameWorld *world) {
             g_font_badge = Font_Load("data/fonts/b_times new roman (100b)",
                                      UI_RGBAFormat());
 
-        hud_load_cursors(plat);
     }
+    hud_load_cursors(plat);
 }
 
 int HUD_HitTest(int win_x, int win_y, TAK_Platform *plat) {

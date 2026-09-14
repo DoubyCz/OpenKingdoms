@@ -43,6 +43,10 @@ void GPU_FreeTexture(TAK_Platform *plat, GPU_Texture *tex) {
     tak_free(tex);
 }
 
+void GPU_AbandonTexture(GPU_Texture *tex) {
+    if (tex) tak_free(tex);
+}
+
 /* Introspection. Returns 0 on success, -1 on null tex. */
 int GPU_TextureSize(const GPU_Texture *tex, int *out_w, int *out_h) {
     if (!tex || !tex->tex) return -1;
