@@ -82,11 +82,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libsdl2-dev patchelf
+          sudo apt-get install -y ninja-build libsdl2-dev patchelf nasm
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: brew install ninja nasm
 
       # Homebrew's sdl2 is sdl2-compat, an SDL2 API over SDL3 that loads
       # libSDL3 at run time. Bundling it ships a shim with nothing to
@@ -114,6 +114,31 @@ jobs:
           path: build/vcpkg_installed
           key: vcpkg-release-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
 
+      # The menu doors and the intro are Bink video, and a build with no
+      # decoder shows them still. Only the Bink decoder is enabled, so
+      # this is small, needs nothing else installed, and pulls in no
+      # other codec's licence. Static, so the archive gains no files.
+      - name: Build FFmpeg (macOS and Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          FFMPEG_VERSION: 7.1.1
+        run: |
+          set -e
+          curl -fsSL -o ff.tar.gz \
+            "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz"
+          tar xzf ff.tar.gz
+          cd "ffmpeg-${FFMPEG_VERSION}"
+          ./configure --prefix="$GITHUB_WORKSPACE/ffroot" \
+            --disable-everything --disable-programs --disable-doc \
+            --disable-network --disable-autodetect --disable-debug \
+            --disable-shared --enable-static --enable-pic \
+            --disable-avdevice --disable-avfilter --disable-postproc \
+            --enable-decoder=bink --enable-demuxer=bink \
+            --enable-protocol=file
+          make -j"$(getconf _NPROCESSORS_ONLN)"
+          make install
+
       # No TAK_GAME_DIR: a release binary carries no build machine path
       # and finds the player's own copy at run time.
       - name: Configure
@@ -121,13 +146,13 @@ jobs:
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
             cmake -B build -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
-              -DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON
+              -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
           elif [ "${{ runner.os }}" = "macOS" ]; then
             cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_PREFIX_PATH="$PWD/sdlroot"
+              -DCMAKE_PREFIX_PATH="$PWD/sdlroot;$PWD/ffroot"
           else
-            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_PREFIX_PATH="$PWD/ffroot"
           fi
 
       - name: Build
@@ -146,7 +171,9 @@ jobs:
           stage=stage/OpenKingdoms
           mkdir -p "$stage"
           cp build/src/Release/tak-re.exe "$stage/OpenKingdoms.exe"
-          cp build/src/Release/SDL2.dll "$stage/"
+          # vcpkg puts every dependent DLL beside the binary: SDL and the
+          # FFmpeg libraries the Bink clips are decoded with.
+          cp build/src/Release/*.dll "$stage/"
           # The C runtime is not part of Windows. A machine that has
           # never installed a Visual C++ redistributable has no
           # vcruntime140.dll, and the game would not start.
@@ -155,6 +182,7 @@ jobs:
           [ -n "$crt" ] || crt=/c/Windows/System32/vcruntime140.dll
           cp "$crt" "$stage/"
           cp README.md LICENSE "$stage/"
+          cp .github/release/THIRD-PARTY.txt "$stage/"
           cp docs/ASSETS.md "$stage/ASSETS.md"
           cp .github/release/HOW-TO-RUN.txt "$stage/"
           cd stage
@@ -175,6 +203,7 @@ jobs:
           cp "$sdl" "$stage/$(basename "$sdl")"
           patchelf --set-rpath '$ORIGIN' "$stage/OpenKingdoms"
           cp README.md LICENSE "$stage/"
+          cp .github/release/THIRD-PARTY.txt "$stage/"
           cp docs/ASSETS.md "$stage/ASSETS.md"
           cp .github/release/HOW-TO-RUN.txt "$stage/"
           tar -C stage -czf "openkingdoms-${{ needs.version.outputs.version }}-${{ matrix.slug }}.tar.gz" OpenKingdoms
@@ -210,6 +239,7 @@ jobs:
           codesign --force --sign - "$stage/$base"
           codesign --force --sign - "$stage/OpenKingdoms"
           cp README.md LICENSE "$stage/"
+          cp .github/release/THIRD-PARTY.txt "$stage/"
           cp docs/ASSETS.md "$stage/ASSETS.md"
           cp .github/release/HOW-TO-RUN.txt "$stage/"
           tar -C stage -czf "openkingdoms-${{ needs.version.outputs.version }}-${{ matrix.slug }}.tar.gz" OpenKingdoms
