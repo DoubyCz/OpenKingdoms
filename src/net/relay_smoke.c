@@ -37,16 +37,26 @@ static void ok(int cond, const char *what) {
 
 static TAK_WsConn g_conn;
 
-/* Connect, blocking, since there is nothing else to do until it is up. */
+/* Connect, blocking, since there is nothing else to do until it is up.
+ * By name as well as by address, so a deployed relay can be checked. */
 static TakSocket dial(const char *host, unsigned short port) {
+    char portstr[8];
+    snprintf(portstr, sizeof portstr, "%u", (unsigned)port);
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res) {
+        return TAK_INVALID_SOCKET;
+    }
     TakSocket s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s == TAK_INVALID_SOCKET) return TAK_INVALID_SOCKET;
-    struct sockaddr_in a;
-    memset(&a, 0, sizeof a);
-    a.sin_family = AF_INET;
-    a.sin_port = htons(port);
-    a.sin_addr.s_addr = inet_addr(host);
-    if (connect(s, (struct sockaddr *)&a, sizeof a) != 0) {
+    if (s == TAK_INVALID_SOCKET) {
+        freeaddrinfo(res);
+        return TAK_INVALID_SOCKET;
+    }
+    int connected = connect(s, res->ai_addr, (int)res->ai_addrlen) == 0;
+    freeaddrinfo(res);
+    if (!connected) {
         TakNet_Close(s);
         return TAK_INVALID_SOCKET;
     }

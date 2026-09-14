@@ -60,9 +60,14 @@ installed.
 Multiplayer
 -----------
 
-Multiplayer, then type the server address and press Enter. Anyone on the
-same server can host or join, whether they are playing in a browser or
-on the desktop.
+Multiplayer, then type the server address and press Enter. The address
+is remembered after the first time.
+
+A room holds players whose builds agree on arithmetic, so this build
+plays with other copies of itself. A game hosted by a different platform
+is listed and greyed, with the reason, rather than hidden. Every
+platform's maths library rounds a sine its own way, which is enough to
+pull two machines apart over a match.
 
 
 Where your files go

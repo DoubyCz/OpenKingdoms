@@ -35,6 +35,9 @@ typedef enum {
  * how a deployment detail ends up in a repository. */
 void NetSession_DefaultAddress(char *out, size_t cap);
 
+/* The float environment this build told the server it is in. */
+uint8_t NetSession_DeterminismClass(void);
+
 /* What --relay put on the command line, which wins over the default.
  * A link carrying one is how a player reaches a particular server
  * without typing its address. NULL when none was given. */

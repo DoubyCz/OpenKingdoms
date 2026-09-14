@@ -1338,6 +1338,28 @@ TEST(select_game_shows_the_chosen_games_information) {
     VFS_Shutdown();
 }
 
+/* A determinism class is one float environment, not a family of them.
+ * The three desktop platforms disagree on sinf, cosf and atan2f, so a
+ * build that claims the shared native class is telling the server it
+ * can play with machines it would desync against
+ * (docs/notes/2026-09-14-float-determinism.md). */
+TEST(a_build_tells_the_server_which_float_environment_it_is) {
+    ASSERT(TAK_CLASS_WINDOWS != TAK_CLASS_LINUX);
+    ASSERT(TAK_CLASS_WINDOWS != TAK_CLASS_MACOS);
+    ASSERT(TAK_CLASS_LINUX != TAK_CLASS_MACOS);
+    ASSERT(TAK_CLASS_BROWSER != TAK_CLASS_WINDOWS);
+    ASSERT(TAK_CLASS_BROWSER != TAK_CLASS_LINUX);
+    ASSERT(TAK_CLASS_BROWSER != TAK_CLASS_MACOS);
+
+    uint8_t mine = NetSession_DeterminismClass();
+    if (mine != TAK_Net_DeterminismClass())
+        printf("(it said %u, this platform is %u) ", (unsigned)mine,
+               (unsigned)TAK_Net_DeterminismClass());
+    ASSERT_EQ_INT(TAK_Net_DeterminismClass(), mine);
+    ASSERT(mine != TAK_CLASS_UNKNOWN);
+    ASSERT(mine != TAK_CLASS_NATIVE);
+}
+
 TEST(select_game_lists_the_rooms_a_server_offers) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -20024,6 +20046,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_A, mp_room_chat_goes_out_and_comes_in);
     RUN_UI_TEST(UI_GROUP_A, select_game_draws_the_widgets_the_shipped_file_authors);
     RUN_UI_TEST(UI_GROUP_A, select_game_lists_the_rooms_a_server_offers);
+    RUN_UI_TEST(UI_GROUP_D, a_build_tells_the_server_which_float_environment_it_is);
     RUN_UI_TEST(UI_GROUP_B, select_game_shows_the_chosen_games_information);
     RUN_UI_TEST(UI_GROUP_A, select_game_hosting_a_game_gives_it_a_map);
     RUN_UI_TEST(UI_GROUP_C, select_game_hosting_a_game_names_the_rules_it_plays_by);

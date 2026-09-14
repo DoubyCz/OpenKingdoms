@@ -25,7 +25,9 @@ Linux binaries are built on Ubuntu 22.04 and need that glibc or newer.
 
 ## Multiplayer
 
-Deterministic lockstep over one relay. Browser and desktop players share a room, and the desktop build reaches the same server the browser page does.
+Deterministic lockstep over one relay. Type the server address on Select Game and it is remembered.
+
+A room holds players whose builds agree on arithmetic, so Windows plays Windows, macOS plays macOS, Linux plays Linux and the browser plays the browser. Each platform's maths library rounds sines its own way, which is enough to pull two machines apart over a match, so the handshake refuses a mix rather than desyncing it. A game you cannot join is still listed, greyed, with the reason. Lifting that is tracked in [docs/notes/2026-09-14-float-determinism.md](https://github.com/OpenKingdoms/OpenKingdoms/blob/main/docs/notes/2026-09-14-float-determinism.md).
 
 ## What is missing
 
