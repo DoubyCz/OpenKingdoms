@@ -218,6 +218,9 @@ static int ui_group_by_name(const char *name) {
 /* Room for any transport's pickup list in the tests. */
 #define UNIT_LOAD_QUEUE_CAP_TEST 64
 
+/* mainmenu.gui button order: the snort sits fourth. */
+#define MENU_CREDITS_DOOR 3
+
 /* group is one of UI_GROUP_A..D and picks which of the four
  * parallel slices runs this case. */
 #define RUN_UI_TEST(group, name) \
@@ -13352,6 +13355,40 @@ TEST(main_menu_names_openkingdoms_and_its_version) {
     VFS_Shutdown();
 }
 
+/* The Credits door has no sprite sheet: the snort is drawn by its clip
+ * and nothing else. A build that cannot reach the clips ran every door
+ * through the sprite cycle, and that door had no sheet to cycle. */
+TEST(main_menu_credits_door_holds_up_without_its_clips) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+
+    /* A directory with no Movies folder: every clip fails to open, the
+     * state a downloaded build is in before it is told where the game
+     * lives. */
+    Paths_SetGameDir(Paths_PrefDir());
+    if (MainMenu_Init(&platform) != 0) {
+        SKIP_MARK("no menu assets");
+        Paths_SetGameDir(NULL);
+        UI_Shutdown(); teardown_platform(&platform); VFS_Shutdown();
+        return;
+    }
+    ASSERT_EQ_INT(-1, MainMenu_DebugCharacterState(MENU_CREDITS_DOOR));
+
+    const float dt = 1.0f / 60.0f;
+    MainMenu_DebugForceHover(MENU_CREDITS_DOOR);
+    for (int i = 0; i < 40; i++)
+        ASSERT_EQ_INT(GAMESTATE_MENU, MainMenu_Tick(&platform, dt));
+    MainMenu_DebugForceHover(-2);
+
+    MainMenu_Shutdown();
+    Paths_SetGameDir(NULL);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 TEST(main_menu_doors_follow_original_states) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -20188,6 +20225,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_C, war_galley_hits_resting_ghost_ship);
     RUN_UI_TEST(UI_GROUP_D, main_menu_doors_follow_original_states);
     RUN_UI_TEST(UI_GROUP_A, main_menu_names_openkingdoms_and_its_version);
+    RUN_UI_TEST(UI_GROUP_A, main_menu_credits_door_holds_up_without_its_clips);
     RUN_UI_TEST(UI_GROUP_A, enemy_unit_shows_in_the_sidebar);
     RUN_UI_TEST(UI_GROUP_C, stance_and_gate_buttons_show_their_icons_at_rest);
     RUN_UI_TEST(UI_GROUP_C, building_previews_hold_the_finished_pose);

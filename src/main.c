@@ -485,6 +485,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     printf("Game directory: %s\n", game_dir);
+    Paths_SetGameDir(game_dir);
     if (strcmp(Settings_GetStr(TAK_SETTING_GAME_DIR, ""), game_dir) != 0) {
         Settings_SetStr(TAK_SETTING_GAME_DIR, game_dir);
         Settings_Save();

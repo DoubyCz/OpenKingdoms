@@ -95,6 +95,7 @@ uint32_t *UI_DecodeFrame(GAFFile *gaf, int entry_offset, int frame_index,
                          const uint32_t *rgba_table,
                          int *out_w, int *out_h) {
     FrameHeader *frame = NULL;
+    if (!gaf) return NULL;
     if (GAF_GetFrameInfo(gaf, entry_offset, frame_index, &frame) != 0) return NULL;
     if (out_w) *out_w = frame->width;
     if (out_h) *out_h = frame->height;
@@ -107,6 +108,7 @@ uint32_t *UI_DecodeEntryIdle(GAFFile *gaf, int entry_idx,
                              int *out_ox, int *out_oy) {
     /* The entry pointer table lives at GAF header offset 12, 4 bytes per
      * entry. Jump to the Nth entry and decode its frame 0. */
+    if (!gaf) return NULL;
     uint32_t entry_off = *(uint32_t *)(gaf->data + 12 + entry_idx * 4);
     FrameHeader *frame = NULL;
     if (GAF_GetFrameInfo(gaf, entry_off, 0, &frame) != 0) return NULL;

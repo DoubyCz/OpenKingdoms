@@ -52,6 +52,13 @@ int Paths_PickGameDir(const char *const *candidates, int count,
  * usual install locations. Returns 0 and fills `out`. */
 int Paths_ResolveGameDir(const char *cli, char *out, size_t cap);
 
+/* The directory this run resolved to, and the compiled-in one until
+ * main has resolved it. NULL or an empty string puts it back. Anything
+ * that reads game content off the disk rather than out of the archives
+ * asks here: a shipped binary has no path baked in. */
+void Paths_SetGameDir(const char *dir);
+const char *Paths_GameDir(void);
+
 /* Tell the host that something under the preference directory changed.
  * A no-op on the desktop, where the write already reached the disk. In
  * the browser the write landed in a filesystem that dies with the tab,
