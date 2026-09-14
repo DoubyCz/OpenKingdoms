@@ -5262,6 +5262,9 @@ int Units_Spawn(int def_idx, int player_id, int team_color_idx,
     u->heal_frac_256 = 0;
     u->cob_yard_open = 0;
     u->cob_bugger_off = 0;
+    u->magic_death = 0;
+    u->death_finished = 0;
+    u->magic_death_fade = 0;
     u->occ_on = 0;
     u->occ_pending = 0;
     u->gate_scan_cd = 0;
@@ -5531,6 +5534,13 @@ static void cob_host_set_unit_value(void *user, int port, int32_t value) {
             return;
         case 19: /* BUGGER_OFF, script-visible flag (legacy:223379-223381) */
             u->cob_bugger_off = (value != 0);
+            return;
+        case 26: /* FINISHED_DYING: the death is over (legacy:223401-223403) */
+            u->death_finished = 1;
+            return;
+        case 31: /* MAGIC_DEATH: the whiteout, from full (legacy:223406-223410) */
+            u->magic_death = 1;
+            u->magic_death_fade = UNIT_MAGIC_DEATH_TICKS;
             return;
         default: break;
     }
@@ -9350,6 +9360,20 @@ void Units_ToggleSelectedGate(void) {
     }
 }
 
+/* One tick of a whiteout death. The scripts are frozen for the whole
+ * fade (legacy:236339), the fade steps down once a tick, and the unit
+ * is destroyed when it reaches zero (legacy:236366-236372). */
+static void magic_death_tick(Unit *u, int i) {
+    if (u->magic_death_fade > 0) u->magic_death_fade--;
+    if (u->magic_death_fade > 0) return;
+    unit_leave_corpse(u);
+    Cob_EngineFree(u->cob);
+    tak_free(u->cob);
+    u->cob = NULL;
+    u->alive = UNIT_ALIVE_DEAD;
+    fprintf(stderr, "Units_TickEngines: unit %d despawned (whiteout done)\n", i);
+}
+
 void Units_TickEngines(void) {
     g_sim_tick++;
     g_sound_tick++;
@@ -9395,8 +9419,17 @@ void Units_TickEngines(void) {
                 unit_start_script(u, "Activate", NULL, 0);
             }
         }
+        if (u->alive == UNIT_ALIVE_DYING && u->magic_death) {
+            magic_death_tick(u, i);
+            continue;
+        }
         Cob_AnimatePieces(u->cob);
         Cob_RunAllThreads(u->cob);
+        if (u->alive == UNIT_ALIVE_DYING && u->magic_death) {
+            /* Raised this tick: the first step of the fade is now. */
+            magic_death_tick(u, i);
+            continue;
+        }
         if (u->alive == UNIT_ALIVE_DYING && Cob_AliveThreadCount(u->cob) == 0) {
             /* Killed sequence completed, despawn. The corpse goes
              * down here, at the destroy step, which is where the
@@ -9934,6 +9967,13 @@ static void transform_unit_verts(const UnitMesh *m, const struct GameWorld *worl
         if (a > 1.0f) a = 1.0f;
         alpha_mul = (uint32_t)(a * 255.0f);
     }
+    /* The whiteout: the model rasterised as one solid block of white
+     * (legacy:197033-197035) and blended out with the fade
+     * (legacy:211265-211295). */
+    const int whiteout = u->magic_death != 0;
+    if (whiteout) {
+        alpha_mul = (uint32_t)u->magic_death_fade * 255u / UNIT_MAGIC_DEATH_TICKS;
+    }
 
     /* Per-piece transforms for THIS unit. Animation gives each unit its
      * own piece state, so this is recomputed per unit. */
@@ -9987,6 +10027,7 @@ static void transform_unit_verts(const UnitMesh *m, const struct GameWorld *worl
         g_scratch_hkey[i]       = model_height_key(my);
         /* Colour is RGBA8888 little-endian (A in the high byte). */
         uint32_t c = m->colors[v];
+        if (whiteout) c |= 0x00FFFFFFu;
         if (alpha_mul != 255) {
             uint32_t a = (c >> 24) & 0xFFu;
             a = (a * alpha_mul) / 255u;
@@ -10058,6 +10099,10 @@ static int build_unit_tri_list(const UnitMesh *m, int v_off) {
  * Backfaces are tested per copy (legacy:197804), since copies can face
  * different ways. A lone copy is culled up front, which keeps its
  * stretches as long as they can be. */
+/* Set for the run being emitted when its units are in the whiteout:
+ * the triangles go out untextured, one block of the vertex white. */
+static int g_submit_solid_white = 0;
+
 static void emit_height_ordered(TAK_Platform *plat, const UnitMesh *m,
                                 int n_inst, int total_verts) {
     const int V = m->vert_count;
@@ -10082,7 +10127,8 @@ static void emit_height_ordered(TAK_Platform *plat, const UnitMesh *m,
         }
         if (w > 0) {
             GPU_DrawGeometryRaw(plat,
-                m->batches[g_scratch_tri[s].batch].atlas_tex,
+                g_submit_solid_white ? NULL
+                    : m->batches[g_scratch_tri[s].batch].atlas_tex,
                 g_scratch_xy, g_scratch_color, g_scratch_uv,
                 total_verts, g_scratch_idx, w);
         }
@@ -10157,7 +10203,10 @@ static void submit_run(TAK_Platform *plat, const struct GameWorld *world,
          * Every unit in a run shares one baked mesh, so the first
          * unit's ordering serves the whole run and the coalescing
          * survives (emit_height_ordered). */
+        g_submit_solid_white =
+            g_units[unit_indices[chunk_start]].magic_death != 0;
         emit_height_ordered(plat, m, chunk_n, total_verts);
+        g_submit_solid_white = 0;
     }
 }
 
@@ -10593,6 +10642,8 @@ static void Units_Submit(TAK_Platform *plat, const struct GameWorld *world,
             const Unit *uk = &g_units[g_draw_order[run_end]];
             if (uk->def_idx        != u0->def_idx)        break;
             if (uk->team_color_idx != u0->team_color_idx) break;
+            /* A whiteout draws untextured, so it is its own run. */
+            if ((uk->magic_death != 0) != (u0->magic_death != 0)) break;
             run_end++;
         }
         int run_len = run_end - run_start;

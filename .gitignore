@@ -78,3 +78,6 @@ web-smoke-out/
 
 # Python bytecode cache from the scripts in scripts/
 __pycache__/
+
+# Render probe pictures a test run leaves beside it.
+/test_*.bmp

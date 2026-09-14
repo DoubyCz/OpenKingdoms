@@ -165,6 +165,9 @@ static uint32_t hash_unit(uint32_t h, const Unit *u) {
     h = TAK_HashI32(h, u->cob_build_stance);
     h = TAK_HashI32(h, u->cob_yard_open);
     h = TAK_HashI32(h, u->cob_bugger_off);
+    h = TAK_HashI32(h, u->magic_death);
+    h = TAK_HashI32(h, u->death_finished);
+    h = TAK_HashI32(h, u->magic_death_fade);
     h = TAK_HashF32(h, u->flight_alt);
     h = TAK_HashI32(h, u->flying);
     h = TAK_HashI32(h, u->sfx_occupy);
