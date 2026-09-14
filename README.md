@@ -19,6 +19,36 @@ runs on modern machines without DirectDraw, DirectPlay or a 1999 CPU.
 > OpenKingdoms at a copy of the game you own and it does the rest. See
 > [docs/ASSETS.md](docs/ASSETS.md).
 
+<p align="center">
+  <a href="https://openkingdoms.net/"><img alt="Play in your browser" src="https://img.shields.io/badge/play-openkingdoms.net-1f6feb?style=for-the-badge"></a>
+  <a href="https://github.com/OpenKingdoms/OpenKingdoms/releases/latest"><img alt="Download the latest release" src="https://img.shields.io/github/v/release/OpenKingdoms/OpenKingdoms?style=for-the-badge&label=download&color=2da44e"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/OpenKingdoms/OpenKingdoms/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/OpenKingdoms/OpenKingdoms/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="Licence" src="https://img.shields.io/github/license/OpenKingdoms/OpenKingdoms"></a>
+  <a href="https://github.com/OpenKingdoms/OpenKingdoms/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/OpenKingdoms/OpenKingdoms/total"></a>
+</p>
+
+---
+
+## Get it
+
+**[Play in your browser](https://openkingdoms.net/)** with nothing to install,
+or download a desktop build:
+
+| | |
+|---|---|
+| **Browser** | **[openkingdoms.net](https://openkingdoms.net/)**, Chrome, Edge, Firefox or Safari |
+| **Windows** | [Latest release](https://github.com/OpenKingdoms/OpenKingdoms/releases/latest), `windows-x64.zip` |
+| **macOS** | [Latest release](https://github.com/OpenKingdoms/OpenKingdoms/releases/latest), `macos-arm64` for Apple silicon or `macos-x86_64` for Intel |
+| **Linux** | [Latest release](https://github.com/OpenKingdoms/OpenKingdoms/releases/latest), `linux-x86_64.tar.gz` |
+| **Source** | [Build it yourself](#building-from-source), Windows, macOS and Linux |
+
+Every download needs your own copy of the game. The desktop builds find it
+for you, and ask once if they cannot. See
+[getting your game files in](#getting-your-game-files-in).
+
 ---
 
 ## Status
@@ -29,7 +59,7 @@ runs on modern machines without DirectDraw, DirectPlay or a 1999 CPU.
 | Rendering | 3DO models, GAF/TAF sprites, COB animation, team colours, fog of war |
 | Pathfinding | Working. Ongoing accuracy work on tight corridors |
 | Maps | TNT loading, heightmaps, features |
-| Multiplayer | **In development**. Lockstep netcode, not yet released |
+| Multiplayer | Playable. Deterministic lockstep over a relay, in the browser and on the desktop |
 | Campaign / story mode | **Not playable yet** |
 | Sound | Effects and music |
 
@@ -68,9 +98,6 @@ These improvements are in already:
 
 These are still to come:
 
-- Multiplayer over the internet through a small relay server. Deterministic
-  lockstep, NAT-friendly, browser clients included, no DirectPlay. The design
-  is in [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md).
 - Replays recorded from the lockstep command stream.
 - A data fingerprint at join, so mismatched game files are caught before they
   cause a desync.
@@ -78,7 +105,6 @@ These are still to come:
 - Smooth play with 1000 units on screen.
 - A `--data` flag, a saved config file and a first-run folder prompt, so a
   downloaded build never needs a rebuild.
-- Pre-built releases for all three platforms.
 - Units that never get stuck, with movement that respects unit footprints and
   the original's finer path grid.
 - Drop-in modding, with loose files on disk taking priority over the archives,
@@ -110,10 +136,14 @@ latest code, rough edges included.
 
 ---
 
-## Windows
+## Building from source
 
-Pre-built downloads aren't available yet. The first tagged release will
-include them. Until then, building from source takes a few minutes.
+Every release is built by CI from a tag, so you only need this to develop
+or to build for a platform we do not ship. To play, take a
+[release](https://github.com/OpenKingdoms/OpenKingdoms/releases/latest) or
+the [browser](https://openkingdoms.net/).
+
+### Windows
 
 Requires [Visual Studio 2022](https://visualstudio.microsoft.com/) (Desktop
 C++ workload), [CMake](https://cmake.org/download/) 3.20+, and
@@ -135,11 +165,10 @@ cmake --build build --config Release
 
 ---
 
-## macOS
+### macOS
 
-Pre-built downloads aren't available yet either. They come with the first
-release, unsigned, so expect the `xattr -dr com.apple.quarantine` step.
-Building from source works today on both Apple Silicon and Intel:
+Builds on both Apple silicon and Intel. Released builds are unsigned, so a
+download needs `xattr -dr com.apple.quarantine OpenKingdoms` once.
 
 ```bash
 brew install cmake sdl2 ninja
@@ -152,9 +181,9 @@ cmake --build build
 
 ---
 
-## Linux
+### Linux
 
-Build from source. Install dependencies:
+Install dependencies:
 
 ```bash
 # Debian / Ubuntu
@@ -184,11 +213,23 @@ compatibility layer.
 
 ## Getting your game files in
 
-OpenKingdoms reads the original game's `.hpi` archives directly. Today you
-tell it where they are when you configure the build, with the
-`-DTAK_GAME_DIR` option shown above. A `--data` flag, a saved config and a
-first-run folder prompt are the next milestone, so that a downloaded binary
-needs no rebuild.
+OpenKingdoms reads the original game's `.hpi` archives directly and never
+copies or ships them.
+
+A downloaded build looks for your copy in the usual install locations and
+remembers what it finds, so most people start it and play. If it cannot find
+one it prints what to do, and you can name the folder in any of these ways:
+
+```
+OpenKingdoms --game-dir "C:\GOG Games\Total Annihilation Kingdoms"
+export TAK_GAME_DIR="$HOME/Games/Total Annihilation Kingdoms"
+```
+
+or put a copy in a folder called `game` beside the binary. In the browser you
+point the page at the folder instead, and the files never leave your machine.
+
+A build you compile yourself can also bake a default in with
+`-DTAK_GAME_DIR`, which is what the development setup does.
 
 Where to get a copy if you don't have one:
 
@@ -206,8 +247,19 @@ Lockstep netcode over a lightweight relay. The server passes command frames
 between players and holds no game state and no game data, so hosting one for
 your friends is cheap and legally uncomplicated.
 
-Multiplayer is still in development. Hosting instructions land with the
-release. See [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md) for the design.
+Choose Multiplayer, type the address of a server and press Enter. The
+address is remembered. Anyone on that server can host a game or join one,
+and a browser player and a desktop player use the same server.
+
+A room holds players whose builds agree on arithmetic, so today the browser
+plays the browser and each desktop platform plays its own. Every platform's
+maths library rounds a sine its own way, which is enough to pull two
+machines apart over a match, so the handshake refuses a mix rather than
+desyncing it, and a game you cannot join is listed greyed with the reason.
+Closing that gap is measured and planned in
+[docs/notes/2026-09-14-float-determinism.md](docs/notes/2026-09-14-float-determinism.md).
+
+See [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md) for the design.
 
 ---
 

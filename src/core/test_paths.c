@@ -10,6 +10,9 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifdef _WIN32
+#  include <direct.h>
+#endif
 
 #define ASSERT(x) do { \
     if (!(x)) { \
@@ -167,6 +170,49 @@ static int test_platform_default_restored(void) {
     return 0;
 }
 
+/* The game directory a shipped binary has to find at run time. */
+static int scratch_mkdir(const char *path) {
+#ifdef _WIN32
+    return _mkdir(path);
+#else
+    return mkdir(path, 0755);
+#endif
+}
+
+static int scratch_touch(const char *path) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+    fclose(f);
+    return 0;
+}
+
+static int test_game_dir_search(void) {
+    scratch_mkdir("test_paths_scratch");
+    scratch_mkdir("test_paths_scratch/empty");
+    scratch_mkdir("test_paths_scratch/install");
+    /* A folder with no archives is not the game's folder. */
+    ASSERT(scratch_touch("test_paths_scratch/empty/readme.txt") == 0);
+    ASSERT(scratch_touch("test_paths_scratch/install/totala1.hpi") == 0);
+
+    ASSERT(!Paths_IsGameDir(""));
+    ASSERT(!Paths_IsGameDir("test_paths_scratch/nowhere"));
+    ASSERT(!Paths_IsGameDir("test_paths_scratch/empty"));
+    ASSERT(Paths_IsGameDir("test_paths_scratch/install"));
+
+    /* The first candidate holding archives wins. */
+    const char *cands[4] = { "", "test_paths_scratch/nowhere",
+                             "test_paths_scratch/empty",
+                             "test_paths_scratch/install" };
+    char out[512];
+    ASSERT(Paths_PickGameDir(cands, 4, out, sizeof out) == 0);
+    ASSERT_STR("test_paths_scratch/install", out);
+
+    /* Nothing found leaves no half answer behind. */
+    ASSERT(Paths_PickGameDir(cands, 3, out, sizeof out) != 0);
+    ASSERT_STR("", out);
+    return 0;
+}
+
 int main(void) {
     struct { const char *name; int (*fn)(void); } cases[] = {
         { "override_forward_slashes",     test_override_forward_slashes },
@@ -178,6 +224,7 @@ int main(void) {
         { "settings_override_still_works", test_settings_override_still_works },
         { "settings_hold_text",           test_settings_hold_text_as_well_as_numbers },
         { "platform_default_restored",    test_platform_default_restored },
+        { "game_dir_search",              test_game_dir_search },
     };
     int failed = 0;
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {

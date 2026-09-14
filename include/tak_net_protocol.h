@@ -161,9 +161,18 @@ typedef enum TAK_NetHashGroup {
 typedef enum TAK_NetClass {
     TAK_CLASS_UNKNOWN = 0,
     TAK_CLASS_BROWSER = 1,   /* one wasm binary, one libm */
-    TAK_CLASS_NATIVE  = 2,   /* only once the conversion lands */
-    TAK_CLASS_TEST    = 3    /* the in process harness */
+    TAK_CLASS_NATIVE  = 2,   /* every native build, once the conversion lands */
+    TAK_CLASS_TEST    = 3,   /* the in process harness */
+    /* Until then each platform's libm is its own class. Measured, the
+     * three disagree on sinf, cosf and atan2f, so a room holds one of
+     * them (docs/notes/2026-09-14-float-determinism.md). */
+    TAK_CLASS_WINDOWS = 4,
+    TAK_CLASS_MACOS   = 5,
+    TAK_CLASS_LINUX   = 6
 } TAK_NetClass;
+
+/* The float environment this build simulates in. */
+uint8_t TAK_Net_DeterminismClass(void);
 
 typedef enum TAK_NetClientKind {
     TAK_CLIENT_PLAYER  = 0,

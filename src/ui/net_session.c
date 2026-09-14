@@ -15,15 +15,12 @@
 #include <emscripten.h>
 #endif
 
-/* The browser build is float safe and two native machines are not yet
- * safe against each other, so they are different determinism classes
- * and the handshake keeps them in different rooms. That is the design
- * doc's own rule, and it is why the browser ships first. */
-#ifdef __EMSCRIPTEN__
-#define SESSION_DETERMINISM_CLASS 1
-#else
-#define SESSION_DETERMINISM_CLASS 2
-#endif
+/* Which float environment this build simulates in. Every native build
+ * used to claim one class, and the handshake then let two of them into
+ * one room (docs/notes/2026-09-14-float-determinism.md). */
+#define SESSION_DETERMINISM_CLASS TAK_Net_DeterminismClass()
+
+uint8_t NetSession_DeterminismClass(void) { return SESSION_DETERMINISM_CLASS; }
 
 static struct {
     NetSessionState state;

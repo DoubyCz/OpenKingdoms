@@ -215,7 +215,7 @@ ctest = "^(test_command_pipeline|test_gui_loader|test_gui_loader_no_data|test_mo
 ui = [
   ["battle_", 18],
   ["mp_room", 21],
-  ["select_game", 8],
+  ["select_game", 9],
   ["hud_static_art_fits_its_cell", 1],
   ["hud_magic_buttons_select_their_weapon_anywhere_on_the_art", 1],
   ["loading_backdrop_is_the_arch_and_its_glass", 1],

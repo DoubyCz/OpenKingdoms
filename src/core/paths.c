@@ -1,8 +1,22 @@
 #include "tak_paths.h"
+#include "tak_settings.h"
 
 #include <SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#  include <windows.h>
+#else
+#  include <dirent.h>
+#endif
+
+/* What this build was configured with: a developer's tree has one, a
+ * release build has none. */
+#ifndef TAK_GAME_DIR
+#  define TAK_GAME_DIR ""
+#endif
 
 #ifdef _WIN32
 #  include <direct.h>
@@ -101,6 +115,90 @@ int Paths_SaveFile(const char *slug, char *out, size_t cap) {
         return -1;
     }
     return 0;
+}
+
+static int ends_with_hpi(const char *name) {
+    size_t n = name ? strlen(name) : 0;
+    if (n < 4) return 0;
+    const char *e = name + n - 4;
+    return (e[0] == '.') &&
+           (e[1] == 'h' || e[1] == 'H') &&
+           (e[2] == 'p' || e[2] == 'P') &&
+           (e[3] == 'i' || e[3] == 'I');
+}
+
+int Paths_IsGameDir(const char *dir) {
+    if (!dir || !dir[0]) return 0;
+#ifdef _WIN32
+    char pattern[PATHS_SUB_MAX];
+    if (snprintf(pattern, sizeof(pattern), "%s/*.hpi", dir) < 0) return 0;
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    FindClose(h);
+    return 1;
+#else
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    int found = 0;
+    struct dirent *ent;
+    while (!found && (ent = readdir(d)) != NULL) {
+        if (ends_with_hpi(ent->d_name)) found = 1;
+    }
+    closedir(d);
+    return found;
+#endif
+}
+
+int Paths_PickGameDir(const char *const *candidates, int count,
+                      char *out, size_t cap) {
+    if (!out || cap == 0) return -1;
+    out[0] = '\0';
+    if (!candidates) return -1;
+    for (int i = 0; i < count; i++) {
+        if (!candidates[i] || !candidates[i][0]) continue;
+        if (!Paths_IsGameDir(candidates[i])) continue;
+        snprintf(out, cap, "%s", candidates[i]);
+        return 0;
+    }
+    return -1;
+}
+
+int Paths_ResolveGameDir(const char *cli, char *out, size_t cap) {
+    char beside[PATHS_SUB_MAX];
+    beside[0] = '\0';
+    char *base = SDL_GetBasePath();
+    if (base) {
+        snprintf(beside, sizeof(beside), "%sgame", base);
+        SDL_free(base);
+    }
+    /* The usual places a copy sits. Anywhere else is named once and
+     * remembered. */
+    char home_games[PATHS_SUB_MAX];
+    char home_wine[PATHS_SUB_MAX];
+    home_games[0] = home_wine[0] = '\0';
+    const char *home = getenv("HOME");
+    if (!home || !home[0]) home = getenv("USERPROFILE");
+    if (home && home[0]) {
+        snprintf(home_games, sizeof(home_games),
+                 "%s/Games/Total Annihilation Kingdoms", home);
+        snprintf(home_wine, sizeof(home_wine),
+                 "%s/.wine/drive_c/GOG Games/Total Annihilation Kingdoms", home);
+    }
+    const char *cands[] = {
+        cli,
+        getenv("TAK_GAME_DIR"),
+        Settings_GetStr(TAK_SETTING_GAME_DIR, ""),
+        TAK_GAME_DIR,
+        beside,
+        "C:/GOG Games/Total Annihilation Kingdoms",
+        "C:/Program Files (x86)/GOG Galaxy/Games/Total Annihilation Kingdoms",
+        "C:/Program Files (x86)/Cavedog/Total Annihilation Kingdoms",
+        home_games,
+        home_wine,
+    };
+    return Paths_PickGameDir(cands, (int)(sizeof(cands) / sizeof(cands[0])),
+                             out, cap);
 }
 
 void Paths_SetOverride(const char *dir) {
