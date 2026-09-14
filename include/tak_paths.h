@@ -52,10 +52,9 @@ int Paths_PickGameDir(const char *const *candidates, int count,
  * usual install locations. Returns 0 and fills `out`. */
 int Paths_ResolveGameDir(const char *cli, char *out, size_t cap);
 
-/* The directory this run resolved to, and the compiled-in one until
- * main has resolved it. NULL or an empty string puts it back. Anything
- * that reads game content off the disk rather than out of the archives
- * asks here: a shipped binary has no path baked in. */
+/* The directory this run resolved to, for anything reading game content
+ * off the disk rather than out of the archives. The compiled-in path
+ * until main resolves one; NULL or empty puts that back. */
 void Paths_SetGameDir(const char *dir);
 const char *Paths_GameDir(void);
 

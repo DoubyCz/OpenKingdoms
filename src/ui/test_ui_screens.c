@@ -13355,18 +13355,14 @@ TEST(main_menu_names_openkingdoms_and_its_version) {
     VFS_Shutdown();
 }
 
-/* The Credits door has no sprite sheet: the snort is drawn by its clip
- * and nothing else. A build that cannot reach the clips ran every door
- * through the sprite cycle, and that door had no sheet to cycle. */
+/* The Credits snort is drawn by its clip and by nothing else. */
 TEST(main_menu_credits_door_holds_up_without_its_clips) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
     if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
     ASSERT_EQ_INT(0, UI_Init());
 
-    /* A directory with no Movies folder: every clip fails to open, the
-     * state a downloaded build is in before it is told where the game
-     * lives. */
+    /* No Movies folder here, so no door opens a clip. */
     Paths_SetGameDir(Paths_PrefDir());
     if (MainMenu_Init(&platform) != 0) {
         SKIP_MARK("no menu assets");
