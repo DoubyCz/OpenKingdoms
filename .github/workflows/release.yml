@@ -1,0 +1,232 @@
+name: Release
+
+# Tag a release and this builds the desktop game for Windows, macOS and
+# Linux and attaches the archives to it:
+#
+#   git tag -a v0.1.0 -m "..." && git push origin v0.1.0
+#
+# No game content is ever packaged. The archives hold this engine and
+# the SDL runtime it needs; the player brings their own copy of the
+# original, which the binary finds at run time. See docs/ASSETS.md.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: 'Leave the release as a draft'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  # The tag names the version players will report in a bug, so it has to
+  # be the version the binary shows. Cheap to check, and wrong once the
+  # archives are published.
+  version:
+    name: Tag matches the project version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: pick
+        run: |
+          project=$(sed -n 's/^ *VERSION \([0-9.]*\) *$/\1/p' CMakeLists.txt | head -1)
+          if [ -z "$project" ]; then
+            echo "::error::No VERSION found in CMakeLists.txt"
+            exit 1
+          fi
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="${{ github.ref_name }}"
+            if [ "${tag#v}" != "$project" ]; then
+              echo "::error::Tag $tag and project version $project disagree. Bump project() in CMakeLists.txt or retag."
+              exit 1
+            fi
+          fi
+          echo "version=$project" >> "$GITHUB_OUTPUT"
+          echo "Building $project"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            slug: windows-x64
+          # Built on the oldest runner still supported, so the binary
+          # asks for an older glibc and runs on more distributions.
+          - name: Linux x86_64
+            os: ubuntu-22.04
+            slug: linux-x86_64
+          - name: macOS arm64
+            os: macos-latest
+            slug: macos-arm64
+          - name: macOS x86_64
+            os: macos-13
+            slug: macos-x86_64
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0        # the build stamp is git describe
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libsdl2-dev patchelf
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja sdl2
+
+      - name: Cache vcpkg (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-release-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+
+      # No TAK_GAME_DIR: a release binary carries no build machine path
+      # and finds the player's own copy at run time.
+      - name: Configure
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cmake -B build -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+              -DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON
+          else
+            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          fi
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      # The data-free suite. The rest needs the player's own game files,
+      # which no runner has, and runs locally before a tag is cut.
+      - name: Test (data-free subset)
+        run: ctest --test-dir build -C Release --output-on-failure --label-exclude needs-data
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -e
+          stage=stage/OpenKingdoms
+          mkdir -p "$stage"
+          cp build/src/Release/tak-re.exe "$stage/OpenKingdoms.exe"
+          cp build/src/Release/SDL2.dll "$stage/"
+          cp README.md LICENSE "$stage/"
+          cp docs/ASSETS.md "$stage/ASSETS.md"
+          cp .github/release/HOW-TO-RUN.txt "$stage/"
+          cd stage
+          7z a -tzip "../openkingdoms-${{ needs.version.outputs.version }}-${{ matrix.slug }}.zip" OpenKingdoms
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -e
+          stage=stage/OpenKingdoms
+          mkdir -p "$stage"
+          cp build/src/tak-re "$stage/OpenKingdoms"
+          # Ship the SDL we linked against, and look for it beside the
+          # binary, so the archive needs nothing installed.
+          sdl=$(ldd build/src/tak-re | awk '/libSDL2/ {print $3}' | head -1)
+          test -n "$sdl"
+          cp "$sdl" "$stage/$(basename "$sdl")"
+          patchelf --set-rpath '$ORIGIN' "$stage/OpenKingdoms"
+          cp README.md LICENSE "$stage/"
+          cp docs/ASSETS.md "$stage/ASSETS.md"
+          cp .github/release/HOW-TO-RUN.txt "$stage/"
+          tar -C stage -czf "openkingdoms-${{ needs.version.outputs.version }}-${{ matrix.slug }}.tar.gz" OpenKingdoms
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          stage=stage/OpenKingdoms
+          mkdir -p "$stage"
+          cp build/src/tak-re "$stage/OpenKingdoms"
+          sdl=$(otool -L build/src/tak-re | awk '/libSDL2/ {print $1}' | head -1)
+          test -n "$sdl"
+          base=$(basename "$sdl")
+          cp "$sdl" "$stage/$base"
+          chmod u+w "$stage/$base"
+          install_name_tool -change "$sdl" "@executable_path/$base" "$stage/OpenKingdoms"
+          install_name_tool -id "@executable_path/$base" "$stage/$base"
+          # An edited Mach-O has an invalid signature until it is signed
+          # again, and arm64 refuses to run one.
+          codesign --force --sign - "$stage/$base"
+          codesign --force --sign - "$stage/OpenKingdoms"
+          cp README.md LICENSE "$stage/"
+          cp docs/ASSETS.md "$stage/ASSETS.md"
+          cp .github/release/HOW-TO-RUN.txt "$stage/"
+          tar -C stage -czf "openkingdoms-${{ needs.version.outputs.version }}-${{ matrix.slug }}.tar.gz" OpenKingdoms
+
+      # A packaged binary that cannot start is worse than no release, so
+      # run the one thing that needs no game data: --help must print.
+      - name: The packaged binary runs
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ./stage/OpenKingdoms/OpenKingdoms.exe --help | head -3
+          else
+            ./stage/OpenKingdoms/OpenKingdoms --help | head -3
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openkingdoms-${{ matrix.slug }}
+          path: |
+            *.zip
+            *.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Notes
+        run: |
+          sed "s/VERSION_HERE/${{ needs.version.outputs.version }}/g" \
+            .github/release/NOTES.md > notes.md
+          cat notes.md
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.version) }}"
+          draft=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.draft }}" = "true" ]; then
+            draft="--draft"
+          fi
+          gh release create "$tag" dist/* \
+            --title "OpenKingdoms $tag" \
+            --notes-file notes.md \
+            $draft

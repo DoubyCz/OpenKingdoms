@@ -1,0 +1,84 @@
+OpenKingdoms
+============
+
+An engine for Total Annihilation: Kingdoms. It plays your own copy of
+the game. No game content is included here and none ever will be.
+
+
+What you need
+-------------
+
+A copy of Total Annihilation: Kingdoms, from GOG or from the discs. The
+engine reads the .hpi archives that install puts on your disk.
+
+
+Running it
+----------
+
+Windows:  OpenKingdoms.exe
+macOS:    ./OpenKingdoms
+Linux:    ./OpenKingdoms
+
+The first time it starts it looks for your copy of the game in the usual
+places. If it cannot find one it prints what to do. You can name the
+folder yourself in any of these ways:
+
+  OpenKingdoms --game-dir "C:\GOG Games\Total Annihilation Kingdoms"
+
+  set TAK_GAME_DIR=C:\GOG Games\Total Annihilation Kingdoms
+  export TAK_GAME_DIR="$HOME/Games/Total Annihilation Kingdoms"
+
+  or put the game in a folder called "game" beside OpenKingdoms
+
+The folder is remembered after the first run, so this is asked once.
+
+Run OpenKingdoms --help for the rest of the flags.
+
+
+macOS
+-----
+
+This build is not signed by Apple, so the first run is refused with a
+message about an unidentified developer. Clear the download flag once:
+
+  xattr -dr com.apple.quarantine OpenKingdoms
+
+Then open it as usual.
+
+
+Linux
+-----
+
+If the file is not executable after unpacking:
+
+  chmod +x OpenKingdoms
+
+The SDL library it needs ships beside the binary, so nothing has to be
+installed.
+
+
+Multiplayer
+-----------
+
+Multiplayer, then type the server address and press Enter. Anyone on the
+same server can host or join, whether they are playing in a browser or
+on the desktop.
+
+
+Where your files go
+-------------------
+
+Saved games and settings live with your account, not in this folder:
+
+  Windows:  %APPDATA%\OpenKingdoms\OpenKingdoms
+  macOS:    ~/Library/Application Support/OpenKingdoms/OpenKingdoms
+  Linux:    ~/.local/share/OpenKingdoms/OpenKingdoms
+
+
+Reporting a problem
+-------------------
+
+github.com/OpenKingdoms/OpenKingdoms/issues
+
+Say which archive you downloaded and what the window printed when it
+started. The version line on the main menu is the one to quote.
