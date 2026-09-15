@@ -16,9 +16,10 @@
 #
 # Needs emcc on PATH (scripts/build-wasm.sh puts it there), GNU make,
 # curl and tar. JOBS caps the parallel compile (default: every core).
-# Does nothing when the prefix already holds this version:
+# Does nothing when the prefix already holds this build:
 # <prefix>/ffmpeg-wasm.stamp names the FFmpeg and Emscripten versions
-# that built it, and CI caches the prefix on the same pair.
+# and this script's own hash, so a changed configure line builds again.
+# CI caches the prefix on the same three.
 
 set -euo pipefail
 
@@ -44,7 +45,9 @@ done
 mkdir -p "$PREFIX"
 PREFIX="$(cd "$PREFIX" && pwd)"
 STAMP="$PREFIX/ffmpeg-wasm.stamp"
-WANT="ffmpeg $VERSION, emscripten $(emcc -dumpversion)"
+if command -v sha256sum >/dev/null 2>&1; then SELF=$(sha256sum "${BASH_SOURCE[0]}" | cut -c1-16)
+else SELF=$(shasum -a 256 "${BASH_SOURCE[0]}" | cut -c1-16); fi
+WANT="ffmpeg $VERSION, emscripten $(emcc -dumpversion), script $SELF"
 if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$WANT" && -f "$PREFIX/lib/libavcodec.a" ]]; then
     echo "==> FFmpeg for the browser is already at $PREFIX ($WANT)"
     exit 0

@@ -38,13 +38,14 @@ jobs:
 
       # The menu doors and the reels are Bink clips, and a page without
       # the decoder shows them still. Only the Bink decoder is built,
-      # once per FFmpeg and Emscripten version, and the installed prefix
-      # is cached on that pair so a push does not rebuild it.
+      # once per FFmpeg version, Emscripten version and configure line,
+      # and the installed prefix is cached on those so a push does not
+      # rebuild it.
       - name: Cache FFmpeg for the browser
         uses: actions/cache@v6
         with:
           path: build-ffmpeg-wasm
-          key: ffmpeg-wasm-${{ env.FFMPEG_VERSION }}-emsdk-${{ steps.emsdk.outputs.version }}
+          key: ffmpeg-wasm-${{ env.FFMPEG_VERSION }}-emsdk-${{ steps.emsdk.outputs.version }}-${{ hashFiles('scripts/build-ffmpeg-wasm.sh') }}
 
       - name: Build FFmpeg for the browser
         run: scripts/build-ffmpeg-wasm.sh --prefix build-ffmpeg-wasm --version "$FFMPEG_VERSION"
