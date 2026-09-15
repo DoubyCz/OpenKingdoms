@@ -155,7 +155,7 @@ static int pb_battle(uint32_t *out_hash, int *out_shots) {
         if ((t + 1) % PB_SAMPLE == 0) h = TAK_HashU32(h, TAK_SimHash());
         int live = 0;
         const Projectile *p = Units_GetProjectiles(&live);
-        for (int i = 0; i < live; i++) if (p[i].alive) { shots++; break; }
+        for (int i = 0; p && i < live; i++) if (p[i].alive) { shots++; break; }
     }
     *out_hash = h;
     *out_shots = shots;
@@ -167,8 +167,9 @@ static int pb_battle(uint32_t *out_hash, int *out_shots) {
 }
 
 int main(int argc, char **argv) {
-    int pin_only = (argc > 1 && strcmp(argv[1], "--print") == 0);
-    (void)argv;
+    /* --print takes the number without asserting it, which is how a
+     * deliberate change to the simulation gets its new pin. */
+    int print_only = (argc > 1 && strcmp(argv[1], "--print") == 0);
 
     uint32_t h = 0;
     int shots = 0;
@@ -178,7 +179,7 @@ int main(int argc, char **argv) {
     }
     printf("sim probe: hash %08x, %d ticks with a shot in the air\n",
            (unsigned)h, shots);
-    if (pin_only) return 0;
+    if (print_only) return 0;
 
     /* A battle where nothing ever flew would pin a number that proves
      * nothing about the paths this gate exists for. */
