@@ -80,15 +80,24 @@ itself rather than through the widget.
   `takx25_dh` starts `takx26_dh` instead (legacy:143903-143923).
   `takx26_dh` ships complete in `IPMissions.hpi`. There is no `Takx26`
   movie in the install, which the clip player already handles.
-- Next Chapter and Previous Chapter turn the page and stop at the
-  furthest chapter reached (legacy:143880-143900).
+- Next Chapter and Previous Chapter walk the campaign's mission list,
+  which is not itself clipped (legacy:141334-141368). The stop comes
+  from the buttons: Next Chapter is live only while there is a next
+  mission and the open chapter is below the high water mark
+  (legacy:144107-144131). That is what the cheat below moves.
 - Load Game opens the load dialog (legacy:143865-143868), the same one
   the F1 menu and the skirmish lobby open.
 - Change User opens one of the two dialogs above.
 - Previous goes back to the main menu.
 
 Typing `wasabi` on the screen sets the high water mark to the mission
-count, which unlocks every chapter (legacy:144228-144232).
+count, which leaves Next Chapter live all the way to the end
+(legacy:144228-144234).
+
+The high water mark also decides where the book opens. Picking a user
+reads their progress file, takes the furthest mission it records
+(legacy:141660-141680), and walks the book forward to it
+(legacy:144385-144400, legacy:144405-144425).
 
 ## Saves that need the expansion
 
