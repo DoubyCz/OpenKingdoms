@@ -725,6 +725,18 @@ int Story_Init(TAK_Platform *platform) {
     GUIRuntime_SetWidgetVisible(story.rt, "ChapterImage", 0);
     story.tooltip_font = Font_Load("data/fonts/b_times new roman (100b)",
                                    UI_RGBAFormat());
+    /* With more than one book the button changes the campaign too, and
+     * the help strip says so (legacy:143798-143805). */
+    if (story.camp_count > 1) {
+        const char *help = Translate_Find(&story.tt,
+                                          "CHANGE_USER_CAMPAIGN_BUTTON_HELP");
+        for (int i = 0; help && i < story.dialog.num_children; i++) {
+            if (tak_stricmp(story.dialog.children[i].name, "ChangeUser") == 0) {
+                copy_bounded(story.dialog.children[i].tooltip,
+                             sizeof(story.dialog.children[i].tooltip), help);
+            }
+        }
+    }
     story.cheat[0] = '\0';
     story.initialized = 1;
     SDL_StartTextInput();
