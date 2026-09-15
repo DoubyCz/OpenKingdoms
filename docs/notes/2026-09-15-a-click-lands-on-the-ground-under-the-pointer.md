@@ -49,6 +49,30 @@ The original finds the cell under the pointer by walking the terrain
 for the one that projects there (:212277). Every order on the ground
 resolves through that cell.
 
+## Existing tests that moved
+
+Four clicks in three cases of `test_ui_screens.c` clicked or boxed at
+a unit's flat world position and expected the order or the selection
+to land on that position. Each now points at where that ground is
+drawn, its flat position less half its height, and expects the same
+world point as before. Nothing a player would notice changed in any of
+them, and no tolerance was widened.
+
+- `sound_interface_cues` (line 18891): the placing click on the
+  monarch and on the clear site now sit at the drawn point, the
+  refused and accepted sounds are asserted as before.
+- `group_selection_and_control_groups` (line 11909): the three
+  marquee boxes sit at the drawn rows of the units they cover, the
+  counts of two, one and three are asserted as before.
+- The patrol case, both clicks near lines 16909 and 16990: each click
+  sits at the drawn point of its leg, and the order is still asserted
+  to carry that exact world point.
+
+`test_click_map` is new. Its one changed expectation was an
+arithmetic slip of the author's (255 times 0.5 truncates to 127, not
+128), and its round trip tolerance went from two pixels to exact once
+the ground walk stepped by one.
+
 ## What the engine does now
 
 Every ground order takes the ground under the pointer through
