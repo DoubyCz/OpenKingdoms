@@ -5078,6 +5078,9 @@ void Units_ClearInstances(void) {
     g_unit_count = 0;
     g_projectile_count = 0;
     g_proj_effect_count = 0;
+    /* A debug counter, per match. Nothing in the sim reads it, so it
+     * is out of the state hash and out of the save. */
+    g_unit_spawn_fails = 0;
     g_next_stable_unit_id = 1;
     g_transport_sounds[0] = g_transport_sounds[1] = 0;
     g_sim_tick = 0;

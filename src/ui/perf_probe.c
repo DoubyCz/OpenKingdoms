@@ -416,13 +416,9 @@ static void pp_window_reset(void) {
 }
 
 /* Per-seat build census. The build scenarios spawn nothing, so every
- * figure here is what a computer player built for itself.
- *
- * The production column asks the AI's own classifier rather than
- * guessing from the def: nearly every Kingdoms structure carries some
- * mogrium storage (a keep stores 200), so a local "is it a mana
- * building" test reads keeps and castles as economy and reports no
- * factories anywhere. */
+ * figure is what a seat built for itself. The production column asks
+ * the AI's own classifier, because nearly every structure carries some
+ * mogrium storage and a local test reads keeps as mana buildings. */
 static void pp_print_census(const GameWorld *w) {
     if (!w) return;
     int count = 0;
@@ -630,9 +626,13 @@ int PerfProbe_BeginWorld(TAK_Platform *plat) {
     } else if (pp.kind == PP_BUILD8 || pp.kind == PP_BUILD1) {
         /* What a computer player builds on its own. Nothing is spawned
          * for it, so every unit on the map was built by a seat. build8
-         * fills all eight starts with AI, build1 gives seat one to a
-         * human who never acts, on the same map so the two runs
-         * compare directly. */
+         * fills all eight starts, build1 leaves six closed, on the same
+         * map so the two runs compare directly.
+         *
+         * Seat one is a human who never acts in both. A skirmish with
+         * no human standing is over on the first tick, which is the
+         * rule the end screen wants and not something to work around
+         * here, so the scenario gives the rule the seat it needs. */
         map = "Ladron's Tarn";
         kingdom = "taros";
         static const int bsides[4] = {
@@ -646,7 +646,7 @@ int PerfProbe_BeginWorld(TAK_Platform *plat) {
             cfg.players[p].color = p;
             cfg.players[p].ai_difficulty = 2;
         }
-        if (pp.kind == PP_BUILD1) cfg.players[0].kind = TAK_SLOT_HUMAN;
+        cfg.players[0].kind = TAK_SLOT_HUMAN;
         for (int p = seats; p < TAK_MAX_PLAYERS; p++)
             cfg.players[p].kind = TAK_SLOT_CLOSED;
     } else {
