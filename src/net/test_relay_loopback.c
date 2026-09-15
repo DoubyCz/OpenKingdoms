@@ -19,6 +19,7 @@
 
 #include "test_framework.h"
 #include "tak_net_relay.h"
+#include "tak_net_ledger.h"
 #include "tak_bytes.h"
 
 #include <stdio.h>
@@ -142,9 +143,17 @@ typedef struct Client {
     int        desync_done;
     uint64_t   mute_at, close_at, rejoin_at, resign_at;
     int        resigned;
+    /* Report the verdict at this time, with a wrong number in it when
+     * asked, which is what a disputed game looks like. */
+    uint64_t   report_at;
+    int        report_wrong;
+    int        report_all_standing;
+    uint32_t   verdict_tick;             /* 0 means VERDICT_TICK */
+    uint32_t   match_id;
 } Client;
 
 static TAK_Relay        relay;
+static TAK_Ledger       ledger;
 static TAK_FakeNet      net;
 static uint8_t          log_arena[TAK_RELAY_ROOMS_MAX * (512u << 10)];
 static TAK_TurnLogEntry log_entries[TAK_RELAY_ROOMS_MAX * 32768u];
@@ -267,6 +276,33 @@ static int run_turns(ToyWorld *w, uint64_t *trace, uint32_t *trace_len,
     return 0;
 }
 
+/* The verdict as every client's world shows it: every seat the room
+ * holds, seat 2 fallen early unless told otherwise. The tick is fixed
+ * because in lockstep the verdict fires on one tick for everyone. */
+#define VERDICT_TICK 60
+static void send_result(Client *c) {
+    TAK_MsgMatchResult m;
+    memset(&m, 0, sizeof(m));
+    m.match_id = c->match_id;
+    m.end_tick = c->verdict_tick ? c->verdict_tick : VERDICT_TICK;
+    m.stats_version = TAK_NET_STATS_VERSION;
+    for (int s = 0; s < TAK_NET_SEATS; s++) {
+        if (c->room.slot[s].kind != TAK_NSLOT_HUMAN &&
+            c->room.slot[s].kind != TAK_NSLOT_COMPUTER) continue;
+        int fell = (s == 2) && !c->report_all_standing;
+        m.entry[m.count].seat = (uint8_t)s;
+        m.entry[m.count].standing = (uint8_t)!fell;
+        m.entry[m.count].eliminated = (uint8_t)fell;
+        m.entry[m.count].units_built = 10 + s;
+        m.entry[m.count].kills = s;
+        m.entry[m.count].losses = 8 - s;
+        m.entry[m.count].score = 100 * s + (c->report_wrong ? 1 : 0);
+        m.entry[m.count].last_alive_tick = fell ? 100 : (int32_t)m.end_tick;
+        m.count++;
+    }
+    up(c, TAK_Msg_MatchResultEncode(&m, tx, sizeof(tx)));
+}
+
 static void start_over(Client *c) {
     toy_reset(&c->world, c->seed);
     c->done_turns = 0;
@@ -302,6 +338,7 @@ static void client_handle(Client *c, const uint8_t *frame, uint32_t len) {
         TAK_MsgStartGame m;
         if (TAK_Msg_StartGameDecode(&m, p, n)) { c->stream_errors++; break; }
         c->seed = m.seed;
+        c->match_id = m.match_id;
         c->seat = m.your_seat;
         start_over(c);
         TAK_MsgLoadProgress lp = { 100 };
@@ -362,6 +399,10 @@ static void client_step(Client *c) {
     if (c->mute_at && g_now >= c->mute_at) {
         TAK_FakeNet_SetMuted(&net, c->conn, 1);    /* stops talking, stays open */
         c->mute_at = 0;
+    }
+    if (c->report_at && c->started && g_now >= c->report_at) {
+        send_result(c);
+        c->report_at = 0;
     }
     if (c->resign_at && c->started && g_now >= c->resign_at) {
         send_edit(c, TAK_EDIT_WATCH, c->seat, 1, NULL);
@@ -479,6 +520,8 @@ static void setup(uint32_t latency, uint32_t jitter, uint32_t seed) {
     rc.seed = seed * 2654435761u + 1u;
     TAK_Relay_Init(&relay, &rc, TAK_FakeNet_Server(&net), log_arena, sizeof(log_arena),
                    log_entries, (uint32_t)(sizeof(log_entries) / sizeof(log_entries[0])));
+    TAK_Ledger_Init(&ledger);
+    TAK_Relay_SetLedger(&relay, &ledger);
 }
 
 /* ── The lobby, as a player would go through it ───────────────────────── */
@@ -769,7 +812,117 @@ TEST(a_resigning_player_leaves_the_game_and_keeps_watching) {
     ASSERT(s3 >= 0);
     ASSERT_EQ_INT(TAK_NET_SEAT_NONE, rr->clock.sim[s3].seat);
     ASSERT_EQ_INT(TAK_PSTATUS_CONNECTED, rr->clock.sim[s3].status);
+    /* And the clock remembers the turn the seat was given up on. */
+    ASSERT(rr->clock.seat_left_turn[seat3] != TAK_TURN_SEAT_STAYED);
+    ASSERT(rr->clock.seat_left_turn[seat3] <= rr->clock.head);
     ASSERT(traces_agree() >= 15);
+}
+
+/* A player who closes the tab keeps an idle army in every other world,
+ * and the survivors' reports say that seat still stands. The relay saw
+ * the seat go and records it where it went. */
+TEST(a_seat_that_left_before_the_verdict_is_recorded_where_it_fell) {
+    setup(20, 20, 47);
+    ASSERT(start_match(3, TAK_ROOMF_AI_TAKES_OVER, 30));
+    uint8_t gone = cl[2].seat;
+    cl[2].close_at = g_now + 1000;
+    run_for(1000 + 30000 + 5000);
+    TAK_RelayRoom *rr = the_room();
+    ASSERT_NOT_NULL(rr);
+    uint32_t left = rr->clock.seat_left_turn[gone];
+    ASSERT(left != TAK_TURN_SEAT_STAYED);
+    ASSERT(left > 0);
+
+    uint32_t verdict = rr->clock.head * TAK_NET_TURN_TICKS;
+    for (int i = 0; i < 2; i++) {
+        cl[i].report_all_standing = 1;
+        cl[i].verdict_tick = verdict;
+        cl[i].report_at = g_now + 200 + 200u * (uint64_t)i;
+    }
+    run_for(2000);
+    ASSERT_EQ_INT(1, (int)ledger.count);
+    const TAK_LedgerMatch *m = TAK_Ledger_Find(&ledger, 1);
+    ASSERT_NOT_NULL(m);
+    ASSERT_EQ_INT(2, m->reports);
+    ASSERT_EQ_INT(0, m->disputed);
+    ASSERT_EQ_INT(3, m->seat_count);
+    for (int i = 0; i < m->seat_count; i++) {
+        const TAK_LedgerSeat *s = &m->seat[i];
+        if (s->seat == gone) {
+            ASSERT_EQ_INT(0, s->standing);
+            ASSERT_EQ_INT(TAK_LEDGER_LOST, s->result);
+            ASSERT_EQ_INT(3, s->place);
+            ASSERT_EQ_INT((int)(left * TAK_NET_TURN_TICKS), s->last_alive_tick);
+            /* The tallies it had are kept. */
+            ASSERT_EQ_INT(10 + gone, s->units_built);
+        } else {
+            ASSERT_EQ_INT(1, s->standing);
+            ASSERT_EQ_INT(1, s->place);
+            ASSERT_EQ_INT((int)verdict, s->last_alive_tick);
+        }
+    }
+}
+
+/* Four seats play, the verdict fires on each machine a little apart,
+ * and the ledger ends up with one game that all four vouch for. A
+ * watcher saw the same battle and is not asked. */
+TEST(a_finished_match_is_recorded_once_and_every_seat_vouches_for_it) {
+    setup(20, 20, 41);
+    ASSERT(start_match(4, TAK_ROOMF_AI_TAKES_OVER | TAK_ROOMF_ALLOW_WATCHING, 60));
+    Client *w = new_client(1);
+    run_for(500);
+    join_code(w, cl[0].room.code, 1);
+    run_for(5000);
+    ASSERT(w->started);
+    for (int i = 0; i < 4; i++) cl[i].report_at = g_now + 1000 + 300u * (uint64_t)i;
+    w->report_at = g_now + 1500;
+    run_for(6000);
+
+    ASSERT_EQ_INT(1, (int)ledger.count);
+    ASSERT_EQ_INT(1, (int)relay.results_recorded);
+    const TAK_LedgerMatch *m = TAK_Ledger_Find(&ledger, 1);
+    ASSERT_NOT_NULL(m);
+    ASSERT_EQ_INT(4, m->reports);
+    ASSERT_EQ_INT(0, m->disputed);
+    ASSERT_EQ_INT(4, m->seat_count);
+    ASSERT_EQ_STR("Vain Blessings", m->map_name);
+    ASSERT_EQ_INT(0, memcmp(m->map_fingerprint, MAP_FP, sizeof(MAP_FP)));
+    ASSERT_EQ_INT(500, (int)m->unit_cap);
+    ASSERT(m->started_ms > 1000 && m->started_ms < m->ended_ms);
+    for (int i = 0; i < 4; i++) {
+        const TAK_LedgerSeat *s = &m->seat[i];
+        ASSERT_EQ_INT(i, s->seat);
+        ASSERT_EQ_INT(TAK_NSLOT_HUMAN, s->kind);
+        ASSERT_EQ_INT(i == 2 ? 4 : 1, s->place);
+        ASSERT_EQ_INT(i == 2 ? TAK_LEDGER_LOST : TAK_LEDGER_WON, s->result);
+        ASSERT_EQ_INT(100 * i, s->score);
+        /* Joins arrive with jitter, so the seat says which client. */
+        const Client *who = NULL;
+        for (int k = 0; k < 4; k++) if (cl[k].seat == i) who = &cl[k];
+        ASSERT_NOT_NULL(who);
+        ASSERT_EQ_STR(who->name, s->name);
+        ASSERT(s->player_id == TAK_Ledger_PlayerId(who->name));
+    }
+    /* The watcher's honest report was not taken and not held against
+     * it, and the battle went on agreeing underneath. */
+    ASSERT_EQ_INT(0, (int)relay.results_refused);
+    ASSERT(traces_agree() >= 5);
+}
+
+TEST(a_seat_that_reports_different_numbers_marks_the_game_disputed) {
+    setup(20, 20, 43);
+    ASSERT(start_match(3, TAK_ROOMF_AI_TAKES_OVER, 60));
+    run_for(2000);
+    cl[2].report_wrong = 1;
+    for (int i = 0; i < 3; i++) cl[i].report_at = g_now + 500 + 200u * (uint64_t)i;
+    run_for(3000);
+    ASSERT_EQ_INT(1, (int)ledger.count);
+    const TAK_LedgerMatch *m = TAK_Ledger_Find(&ledger, 1);
+    ASSERT_NOT_NULL(m);
+    ASSERT_EQ_INT(2, m->reports);
+    ASSERT_EQ_INT(1, m->disputed);
+    /* The first report is the one that stands. */
+    ASSERT_EQ_INT(200, m->seat[2].score);
 }
 
 static int rooms_in_use(void) {
@@ -871,6 +1024,9 @@ int main(void) {
     RUN(the_host_role_moves_in_the_lobby_and_in_game);
     RUN(a_spectator_joins_mid_game_and_catches_up_without_a_pause);
     RUN(a_resigning_player_leaves_the_game_and_keeps_watching);
+    RUN(a_seat_that_left_before_the_verdict_is_recorded_where_it_fell);
+    RUN(a_finished_match_is_recorded_once_and_every_seat_vouches_for_it);
+    RUN(a_seat_that_reports_different_numbers_marks_the_game_disputed);
     RUN(a_client_that_goes_silent_is_dropped_and_its_room_freed);
     RUN(a_malformed_frame_closes_only_its_sender);
     TAK_FakeNet_Free(&net);
