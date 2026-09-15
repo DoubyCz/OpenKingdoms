@@ -23,6 +23,7 @@
  */
 
 #include "tak_save_browser.h"
+#include "tak_dataset.h"
 
 #include "tak_blit.h"
 #include "tak_font.h"
@@ -477,6 +478,22 @@ static SaveBrowserResult do_save(void) {
     return SAVEBROWSER_SAVED;
 }
 
+/* Expansion content will not come up without the expansion. The
+ * original refuses a save whose summary names the Iron Plague campaign
+ * and a skirmish save carrying [CreonUnits] (legacy:159443,
+ * legacy:159603). Creon on a seat is what both of those record, and
+ * the Crusades balance is the expansion's rule set. */
+static int save_needs_expansion(const TAK_SaveGame *sg) {
+    const TAK_SaveInfo *info = sg ? Save_Info(sg) : NULL;
+    if (!info) return 0;
+    if (info->cfg.crusades_balance) return 1;
+    for (int i = 0; i < TAK_MAX_PLAYERS; i++) {
+        if (info->cfg.players[i].kind == TAK_SLOT_CLOSED) continue;
+        if (info->cfg.players[i].side == TAK_SIDE_CREON) return 1;
+    }
+    return 0;
+}
+
 static SaveBrowserResult do_load(void) {
     if (sb.selected < 0 || sb.selected >= sb.row_count) {
         show_message_key("NO_SAVED_GAMES", 0);
@@ -496,6 +513,11 @@ static SaveBrowserResult do_load(void) {
     if (!sg) {
         show_message(err[0] ? err : "The saved game file is corrupted.", 0);
         rescan();
+        return SAVEBROWSER_OPEN;
+    }
+    if (!TAK_DataSet_HasIronPlague() && save_needs_expansion(sg)) {
+        Save_ReadClose(sg);
+        show_message_key("NEED_EXPANSION_TO_PLAY", 0);
         return SAVEBROWSER_OPEN;
     }
     if (sb.loaded) Save_ReadClose(sb.loaded);

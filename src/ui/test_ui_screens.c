@@ -20694,6 +20694,68 @@ TEST(a_load_brings_back_one_army_not_two) {
 
 /* Save Game brings up the shipped save dialog over the menu, which
  * stays drawn behind it (legacy:154703-154710). */
+/* A save carrying Creon is expansion content, and a base install is
+ * told so rather than shown a missing definition (legacy:159603). The
+ * same file opens once the expansion is back. */
+TEST(a_creon_save_needs_the_expansion_installed) {
+    if (mount_iron_plague() != 0) SKIP("no game dir");
+    if (!install_has_iron_plague_files()) {
+        VFS_Shutdown();
+        SKIP("install has no Iron Plague");
+    }
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    sb_clear_saves();
+
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, "King of the Hill", sizeof(cfg.map_name) - 1);
+    cfg.players[0].side = TAK_SIDE_CREON;
+    cfg.players[1].kind = TAK_SLOT_AI;
+    ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg, "King of the Hill",
+                                     "aramon"));
+    ASSERT_EQ_INT(0, Loading_Init(&platform));
+    int next = GAMESTATE_GAME_LOADING;
+    for (int i = 0; i < 600 && next == GAMESTATE_GAME_LOADING; i++) {
+        next = Loading_Tick(&platform, 1.0f / 60.0f);
+    }
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, next);
+
+    char path[TAK_SAVE_PATH_MAX], err[256];
+    err[0] = '\0';
+    ASSERT_EQ_INT(0, Paths_SaveFile("Creon Field", path, sizeof(path)));
+    ASSERT_EQ_INT(0, Save_Write(path, err, sizeof(err)));
+
+    Loading_Shutdown();
+    World_End(&platform);
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(0, mount_base_game());
+    ASSERT_EQ_INT(0, SaveBrowser_Open(SAVEBROWSER_LOAD));
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    SaveBrowser_SelectRow(0);
+    SaveBrowserResult refused = SaveBrowser_Press("LoadGame");
+    SaveBrowser_Close();
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(0, mount_iron_plague());
+    ASSERT_EQ_INT(0, SaveBrowser_Open(SAVEBROWSER_LOAD));
+    ASSERT_EQ_INT(1, SaveBrowser_RowCount());
+    SaveBrowser_SelectRow(0);
+    SaveBrowserResult allowed = SaveBrowser_Press("LoadGame");
+    TAK_SaveGame *sg = SaveBrowser_TakeLoad();
+    if (sg) Save_ReadClose(sg);
+    SaveBrowser_Close();
+
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(SAVEBROWSER_OPEN, refused);
+    ASSERT_EQ_INT(SAVEBROWSER_LOAD_READY, allowed);
+}
+
 TEST(the_menu_opens_the_save_dialog) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -21261,6 +21323,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_A, story_a_won_mission_opens_the_next_chapter);
     RUN_UI_TEST(UI_GROUP_C, story_wasabi_unlocks_every_chapter);
     RUN_UI_TEST(UI_GROUP_D, story_book_name_is_the_player_not_the_campaign);
+    RUN_UI_TEST(UI_GROUP_C, a_creon_save_needs_the_expansion_installed);
     RUN_UI_TEST(UI_GROUP_D, battle_setup_play_refuses_everyone_on_one_team);
     RUN_UI_TEST(UI_GROUP_B, skirmish_lobby_offers_creon_after_zhon);
     RUN_UI_TEST(UI_GROUP_B, skirmish_lobby_offers_four_sides_in_the_base_game);
