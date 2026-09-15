@@ -883,6 +883,10 @@ void              Units_LoadFinish(void);
 int               Units_Spawn(int def_idx, int player_id, int team_color_idx,
                                int32_t world_x, int32_t world_y);
 
+/* Times Units_Spawn refused, the seat's unit limit and an exhausted
+ * slot pool together, for the probes and the tests that watch it. */
+uint32_t          Units_DebugSpawnFailures(void);
+
 /* Render a one-shot translucent "ghost" of a building at the given
  * world coords — used by the placement cursor to preview what the
  * player is about to build. Tinted green when valid, red when the

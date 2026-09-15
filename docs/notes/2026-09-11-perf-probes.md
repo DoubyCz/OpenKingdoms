@@ -14,6 +14,7 @@ Native, with the window and the renderer:
 tak-re --perf-probe ffa
 tak-re --perf-probe crowd
 tak-re --perf-probe crowd --perf-ticks 3600
+tak-re --perf-probe build8
 ```
 
 The flag builds its own battle and goes straight to loading, so a run is
@@ -57,6 +58,37 @@ minutes.
 
 `duel` is the existing two-AI probe on Two Castles, kept for comparison
 with earlier numbers, now printing the same fields as the other two.
+
+`build8` and `build1` answer a different question: how much a computer
+player builds for itself. Neither spawns anything, so every unit on the
+map was built by a seat. Both run on Ladron's Tarn at difficulty 2 for
+10 sim minutes. `build8` fills all eight starts and `build1` leaves six
+closed, so the two runs compare directly. Seat one is a human who never
+acts in both, because a skirmish with no human standing is over on the
+first tick and that rule belongs to the end screen, not to the probe.
+Each window adds a `census` line per seat and one `slots` line.
+
+| Field | Meaning |
+|---|---|
+| `ever` | slots this seat has ever used, `alive` standing and finished |
+| `uc` | frames still under construction, `busy` builders with an order |
+| `mob`, `cmb`, `str` | mobile, mobile and armed, and structures |
+| `bld` | builders, `fac` of which the AI counts as production structures |
+| `mana` | standing mana income buildings |
+| `built`, `lost`, `kills` | the battle statistics for the seat |
+| `pool`, `spend` | mana held against its cap, and what it is spending |
+| `slots` | slots consumed of the whole pool, with `spawn_fails` |
+
+The `fac` column asks the AI's own classifier. A local test that reads
+mogrium storage as "this is an economy building" counts keeps and
+castles as mana buildings, because a keep stores 200, and then reports
+that no seat anywhere owns a production structure.
+
+In the suite the same two scenarios back `one_ai_builds_and_holds_an_army`
+and `eight_ai_seats_each_build_an_army`, shortened to 6 sim minutes, which
+assert floors on what a seat holds and on how much of what it started died
+with nobody to credit. `TAK_PROBE_TICKS` lengthens either one for a
+measurement without changing what the suite costs.
 
 ## The line
 

@@ -24,7 +24,8 @@ static int plan_economy_short(const AiPlanState *s) {
     return s->lodestones + s->lodestones_pending < s->lode_target;
 }
 
-/* Army floor: the seen threat, never below 30 (about four troops). */
+/* Army rank: the seen threat, never below 30 (about four troops).
+ * A rank against the other goals, not a size the army is finished at. */
 static int32_t plan_army_want(const AiPlanState *s) {
     return s->threat_total > 30 ? s->threat_total : 30;
 }
@@ -68,7 +69,11 @@ int AI_Plan_GoalPriority(const AiPlanState *s, AiGoal goal) {
         if (s->exposure <= 0 || !plan_home_short(s)) return 0;
         return 90;
     case AI_GOAL_ARMY:
-        return s->army < plan_army_want(s) ? 60 : 0;
+        /* Never finished. The original draws from a weighted build
+         * list every pass and stops only where a per-type limit bites
+         * (legacy:21281-21294, :21339-21343), which allowed[] carries,
+         * so this is a rank against the other goals and not an end. */
+        return s->army < plan_army_want(s) ? 60 : 35;
     case AI_GOAL_EXPAND:
         if (s->site_near <= 0 || s->exposure > 0) return 0;
         return 50;
@@ -92,10 +97,12 @@ static int plan_action_ok(const AiPlanState *s, const AiPlanCosts *c,
     /* A structure pick waits until the pool covers 70 percent of what
      * the frames already standing ask for (legacy:17201, :17270). An
      * income building is exempt, as it is at the order's own gate
-     * (legacy:12127). */
+     * (legacy:12127). One frame at a time and never a permanent stop:
+     * the producer count grows on a ratchet as the match runs
+     * (legacy:16254-16266), up to the per-type limit in allowed[]. */
     case AI_ACT_BUILD_FACTORY:
         return s->builders_idle > 0 && s->build_eff >= 70 &&
-               s->factories + s->factories_pending == 0;
+               s->factories_pending == 0;
     case AI_ACT_BUILD_TOWER:
         return s->builders_idle > 0 && s->build_eff >= 70 &&
                s->threat_home > 0;

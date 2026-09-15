@@ -5172,6 +5172,152 @@ TEST(perf_probe_ffa) {
     VFS_Shutdown();
 }
 
+/* ── How much a computer player builds ──────────────────────────────
+ *
+ * The build scenarios spawn nothing, so every unit on the map is one a
+ * seat built for itself. Two floors: what a seat holds, and how much
+ * of what it started died with nobody to credit. TAK_PROBE_TICKS
+ * lengthens a run without changing what the suite costs.
+ */
+#define BUILD_RATE_TICKS 21600      /* six sim minutes */
+
+static int build_probe_ticks(void) {
+    const char *e = getenv("TAK_PROBE_TICKS");
+    int n = e ? atoi(e) : 0;
+    return n > 0 ? n : BUILD_RATE_TICKS;
+}
+
+typedef struct SeatCensus {
+    int built;        /* every unit this seat ever started */
+    int alive;        /* standing, finished */
+    int lost;
+    int enemy_kills;  /* what every other seat took off it */
+    int unattended;   /* lost with nobody to credit */
+} SeatCensus;
+
+static void seat_census(int player, SeatCensus *out) {
+    memset(out, 0, sizeof(*out));
+    const GameWorld *w = World_Get();
+    if (!w) return;
+    int count = 0;
+    const Unit *units = Units_GetActive(&count);
+    for (int i = 0; i < count; i++) {
+        if (units[i].player_id != player) continue;
+        if (units[i].alive != UNIT_ALIVE_ACTIVE) continue;
+        if (units[i].under_construction) continue;
+        out->alive++;
+    }
+    out->built = (int)w->stats[player].units_built;
+    out->lost  = (int)w->stats[player].losses;
+    for (int q = 1; q <= TAK_MAX_PLAYERS; q++) {
+        if (q == player) continue;
+        out->enemy_kills += (int)w->stats[q].kills;
+    }
+    out->unattended = out->lost - out->enemy_kills;
+    if (out->unattended < 0) out->unattended = 0;
+}
+
+/* The wall cap is far above the minute these runs take, so tripping it
+ * is a performance collapse and not a slow machine. */
+#define BUILD_PROBE_WALL_S 300.0
+
+/* Runs a build scenario to its end. Returns 0 with the world still
+ * standing so the caller can read the census off it, -1 on a setup
+ * failure. A run that ran out of wall clock rather than ticks sets
+ * out_capped, and its census measures the machine. */
+static int build_probe_run(TAK_Platform *platform, const char *scenario,
+                           int ticks, int *out_capped) {
+    *out_capped = 0;
+    if (UI_Init() != 0) return -1;
+    if (PerfProbe_Select(scenario) != 0) return -1;
+    PerfProbe_SetTicks(ticks);
+    if (PerfProbe_BeginWorld(platform) != 0) return -1;
+    if (Loading_Init(platform) != 0) return -1;
+    int next = GAMESTATE_GAME_LOADING;
+    for (int i = 0; i < 2000 && next == GAMESTATE_GAME_LOADING; i++) {
+        next = Loading_Tick(platform, 1.0f / 60.0f);
+    }
+    if (next != GAMESTATE_IN_GAME) return -1;
+    if (InGame_Init(platform) != 0) return -1;
+    double freq = (double)SDL_GetPerformanceFrequency();
+    Uint64 t0 = SDL_GetPerformanceCounter();
+    perf_probe_drive(platform, BUILD_PROBE_WALL_S, 0);
+    if ((double)(SDL_GetPerformanceCounter() - t0) / freq >= BUILD_PROBE_WALL_S)
+        *out_capped = 1;
+    return 0;
+}
+
+static void build_probe_end(TAK_Platform *platform) {
+    PerfProbe_Stop();
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(platform);
+    UI_Shutdown();
+    teardown_platform(platform);
+    VFS_Shutdown();
+}
+
+/* One computer player against a seat that never acts, which is seat
+ * one in both scenarios. The run ends when the AI takes that seat's
+ * last unit, a little short of the ticks asked for. */
+TEST(one_ai_builds_and_holds_an_army) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    int ticks = build_probe_ticks(), capped = 0;
+    int ok = build_probe_run(&platform, "build1", ticks, &capped);
+    SeatCensus ai;
+    int ran = 0;
+    memset(&ai, 0, sizeof(ai));
+    if (ok == 0) { seat_census(2, &ai); ran = PerfProbe_Ticks(); }
+    build_probe_end(&platform);
+    ASSERT_EQ_INT(0, ok);
+    printf("\n    build1 asked=%d ran=%d capped=%d built=%d alive=%d lost=%d "
+           "enemy_kills=%d unattended=%d ", ticks, ran, capped, ai.built,
+           ai.alive, ai.lost, ai.enemy_kills, ai.unattended);
+    ASSERT_EQ_INT(0, capped);
+    /* An AI left alone fields a force, not a handful. */
+    ASSERT(ai.alive >= 12);
+    /* Under a quarter of what it starts may die with nobody to credit. */
+    ASSERT(ai.unattended * 4 < ai.built);
+}
+
+/* The same rate with all eight starts taken, so a regression that only
+ * shows up with a full table cannot hide. Seat one is the seat that
+ * never acts, so the seven counted here are the computer players. */
+TEST(eight_ai_seats_each_build_an_army) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    int ticks = build_probe_ticks(), capped = 0;
+    int ok = build_probe_run(&platform, "build8", ticks, &capped);
+    SeatCensus seat[9];
+    int total_alive = 0, worst_built = 0, ran = 0;
+    memset(seat, 0, sizeof(seat));
+    if (ok == 0) {
+        worst_built = 1 << 30;
+        ran = PerfProbe_Ticks();
+        for (int p = 2; p <= 8; p++) {
+            seat_census(p, &seat[p]);
+            total_alive += seat[p].alive;
+            if (seat[p].built < worst_built) worst_built = seat[p].built;
+        }
+    }
+    build_probe_end(&platform);
+    ASSERT_EQ_INT(0, ok);
+    printf("\n    build8 asked=%d ran=%d capped=%d", ticks, ran, capped);
+    for (int p = 2; p <= 8; p++) {
+        printf(" p%d=%d/%d", p, seat[p].alive, seat[p].built);
+    }
+    printf(" total_alive=%d worst_built=%d ", total_alive, worst_built);
+    ASSERT_EQ_INT(0, capped);
+    /* Standing armies, not a per-seat handful. A seat can be beaten
+     * down in an eight-way, so the per-seat floor is on what it
+     * started and what they hold is counted together. */
+    ASSERT(worst_built >= 12);
+    ASSERT(total_alive >= 70);
+}
+
 /* Two blobs of 150 walkers of mixed classes, ordered through each
  * other once a minute. */
 TEST(perf_probe_crowd) {
@@ -21452,6 +21598,8 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_A, perf_probe_duel);
     RUN_UI_TEST(UI_GROUP_D, perf_probe_ffa);
     RUN_UI_TEST(UI_GROUP_B, perf_probe_crowd);
+    RUN_UI_TEST(UI_GROUP_C, one_ai_builds_and_holds_an_army);
+    RUN_UI_TEST(UI_GROUP_A, eight_ai_seats_each_build_an_army);
     RUN_UI_TEST(UI_GROUP_B, skirmish_ai_full_progression);
     RUN_UI_TEST(UI_GROUP_C, zhon_ai_fields_an_army);
     RUN_UI_TEST(UI_GROUP_D, creon_skirmish_plays_with_two_sages);

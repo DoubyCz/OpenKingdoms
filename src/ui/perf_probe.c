@@ -18,6 +18,7 @@
 #include "tak_battle_config.h"
 #include "tak_platform.h"
 #include "tak_ai.h"
+#include "tak_economy.h"
 
 #include <SDL.h>
 #include <stdio.h>
@@ -50,7 +51,8 @@ extern double g_path_prof_ms;
 #define PP_SPAWN_PITCH   48        /* spawn grid step, fits a 3x3 footprint */
 #define PP_SPAWN_RINGS   48
 
-typedef enum { PP_OFF = 0, PP_FFA, PP_CROWD, PP_MEASURE } PpKind;
+typedef enum { PP_OFF = 0, PP_FFA, PP_CROWD, PP_MEASURE,
+               PP_BUILD8, PP_BUILD1 } PpKind;
 
 typedef struct PpAnchor {
     uint32_t sid;
@@ -413,6 +415,60 @@ static void pp_window_reset(void) {
     win.stall_last = win.stall_max = 0;
 }
 
+/* Per-seat build census. The build scenarios spawn nothing, so every
+ * figure is what a seat built for itself. The production column asks
+ * the AI's own classifier, because nearly every structure carries some
+ * mogrium storage and a local test reads keeps as mana buildings. */
+static void pp_print_census(const GameWorld *w) {
+    if (!w) return;
+    int count = 0;
+    const Unit *units = Units_GetActive(&count);
+    int alive_tot = 0;
+    for (int p = 1; p <= TAK_MAX_PLAYERS; p++) {
+        if (w->cfg.players[p - 1].kind == TAK_SLOT_CLOSED) continue;
+        int ever = 0, alive = 0, uc = 0, busy = 0;
+        int mob = 0, cmb = 0, str = 0, bld = 0, fac = 0, mana = 0;
+        for (int i = 0; i < count; i++) {
+            const Unit *u = &units[i];
+            if (u->player_id != p) continue;
+            ever++;
+            if (u->alive != UNIT_ALIVE_ACTIVE) continue;
+            if (u->under_construction) { uc++; continue; }
+            alive++;
+            const UnitDef *d = Units_GetDef(u->def_idx);
+            if (!d) continue;
+            if (d->max_velocity > 0.0f) {
+                mob++;
+                if (d->num_weapons > 0) cmb++;
+            } else {
+                str++;
+            }
+            if (d->cap_flags & UNIT_CAP_BUILDER) {
+                bld++;
+                if (u->cmd_kind == UNIT_CMD_BUILD || u->build_target >= 0) busy++;
+            }
+            if (TAK_AI_DebugIsProductionStructure((int)u->def_idx)) fac++;
+            if (d->mogrium_income_per_sec > 0.0f && d->max_velocity <= 0.0f)
+                mana++;
+        }
+        alive_tot += alive;
+        printf("census %s w%02d tick=%d p=%d ever=%d alive=%d uc=%d busy=%d "
+               "mob=%d cmb=%d str=%d bld=%d fac=%d mana=%d "
+               "built=%d lost=%d kills=%d pool=%d/%d spend=%d\n",
+               pp.name, pp.window, pp.tick, p,
+               ever, alive, uc, busy, mob, cmb, str, bld, fac, mana,
+               (int)w->stats[p].units_built, (int)w->stats[p].losses,
+               (int)w->stats[p].kills,
+               (int)Economy_GetMana(&w->economy, p),
+               (int)Economy_GetMaxMana(&w->economy, p),
+               (int)Economy_GetSpend(&w->economy, p));
+    }
+    printf("slots %s w%02d tick=%d slots=%d alive=%d spawn_fails=%u\n",
+           pp.name, pp.window, pp.tick, count, alive_tot,
+           (unsigned)Units_DebugSpawnFailures());
+    fflush(stdout);
+}
+
 static void pp_print_window(const GameWorld *w) {
     TAK_PathDebugCounters c;
     TAK_PathDebugGetCounters(&c);
@@ -463,6 +519,7 @@ static void pp_print_window(const GameWorld *w) {
            pp_percentile(win.bins, win.frames, 0.99),
            win.capped, live, mem.live_bytes / 1024u, c.cache_bytes / 1024u,
            win.stall_last, win.stall_max, orders);
+    if (pp.kind == PP_BUILD8 || pp.kind == PP_BUILD1) pp_print_census(w);
     fflush(stdout);
     (void)w;
 }
@@ -494,11 +551,13 @@ int PerfProbe_Select(const char *scenario) {
     PpKind k = PP_OFF;
     if (strcmp(scenario, "ffa") == 0) k = PP_FFA;
     else if (strcmp(scenario, "crowd") == 0) k = PP_CROWD;
+    else if (strcmp(scenario, "build8") == 0) k = PP_BUILD8;
+    else if (strcmp(scenario, "build1") == 0) k = PP_BUILD1;
     if (k == PP_OFF) return -1;
     pp_reset();
     pp.kind = k;
     strncpy(pp.name, scenario, sizeof(pp.name) - 1);
-    pp.ticks_total = (k == PP_FFA) ? 43200 : 18000;
+    pp.ticks_total = (k == PP_FFA) ? 43200 : (k == PP_CROWD) ? 18000 : 36000;
     return 0;
 }
 
@@ -543,7 +602,8 @@ void PerfProbe_BeginMeasureOnly(const char *label, int ticks) {
 }
 
 int PerfProbe_BeginWorld(TAK_Platform *plat) {
-    if (pp.kind != PP_FFA && pp.kind != PP_CROWD) return -1;
+    if (pp.kind != PP_FFA && pp.kind != PP_CROWD &&
+        pp.kind != PP_BUILD8 && pp.kind != PP_BUILD1) return -1;
     BattleConfig cfg;
     BattleConfig_SetDefaults(&cfg);
     cfg.monarch_expendable = 1;
@@ -563,6 +623,32 @@ int PerfProbe_BeginWorld(TAK_Platform *plat) {
             cfg.players[p].ai_difficulty = 2;
         }
         for (int p = 4; p < TAK_MAX_PLAYERS; p++) cfg.players[p].kind = TAK_SLOT_CLOSED;
+    } else if (pp.kind == PP_BUILD8 || pp.kind == PP_BUILD1) {
+        /* What a computer player builds on its own. Nothing is spawned
+         * for it, so every unit on the map was built by a seat. build8
+         * fills all eight starts, build1 leaves six closed, on the same
+         * map so the two runs compare directly.
+         *
+         * Seat one is a human who never acts in both. A skirmish with
+         * no human standing is over on the first tick, which is the
+         * rule the end screen wants and not something to work around
+         * here, so the scenario gives the rule the seat it needs. */
+        map = "Ladron's Tarn";
+        kingdom = "taros";
+        static const int bsides[4] = {
+            TAK_SIDE_ARAMON, TAK_SIDE_TAROS, TAK_SIDE_VERUNA, TAK_SIDE_ZHON
+        };
+        int seats = (pp.kind == PP_BUILD8) ? 8 : 2;
+        for (int p = 0; p < seats; p++) {
+            cfg.players[p].kind = TAK_SLOT_AI;
+            cfg.players[p].side = bsides[p % 4];
+            cfg.players[p].team = p + 1;
+            cfg.players[p].color = p;
+            cfg.players[p].ai_difficulty = 2;
+        }
+        cfg.players[0].kind = TAK_SLOT_HUMAN;
+        for (int p = seats; p < TAK_MAX_PLAYERS; p++)
+            cfg.players[p].kind = TAK_SLOT_CLOSED;
     } else {
         /* Open ground, two seats nobody drives: the walkers are the
          * whole scenario. */
@@ -589,7 +675,8 @@ int PerfProbe_BeginWorld(TAK_Platform *plat) {
 void PerfProbe_BeforeTick(GameWorld *world) {
     if (pp.kind == PP_OFF || pp.finished || !world) return;
     if (!pp.setup_done) {
-        pp_pick_defs(world);
+        /* The build scenarios spawn nothing, so they need no defs. */
+        if (pp.kind != PP_BUILD8 && pp.kind != PP_BUILD1) pp_pick_defs(world);
         if (pp.kind == PP_CROWD) pp_crowd_setup(world);
         pp.setup_done = 1;
     }

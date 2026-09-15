@@ -56,19 +56,48 @@ int32_t Economy_GetSpend(const EconomyState *eco, int player_id) {
     (void)eco; (void)player_id; return g_mock_spend;
 }
 
+static int ai_test_stricmp(const char *a, const char *b) {
+    while (*a && *b) {
+        int ca = (*a >= 'a' && *a <= 'z') ? *a - 32 : *a;
+        int cb = (*b >= 'a' && *b <= 'z') ? *b - 32 : *b;
+        if (ca != cb) return ca - cb;
+        a++; b++;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
 /* One mock sacred site, wired up by the expansion test. */
 static FeatureDef g_sacred_def;
 static int g_sacred_registered;
 
-/* Stubs for profile/expansion deps — no data dir in the mock harness. */
+/* Stubs for profile/expansion deps — no data dir in the mock harness.
+ * A test that cares about the profile's per-type limits sets
+ * g_mock_profile and calls TAK_AI_ResetProfile. */
+static const char *g_mock_profile;
+
 int VFS_ReadFile(const char *path, void **out_data, uint32_t *out_size) {
-    (void)path; (void)out_data; (void)out_size; return -1;
+    (void)path;
+    if (!g_mock_profile || !out_data || !out_size) return -1;
+    uint32_t n = (uint32_t)strlen(g_mock_profile);
+    void *buf = malloc(n ? n : 1);
+    if (!buf) return -1;
+    memcpy(buf, g_mock_profile, n);
+    *out_data = buf;
+    *out_size = n;
+    return 0;
 }
 const FeatureDef *Features_GetByIndex(int idx) {
     if (g_sacred_registered && idx == 0) return &g_sacred_def;
     return NULL;
 }
-int Units_FindDefByName(const char *unitname) { (void)unitname; return -1; }
+int Units_FindDefByName(const char *unitname) {
+    if (!unitname) return -1;
+    for (int i = 0; i < MOCK_DEFS; i++) {
+        if (g_defs[i].unitname[0] &&
+            ai_test_stricmp(g_defs[i].unitname, unitname) == 0) return i;
+    }
+    return -1;
+}
 void *tak_malloc(size_t n) { return malloc(n); }
 void tak_free(void *p) { free(p); }
 
@@ -223,6 +252,7 @@ static void reset_mock(GameWorld *w) {
     g_mock_income = 0;
     g_mock_spend = 0;
     g_sacred_registered = 0;
+    g_mock_profile = NULL;
     memset(&g_sacred_def, 0, sizeof(g_sacred_def));
     g_world = w;
     w->loaded = 1;
@@ -341,8 +371,11 @@ static int test_ai_mobile_producer_trains_the_army(void) {
     ASSERT_EQ_INT(0, g_last_builder);
     ASSERT_EQ_INT(2, g_last_build_def);
 
-    /* With the handler standing it trains the army, and the monarch
-     * summons no second handler. */
+    /* With the handler standing it trains the army. The shipped
+     * profile allows ten handlers, so cap it at one here to leave the
+     * training as the only thing the tick can do. */
+    g_mock_profile = "limit ZONHAND 1\n";
+    TAK_AI_ResetProfile();
     g_units[0].cmd_kind = UNIT_CMD_NONE;
     g_units[0].build_target = -1;
     g_units[2].alive = UNIT_ALIVE_ACTIVE;
@@ -388,8 +421,11 @@ static int test_ai_builds_economy_then_production_then_combat(void) {
     ASSERT_EQ_INT(0, g_last_builder);
     ASSERT_EQ_INT(2, g_last_build_def);
 
-    g_units[0].cmd_kind = UNIT_CMD_NONE;
-    g_units[0].build_target = -1;
+    /* The monarch stays at work, so this step is about the castle:
+     * a free monarch would start a second castle beside it, which is
+     * test_ai_every_idle_producer_starts_a_unit's subject. */
+    g_units[0].cmd_kind = UNIT_CMD_BUILD;
+    g_units[0].build_target = 1;
     g_units[2].alive = UNIT_ALIVE_ACTIVE;
     g_units[2].player_id = 2;
     g_units[2].def_idx = 2;
@@ -1133,8 +1169,11 @@ static int test_ai_fighting_builder_is_retasked(void) {
     ASSERT_EQ_INT(1, g_last_build_def);
     ASSERT_EQ_INT(UNIT_CMD_BUILD, g_units[0].cmd_kind);
 
-    /* Lodestone and castle standing: the monarch has nothing to build
-     * and stays on the raider while the castle trains. */
+    /* Lodestone and castle standing, and the profile allows one castle
+     * (the shipped one allows two): the monarch has nothing left to
+     * build and stays on the raider while the castle trains. */
+    g_mock_profile = "limit TARCASTL 1\n";
+    TAK_AI_ResetProfile();
     for (int k = 2; k <= 3; k++) {
         g_units[k].alive = UNIT_ALIVE_ACTIVE;
         g_units[k].player_id = 2;
@@ -1390,6 +1429,9 @@ static int test_plan_profile_forbids_and_caps(void) {
     s.site_near = 4;
     s.army = 100;
     s.builders_idle = 1;
+    /* The same profile caps the producers, so nothing else is left
+     * for this builder to want. */
+    c.allowed[AI_ACT_BUILD_FACTORY] = 0;
     ASSERT_EQ_INT(0, AI_Plan_GoalPriority(&s, AI_GOAL_ECONOMY));
     /* Free sites do not get past the cap: no expansion plan, and the
      * builder has nothing to do. */
@@ -1423,6 +1465,109 @@ static int test_plan_build_efficiency_gates(void) {
     ASSERT_EQ_INT(AI_ACT_NONE, AI_Plan_NextAction(&s, &c, AI_ACTOR_FACTORY, &goal));
     s.build_eff = 23;
     ASSERT_EQ_INT(AI_ACT_TRAIN, AI_Plan_NextAction(&s, &c, AI_ACTOR_FACTORY, &goal));
+    return 0;
+}
+
+/* An army is never finished. The original draws from a weighted build
+ * list every pass and stops only where a per-type limit bites
+ * (legacy:21281-21294, :21339-21343). */
+static int test_plan_army_is_never_finished(void) {
+    AiPlanState s;
+    AiPlanCosts c;
+    plan_state_basic(&s, &c);
+    s.threat_total = 0;      /* fog: nothing seen, the floor rules */
+    s.army = 32;             /* already past that floor */
+    s.lodestones = 1;        /* economy met, so it masks nothing */
+    s.factories = 1;
+    s.factories_idle = 1;
+    AiGoal goal = AI_GOAL_NONE;
+    ASSERT_TRUE(AI_Plan_GoalPriority(&s, AI_GOAL_ARMY) > 0);
+    ASSERT_EQ_INT(AI_ACT_TRAIN, AI_Plan_NextAction(&s, &c, AI_ACTOR_FACTORY, &goal));
+    ASSERT_EQ_INT(AI_GOAL_ARMY, goal);
+    /* An army that size ranks behind the economy, and still behind a
+     * free site, so it takes nothing away from either. */
+    s.lodestones = 0;
+    ASSERT_TRUE(AI_Plan_GoalPriority(&s, AI_GOAL_ECONOMY) >
+                AI_Plan_GoalPriority(&s, AI_GOAL_ARMY));
+    s.lodestones = 1;
+    s.site_near = 1;
+    s.free_sites = 1;
+    ASSERT_TRUE(AI_Plan_GoalPriority(&s, AI_GOAL_EXPAND) >
+                AI_Plan_GoalPriority(&s, AI_GOAL_ARMY));
+    /* The profile's limit is what ends it: nothing left to train. */
+    c.allowed[AI_ACT_TRAIN] = 0;
+    ASSERT_EQ_INT(AI_ACT_NONE, AI_Plan_NextAction(&s, &c, AI_ACTOR_FACTORY, &goal));
+    return 0;
+}
+
+/* A producer already standing is no reason to plan no more of them.
+ * The original grows its count as the match runs (legacy:16254-16266)
+ * up to the profile's limit, and only a frame in flight waits. */
+static int test_plan_a_standing_producer_does_not_stop_the_next(void) {
+    AiPlanState s;
+    AiPlanCosts c;
+    plan_state_basic(&s, &c);
+    s.lodestones = 1;        /* economy met, so it masks nothing */
+    s.builders_idle = 1;
+    s.factories = 1;         /* one already standing */
+    AiGoal goal = AI_GOAL_NONE;
+    ASSERT_EQ_INT(AI_ACT_BUILD_FACTORY,
+                  AI_Plan_NextAction(&s, &c, AI_ACTOR_BUILDER, &goal));
+    /* One frame at a time: while that one builds, the builder waits. */
+    s.factories_pending = 1;
+    ASSERT_EQ_INT(AI_ACT_NONE, AI_Plan_NextAction(&s, &c, AI_ACTOR_BUILDER, &goal));
+    /* The profile's limit is what finally stops it. */
+    s.factories_pending = 0;
+    c.allowed[AI_ACT_BUILD_FACTORY] = 0;
+    ASSERT_EQ_INT(AI_ACT_NONE, AI_Plan_NextAction(&s, &c, AI_ACTOR_BUILDER, &goal));
+    return 0;
+}
+
+/* Two producers standing idle start two units in the one tick. The
+ * original asks each producer whether it already has a build mission
+ * and never asks the player (legacy:17992-17997), so its output is
+ * the number of producers it owns. */
+static int test_ai_every_idle_producer_starts_a_unit(void) {
+    GameWorld w;
+    setup_ai_progression_fixture(&w);
+    w.cfg.players[0].kind = TAK_SLOT_HUMAN;
+    w.cfg.players[0].team = 1;
+    g_mock_mana = 6000;
+    g_mock_max_mana = 6000;
+    /* Two castles standing, the lodestone the economy wanted, and a
+     * troop already on the way from an earlier tick. The only thing
+     * left to want is more army. */
+    static const int defs[4] = { 1, 2, 2, 3 };
+    for (int k = 0; k < 4; k++) {
+        Unit *u = &g_units[1 + k];
+        u->alive = UNIT_ALIVE_ACTIVE;
+        u->player_id = 2;
+        u->def_idx = (uint16_t)defs[k];
+        u->build_target = -1;
+        u->target = -1;
+        u->stable_id = 400u + (uint32_t)k;
+    }
+    g_units[4].under_construction = 1;
+    g_unit_count = 5;
+    /* The monarch is busy, so every call counted here is a producer. */
+    g_units[0].cmd_kind = UNIT_CMD_BUILD;
+    g_units[0].build_target = 1;
+
+    TAK_AI_TickSkirmish(&w);
+    ASSERT_EQ_INT(2, g_begin_calls);
+    ASSERT_EQ_INT(3, g_last_build_def);
+    ASSERT_EQ_INT(UNIT_CMD_BUILD, g_units[2].cmd_kind);
+    ASSERT_EQ_INT(UNIT_CMD_BUILD, g_units[3].cmd_kind);
+
+    /* One already working takes no second order, and the other still
+     * does: one order per producer, not one per player. */
+    g_units[3].cmd_kind = UNIT_CMD_NONE;
+    g_units[3].build_target = -1;
+    g_begin_calls = 0;
+    w.skirmish_elapsed_ticks = 120;
+    TAK_AI_TickSkirmish(&w);
+    ASSERT_EQ_INT(1, g_begin_calls);
+    ASSERT_EQ_INT(3, g_last_builder);
     return 0;
 }
 
@@ -1600,6 +1745,9 @@ int main(void) {
     if (test_plan_threatened_defends_before_expanding() != 0) return 1;
     if (test_plan_profile_forbids_and_caps() != 0) return 1;
     if (test_plan_build_efficiency_gates() != 0) return 1;
+    if (test_plan_army_is_never_finished() != 0) return 1;
+    if (test_plan_a_standing_producer_does_not_stop_the_next() != 0) return 1;
+    if (test_ai_every_idle_producer_starts_a_unit() != 0) return 1;
     if (test_ai_threatened_builds_a_tower_before_expanding() != 0) return 1;
     if (test_ai_starved_builds_and_trains() != 0) return 1;
     if (test_ai_mobile_producer_trains_the_army() != 0) return 1;
