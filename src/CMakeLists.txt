@@ -308,13 +308,27 @@ else()
     )
 endif()
 
-# ── Post-build: copy SDL2.dll next to the executable (Windows) ──────────────
+# ── SDL2.dll beside the binaries (Windows) ──────────────────────────────────
+# One target owns the copy. Nine targets copying the same file into the
+# same directory raced under a parallel build and failed with the file
+# locked, so everything that needs it depends on this instead.
 if(WIN32)
-    add_custom_command(TARGET tak-re POST_BUILD
+    # The directory is made first: copy_if_different treats a
+    # destination that does not exist yet as a file name, which on a
+    # clean tree wrote a file called Release where the directory goes.
+    add_custom_target(tak_sdl2_runtime ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:tak-re>
-        COMMENT "Copying SDL2.dll to output directory"
+            $<TARGET_FILE:SDL2::SDL2>
+            ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/$<TARGET_FILE_NAME:SDL2::SDL2>
+        COMMENT "Copying SDL2.dll beside the binaries"
+        VERBATIM
     )
+endif()
+
+if(WIN32)
+    add_dependencies(tak-re tak_sdl2_runtime)
 endif()
 
 # ── The simulation's own trigonometry ───────────────────────────────────────
@@ -892,11 +906,7 @@ target_link_libraries(test_gameloop PRIVATE
 )
 
 if(WIN32)
-    add_custom_command(TARGET test_gameloop POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_gameloop>
-        COMMENT "Copying SDL2.dll for test_gameloop"
-    )
+    add_dependencies(test_gameloop tak_sdl2_runtime)
 endif()
 
 # ── Memory allocator tests ───────────────────────────────────────────────────
@@ -917,11 +927,7 @@ target_compile_definitions(test_paths PRIVATE SDL_MAIN_HANDLED)
 target_link_libraries(test_paths PRIVATE SDL2::SDL2)
 
 if(WIN32)
-    add_custom_command(TARGET test_paths POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_paths>
-        COMMENT "Copying SDL2.dll for test_paths"
-    )
+    add_dependencies(test_paths tak_sdl2_runtime)
 endif()
 
 # The .oksave container. Data free, so CI runs it.
@@ -1003,11 +1009,7 @@ target_link_libraries(test_palette PRIVATE
 )
 
 if(WIN32)
-    add_custom_command(TARGET test_palette POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_palette>
-        COMMENT "Copying SDL2.dll for test_palette"
-    )
+    add_dependencies(test_palette tak_sdl2_runtime)
 endif()
 
 # ── TNT loader tests ─────────────────────────────────────────────────────
@@ -1043,11 +1045,7 @@ target_link_libraries(test_tnt PRIVATE
 )
 
 if(WIN32)
-    add_custom_command(TARGET test_tnt POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_tnt>
-        COMMENT "Copying SDL2.dll for test_tnt"
-    )
+    add_dependencies(test_tnt tak_sdl2_runtime)
 endif()
 
 # ── 3DO parser tests (Phase C M2) ────────────────────────────────────────
@@ -1098,11 +1096,7 @@ if(AVCODEC_LIBRARY)
         ${TAK_FFMPEG_LIBS})
 endif()
 if(WIN32)
-    add_custom_command(TARGET test_jpg POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_jpg>
-        COMMENT "Copying SDL2.dll for test_jpg"
-    )
+    add_dependencies(test_jpg tak_sdl2_runtime)
 endif()
 
 # ── Blit tests (Blit_RGBA_Opaque) ────────────────────────────────────────
@@ -1121,11 +1115,7 @@ target_link_libraries(test_blit PRIVATE
 )
 
 if(WIN32)
-    add_custom_command(TARGET test_blit POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_blit>
-        COMMENT "Copying SDL2.dll for test_blit"
-    )
+    add_dependencies(test_blit tak_sdl2_runtime)
 endif()
 
 # ── GAF loader tests ─────────────────────────────────────────────────────
@@ -1158,11 +1148,7 @@ target_link_libraries(test_gaf PRIVATE
 )
 
 if(WIN32)
-    add_custom_command(TARGET test_gaf POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_gaf>
-        COMMENT "Copying SDL2.dll for test_gaf"
-    )
+    add_dependencies(test_gaf tak_sdl2_runtime)
 endif()
 
 # ── Install rules ────────────────────────────────────────────────────────────
@@ -1564,11 +1550,7 @@ target_compile_definitions(test_savegame PRIVATE SDL_MAIN_HANDLED)
 target_compile_definitions(test_savegame PRIVATE TAK_DEBUG=1)
 target_link_libraries(test_savegame PRIVATE SDL2::SDL2)
 if(WIN32)
-    add_custom_command(TARGET test_savegame POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_savegame>
-        COMMENT "Copying SDL2.dll for test_savegame"
-    )
+    add_dependencies(test_savegame tak_sdl2_runtime)
 endif()
 
 # One number for the whole simulation. The test owns the world and the
