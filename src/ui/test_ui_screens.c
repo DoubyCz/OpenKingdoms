@@ -4567,6 +4567,7 @@ TEST(skirmish_ai_issues_attack_orders) {
     strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
     cfg.monarch_expendable = 0;
     cfg.line_of_sight = 0;
+    cfg.map_revealed = 1;
     cfg.players[1].kind = TAK_SLOT_AI;
     cfg.players[1].ai_difficulty = 2;
     ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg,
@@ -4583,6 +4584,7 @@ TEST(skirmish_ai_issues_attack_orders) {
     ASSERT_NOT_NULL(world);
     ASSERT_EQ_INT(1, world->loaded);
     world->cfg.line_of_sight = 0;
+    world->cfg.map_revealed = 1;
     Fog_Update(world, 1);
     Fog_Update(world, 2);
     /* Builders build before they fight (legacy:17163), so the order
@@ -6240,7 +6242,10 @@ TEST(render_probe_building_and_walker) {
     BattleConfig_SetDefaults(&cfg);
     strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
     cfg.players[1].kind = TAK_SLOT_AI;
-    cfg.line_of_sight = 0;   /* no fog — isolate mesh rendering */
+    /* No fog at all: Map Revealed is the option that explores the
+     * whole map, Line of Sight off only grants full sight. */
+    cfg.line_of_sight = 0;
+    cfg.map_revealed = 1;
     ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg,
                                      "two castles", "aramon"));
     ASSERT_EQ_INT(0, Loading_Init(&platform));
@@ -6373,6 +6378,7 @@ TEST(render_probe_models) {
     strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
     cfg.players[1].kind = TAK_SLOT_AI;
     cfg.line_of_sight = 0;
+    cfg.map_revealed = 1;
     ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg,
                                      "two castles", "aramon"));
     ASSERT_EQ_INT(0, Loading_Init(&platform));
@@ -6614,6 +6620,7 @@ TEST(render_probe_lodestone_covers_pad) {
     strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
     cfg.players[1].kind = TAK_SLOT_AI;
     cfg.line_of_sight = 0;
+    cfg.map_revealed = 1;
     ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg,
                                      "two castles", "aramon"));
     ASSERT_EQ_INT(0, Loading_Init(&platform));
@@ -8923,6 +8930,7 @@ static int deathfx_boot(TAK_Platform *platform, GameWorld **out_world,
     BattleConfig_SetDefaults(&cfg);
     strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
     cfg.line_of_sight = 0;
+    cfg.map_revealed = 1;
     if (World_BeginLoad(platform, &cfg, "two castles", "aramon") != 0 ||
         Loading_Init(platform) != 0) return -1;
     int next = GAMESTATE_GAME_LOADING;
@@ -9436,6 +9444,7 @@ static int revive_boot(TAK_Platform *platform) {
     BattleConfig_SetDefaults(&cfg);
     strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
     cfg.line_of_sight = 0;
+    cfg.map_revealed = 1;
     if (World_BeginLoad(platform, &cfg, "two castles", "aramon") != 0 ||
         Loading_Init(platform) != 0) {
         corpse_teardown(platform);
@@ -10477,7 +10486,8 @@ TEST(the_revive_cursor_shows_over_a_body_the_selection_can_raise) {
     ASSERT_EQ_INT(TAK_FOG_UNEXPLORED,
                   Fog_StateAtForPlayer(world, 1, s.fx, s.fy));
     ASSERT(InGame_HoverCursorAt(s.fx, sy) != HUD_CUR_REVIVE);
-    world->cfg.line_of_sight = 0;
+    world->fog_layers[1][(s.fy / world->fog_cell_px) * world->fog_w +
+                         (s.fx / world->fog_cell_px)] = TAK_FOG_VISIBLE;
 
     /* A plain click on the body raises it. */
     ASSERT_EQ_INT(HUD_CUR_REVIVE, InGame_HoverCursorAt(s.fx, sy));
@@ -10937,6 +10947,7 @@ static int shadow_boot(TAK_Platform *platform) {
     strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
     cfg.players[1].kind = TAK_SLOT_AI;
     cfg.line_of_sight = 0;
+    cfg.map_revealed = 1;
     if (World_BeginLoad(platform, &cfg, "two castles", "aramon") != 0) return -1;
     if (Loading_Init(platform) != 0) return -1;
     int next = GAMESTATE_GAME_LOADING;
@@ -12999,7 +13010,10 @@ TEST(render_probe_projectile_art) {
     BattleConfig_SetDefaults(&cfg);
     strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
     cfg.players[1].kind = TAK_SLOT_AI;
-    cfg.line_of_sight = 0;   /* no fog — isolate projectile rendering */
+    /* No fog at all: Map Revealed is the option that explores the
+     * whole map, Line of Sight off only grants full sight. */
+    cfg.line_of_sight = 0;
+    cfg.map_revealed = 1;
     ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg,
                                      "two castles", "aramon"));
     ASSERT_EQ_INT(0, Loading_Init(&platform));
@@ -13472,6 +13486,7 @@ TEST(tower_aim_faces_target) {
     BattleConfig_SetDefaults(&cfg);
     strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
     cfg.line_of_sight = 0;
+    cfg.map_revealed = 1;
     ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg,
                                      "two castles", "aramon"));
     ASSERT_EQ_INT(0, Loading_Init(&platform));
