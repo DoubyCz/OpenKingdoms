@@ -28,6 +28,7 @@
 #include "tak_sides.h"
 #include "tak_sim_rand.h"
 #include "tak_sim_hash.h"
+#include "tak_trig.h"
 #include "tak_obj3d.h"
 #include "tak_tdf.h"
 #include "tak_hpi.h"
@@ -799,7 +800,7 @@ static float projectile_launch_pitch(float speed_ppt, float run,
     float disc = k * k - (2.0f * rise * k) / run - 1.0f;
     if (disc < 0.0f) return 0.0f;
     float root = sqrtf(disc);
-    return atanf(lob_preferred ? (k + root) : (k - root));
+    return tak_atanf(lob_preferred ? (k + root) : (k - root));
 }
 
 /* Spawn a new projectile aimed at `target_handle`. Returns -1 if the
@@ -886,7 +887,7 @@ static int spawn_projectile(int32_t x, int32_t y,
     p->spin_pitch    = 0.0f;
     p->spin_heading  = 0.0f;
     p->spin_roll     = 0.0f;
-    p->heading       = atan2f(dx, -dy);
+    p->heading       = tak_atan2f(dx, -dy);
     p->sub_x         = 0.0f;
     p->sub_y         = 0.0f;
     const GameWorld *lw = World_Get();
@@ -930,8 +931,8 @@ static int spawn_projectile(int32_t x, int32_t y,
                 p->pitch = projectile_launch_pitch(p->speed_ppt, len, rise,
                                                    p->gravity_ppt2,
                                                    source_weapon->lob_preferred);
-                float cp = cosf(p->pitch);
-                p->vel_up_ppt = p->speed_ppt * sinf(p->pitch);
+                float cp = tak_cosf(p->pitch);
+                p->vel_up_ppt = p->speed_ppt * tak_sinf(p->pitch);
                 /* The horizontal term shrinks with pitch, which is what
                  * stretches a lobbed shot's flight time. */
                 p->speed_ppt  = p->speed_ppt * (cp > 0.05f ? cp : 0.05f);
@@ -1368,7 +1369,7 @@ static void tick_projectiles(void) {
             p->heading += p->spin_heading;
             p->roll    += p->spin_roll;
         } else if (p->gravity_ppt2 > 0.0f && p->speed_ppt > 0.0f) {
-            p->pitch = atan2f(p->vel_up_ppt, p->speed_ppt);
+            p->pitch = tak_atan2f(p->vel_up_ppt, p->speed_ppt);
         }
         /* A lobbed ground shot that fell short still has to go off.
          * Only ground shots: a shot with a live target is governed by
@@ -9819,9 +9820,11 @@ static void compose_node_xforms_ex(const UnitMesh *m,
             if (pieces[i].hidden) x->hidden = 1;
             if (pieces[i].shadow_off) x->shadow_off = 1;
         }
-        const float cx = cosf(lrx), sx = sinf(lrx);
-        const float cy = cosf(lry), sy = sinf(lry);
-        const float cz = cosf(lrz), sz = sinf(lrz);
+        /* A build spot and a weapon muzzle come out of this pose,
+         * so the piece rotation is hashed simulation state. */
+        const float cx = tak_cosf(lrx), sx = tak_sinf(lrx);
+        const float cy = tak_cosf(lry), sy = tak_sinf(lry);
+        const float cz = tak_cosf(lrz), sz = tak_sinf(lrz);
 
         /* Local rot matrix R = Ry x Rx x Rz: the original's builder
          * turns a piece about z first, then x, then y
