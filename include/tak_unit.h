@@ -261,11 +261,14 @@ typedef struct Projectile {
 typedef struct ProjectileEffect {
     int32_t  world_x, world_y;
     int32_t  height;
+    int32_t  height_fp;        /* height in 16.16 while it rises or falls */
+    int32_t  rise;             /* height change per tick, 16.16 (sparkles) */
+    int32_t  stop_fp;          /* a riser ends above this, a faller at it */
     int16_t  sprite_idx;
     uint16_t age_ticks;
-    uint16_t life_ticks;       /* gone at this age */
+    uint16_t life_ticks;       /* gone at this age, 0 when the height ends it */
     uint8_t  ticks_per_frame;  /* ticks each picture shows */
-    int8_t   rise;             /* height change per tick (raise sparkles) */
+    uint8_t  loops;            /* the pictures repeat instead of playing out */
     uint8_t  alive;
     int16_t  owner;            /* the unit it plays for, -1 for none */
 } ProjectileEffect;
@@ -1203,6 +1206,7 @@ int               Units_ConstructFxFrames(const char *side_prefix);
  * and how many its ring holds (legacy:198576). */
 int               Units_DebugBuildSparkles(int handle);
 int               Units_DebugBuildSparkleCap(int handle);
+int               Units_DebugBuildSparkleRadius(int handle);
 int               Units_CanStandAt(int handle, int32_t x, int32_t y);
 /* Veteran rank 0..10 (0 = not a veteran). */
 int               Units_GetVeteranLevel(int handle);
