@@ -170,6 +170,8 @@ static float build_heading_for_def(const UnitDef *d);
  * water-depth window. Both are defined further down, next to the piece
  * transform and move-class helpers they build on. */
 static int unit_factory_build_spot(Unit *f, int32_t *out_x, int32_t *out_y);
+static int unit_weapon_muzzle(Unit *u, int slot, float *out_dx,
+                              float *out_dy, float *out_up);
 static int unit_start_script(Unit *u, const char *name,
                              const int32_t *args, int n_args);
 static int unit_water_depth_ok(const GameWorld *w, const UnitDef *def,
@@ -893,14 +895,42 @@ static int spawn_projectile(int32_t x, int32_t y,
     const GameWorld *lw = World_Get();
     p->src_height = lw ? Terrain_SampleHeight(lw, x, y) : 0;
     /* height is an absolute world height, same axis as the terrain, so
-     * an arc reads correctly over sloping ground. Shots leave the
-     * weapon muzzle, not the dirt: without that clearance a downhill
-     * shot starts with negative lift and grounds itself on tick one. */
+     * an arc reads correctly over sloping ground. A shot with no muzzle
+     * piece keeps a flat clearance over the shooter's ground. */
     const float MUZZLE_H = 12.0f;
     p->height = (float)p->src_height + MUZZLE_H;
+    Unit *shooter = (shooter_handle >= 0 && shooter_handle < g_unit_count)
+                  ? &g_units[shooter_handle] : NULL;
+    /* A ballistic shell leaves the QueryWeapon piece
+     * (legacy:246594-246598) and its arc is solved from there
+     * (legacy:249230-249245). A floater's muzzle stands on the sea
+     * over its ground. */
+    if (shooter && source_weapon && source_weapon->is_gravity && lw) {
+        const UnitDef *sd = Units_GetDef(shooter->def_idx);
+        int wslot = (sd && source_weapon >= sd->weapons &&
+                     source_weapon < sd->weapons + sd->num_weapons)
+                  ? (int)(source_weapon - sd->weapons) : 0;
+        float mdx = 0.0f, mdy = 0.0f, mup = 0.0f;
+        if (unit_weapon_muzzle(shooter, wslot, &mdx, &mdy, &mup)) {
+            float base = (float)p->src_height;
+            if (sd && sd->floater && lw->water_height > p->src_height)
+                base = (float)lw->water_height;
+            float fx = (float)x + mdx, fy = (float)y + mdy;
+            p->world_x = (int32_t)floorf(fx);
+            p->world_y = (int32_t)floorf(fy);
+            p->sub_x = fx - (float)p->world_x;
+            p->sub_y = fy - (float)p->world_y;
+            p->src_height = Terrain_SampleHeight(lw, p->world_x, p->world_y);
+            p->height = base + mup;
+            dx = (float)tx - fx;
+            dy = (float)ty - fy;
+            len = sqrtf(dx * dx + dy * dy);
+            if (len >= 0.001f) { p->dir_x = dx / len; p->dir_y = dy / len; }
+            p->heading = tak_atan2f(dx, -dy);
+        }
+    }
     /* A flyer fires from where it is drawn. */
-    if (shooter_handle >= 0 && shooter_handle < g_unit_count)
-        p->height += g_units[shooter_handle].flight_alt;
+    if (shooter) p->height += shooter->flight_alt;
     if (source_weapon) {
         p->art_kind = source_weapon->art_kind;
         if (source_weapon->art_kind == UNIT_WEAPON_ART_MODEL) {
@@ -919,10 +949,16 @@ static int spawn_projectile(int32_t x, int32_t y,
             p->gravity_ppt2 =
                 projectile_gravity_ppt2(source_weapon->gravity_adjust);
             float rise = 0.0f;
-            if (lw) rise = (float)Terrain_SampleHeight(lw, tx, ty)
-                         + ((target_handle >= 0 && target_handle < g_unit_count)
-                            ? g_units[target_handle].flight_alt : 0.0f)
-                         - p->height;
+            if (lw) {
+                /* A ground aim point sits on the ground, or on the sea
+                 * over it (legacy:234022-234034). */
+                float aim = (float)Terrain_SampleHeight(lw, tx, ty);
+                if (target_handle < 0 && lw->water_height > aim)
+                    aim = (float)lw->water_height;
+                if (target_handle >= 0 && target_handle < g_unit_count)
+                    aim += g_units[target_handle].flight_alt;
+                rise = aim - p->height;
+            }
             if (source_weapon->dropped) {
                 /* Dropped ordnance keeps the carrier's horizontal run
                  * and simply falls (legacy:246794). */
@@ -1307,6 +1343,27 @@ static void projectile_detonate(Projectile *p, int idx) {
     p->alive = 0;
 }
 
+/* The original's per-step test for a shell (legacy:245377-245475):
+ * -1 once it leaves the map, 1 once its height in whole px is at or
+ * below the lowest corner of its 16 px cell (legacy:224590-224622) or
+ * under the sea, 0 while it flies on. */
+static int shell_meets_ground(const GameWorld *w, const Projectile *p) {
+    const TNTFile *t = &w->tnt;
+    if (!t->heightmap || t->height_w <= 1 || t->height_h <= 1) return 0;
+    if (p->world_x < 0 || p->world_y < 0) return -1;
+    int cx = p->world_x / 16, cz = p->world_y / 16;
+    if (cx >= t->height_w - 1 || cz >= t->height_h - 1) return -1;
+    const uint8_t *hm = t->heightmap + cz * t->height_w + cx;
+    int lo = hm[0];
+    if (hm[1] < lo) lo = hm[1];
+    if (hm[t->height_w] < lo) lo = hm[t->height_w];
+    if (hm[t->height_w + 1] < lo) lo = hm[t->height_w + 1];
+    int h = (int)floorf(p->height);
+    if (h <= lo) return 1;
+    if (h < w->water_height) return 1;
+    return 0;
+}
+
 /* Per-tick: advance projectiles, hit-test against target, apply damage. */
 static void tick_projectiles(void) {
     /* Effects are visuals only. One with a life ends at that age, a
@@ -1371,25 +1428,20 @@ static void tick_projectiles(void) {
         } else if (p->gravity_ppt2 > 0.0f && p->speed_ppt > 0.0f) {
             p->pitch = tak_atan2f(p->vel_up_ppt, p->speed_ppt);
         }
-        /* A lobbed ground shot that fell short still has to go off.
-         * Only ground shots: a shot with a live target is governed by
-         * the target test below, so a descending arrow aimed downhill
-         * is not stopped by the plateau it is leaving. */
-        if (p->target < 0 && p->gravity_ppt2 > 0.0f &&
-            p->vel_up_ppt < 0.0f && p->age_ticks > 2) {
-            float ground = gw
-                ? (float)Terrain_SampleHeight(gw, p->world_x, p->world_y)
-                : 0.0f;
-            if (p->height <= ground) {
-                p->height = ground;
-                projectile_detonate(p, i);
-                continue;
-            }
+        /* A ballistic ground shot tests the ground under it on every
+         * step from its first (legacy:245377-245475, :246654-246668). */
+        if (p->target < 0 && p->gravity_ppt2 > 0.0f && gw) {
+            int g = shell_meets_ground(gw, p);
+            if (g < 0) { p->alive = 0; continue; }
+            if (g > 0) { projectile_detonate(p, i); continue; }
         }
         /* Hit test against target unit. Apply damage on close approach
          * (within 16 px ≈ 1 tile) or if target moved, hit at current
          * world_x/y closest enemy. */
         if (p->target < 0) {
+            /* A shell goes off only where it comes down. The original
+             * has no fuse at the aim point. */
+            if (p->gravity_ppt2 > 0.0f) continue;
             /* Ground shot: detonate on reaching the aim point. */
             int64_t d2 = point_segment_dist2_i32(p->dest_x, p->dest_y,
                                                  old_x, old_y,
@@ -9915,6 +9967,44 @@ static int unit_factory_build_spot(Unit *f, int32_t *out_x, int32_t *out_y) {
     float rz = -(sh * mx - ch * mz);
     *out_x = f->world_x + (int32_t)lroundf(rx * UNIT_MODEL_TO_WORLD);
     *out_y = f->world_y + (int32_t)lroundf(rz * UNIT_MODEL_TO_WORLD);
+    return 1;
+}
+
+/* Where a weapon fires from: the piece its QueryWeapon script names,
+ * composed through the unit's pose, as an offset from the unit in
+ * world px (legacy:185941-185948, :185790-185856). 0 when the unit has
+ * no such script or piece. */
+static int unit_weapon_muzzle(Unit *u, int slot, float *out_dx,
+                              float *out_dy, float *out_up) {
+    if (!u || !u->cob || !u->cob->script) return 0;
+    const UnitDef *d = Units_GetDef(u->def_idx);
+    int c = u->team_color_idx;
+    if (c < 0 || c > 11) c = 0;
+    const UnitMesh *m = d ? d->mesh_per_color[c] : NULL;
+    if (!m || m->node_count <= 0) return 0;
+    char name[32];
+    if (!resolve_weapon_script_name(u, "QueryWeapon", slot, name,
+                                    sizeof(name)))
+        return 0;
+    /* Out-arg first, then the weapon index (legacy:185941-185948). */
+    int32_t qa[2] = { 0, slot };
+    if (Cob_RunScriptSync(u->cob, name, qa, 2) != 0) return 0;
+    if (qa[0] < 0 || qa[0] >= (int32_t)u->cob->script->num_pieces) return 0;
+    int node = u->cob->piece_to_node ? u->cob->piece_to_node[qa[0]] : -1;
+    if (node < 0 || node >= m->node_count) return 0;
+    NodeXform *xf = (NodeXform *)tak_malloc(sizeof(NodeXform) *
+                                            (size_t)m->node_count);
+    if (!xf) return 0;
+    compose_node_xforms(m, u->cob->pieces, xf);
+    float mx = xf[node].trans[0], my = xf[node].trans[1];
+    float mz = xf[node].trans[2];
+    tak_free(xf);
+    /* Same model to world map as the build spot above, on the
+     * simulation's own trigonometry: this writes hashed state. */
+    float ch = tak_cosf(u->heading), sh = tak_sinf(u->heading);
+    *out_dx = -(ch * mx + sh * mz) * UNIT_MODEL_TO_WORLD;
+    *out_dy = -(sh * mx - ch * mz) * UNIT_MODEL_TO_WORLD;
+    *out_up = my * UNIT_MODEL_TO_WORLD;
     return 1;
 }
 
