@@ -20,6 +20,8 @@ jobs:
   wasm:
     name: Emscripten build
     runs-on: ubuntu-latest
+    env:
+      FFMPEG_VERSION: 7.1.1
     steps:
       - uses: actions/checkout@v7
 
@@ -29,15 +31,41 @@ jobs:
           actions-cache-folder: emsdk-cache
 
       - name: Verify toolchain
-        run: emcc --version
+        id: emsdk
+        run: |
+          emcc --version
+          echo "version=$(emcc -dumpversion)" >> "$GITHUB_OUTPUT"
+
+      # The Bink decoder for the menu doors and the reels, built once
+      # per FFmpeg version, Emscripten version and configure line, and
+      # the installed prefix cached on those.
+      - name: Cache FFmpeg for the browser
+        uses: actions/cache@v6
+        with:
+          path: build-ffmpeg-wasm
+          key: ffmpeg-wasm-${{ env.FFMPEG_VERSION }}-emsdk-${{ steps.emsdk.outputs.version }}-${{ hashFiles('scripts/build-ffmpeg-wasm.sh') }}
+
+      - name: Build FFmpeg for the browser
+        run: scripts/build-ffmpeg-wasm.sh --prefix build-ffmpeg-wasm --version "$FFMPEG_VERSION"
 
       # No game data is bundled: with no TAK_GAME_DIR the build configures
       # itself engine-only (TAK_WASM_BUNDLE_DATA=OFF). See docs/ASSETS.md.
+      # The extra find root is where CMake finds the decoder.
       - name: Configure
         run: |
           emcmake cmake -B build-wasm -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=ON
+            -DBUILD_TESTING=ON \
+            -DCMAKE_FIND_ROOT_PATH="$PWD/build-ffmpeg-wasm"
+
+      # A page that configured without the decoder would still build
+      # and pass everything below, with every clip a still.
+      - name: The browser build carries the Bink decoder
+        run: |
+          for lib in avcodec avformat swscale; do
+            grep -q "^$(echo $lib | tr a-z A-Z)_LIBRARY:FILEPATH=.*/build-ffmpeg-wasm/lib/lib$lib\.a\$" build-wasm/CMakeCache.txt \
+              || { echo "::error::lib$lib not found by the configure"; exit 1; }
+          done
 
       - name: Build
         run: cmake --build build-wasm --parallel --target tak-re test_trig

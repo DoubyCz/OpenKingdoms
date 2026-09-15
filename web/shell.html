@@ -420,6 +420,8 @@
   var STORE = 'game';                 /* OPFS directory holding the archives */
   var MUSIC = 'Music';                /* subfolder for the music tracks */
   var MAPS = 'Maps';                  /* subfolder for the .kmp map packs */
+  var MOVIES = 'Movies';              /* subfolder for the .bik clips */
+  var GUI = 'Gui';                    /* Movies/Gui: the menu and loading pieces */
   /* The player's own settings, and later their saved games. A
      sibling of STORE at the OPFS root, never a child of it, so the
      Forget my game files link cannot reach them by construction
@@ -465,6 +467,21 @@
   function isArchive(name) { return /\.(hpi|ufo)$/i.test(name); }
   function isKmp(name) { return /\.kmp$/i.test(name); }
   function isWav(name) { return /\.wav$/i.test(name); }
+  function isBik(name) { return /\.bik$/i.test(name); }
+  /* The clips the engine plays: the logo, the intro, the credits and
+     the menu and loading screen pieces under Gui. The campaign's cut
+     scenes stay on disk until the campaign can play them. */
+  function isClip(rel) {
+    var r = rel.toLowerCase();
+    return /^movies\/gui\/[^\/]+\.bik$/.test(r) ||
+           /^movies\/(logo|intro|credits|posttakcredits)\.bik$/.test(r);
+  }
+  /* A clip's place in the engine's filesystem. The name is lower
+     cased so the engine's lookup finds it whatever case the install
+     spells it in. */
+  function clipRel(name, inGui) {
+    return MOVIES + '/' + (inGui ? GUI + '/' : '') + name.toLowerCase();
+  }
 
   /* Engine arguments can be passed as ?args=--skirmish for testing. */
   var argstr = new URLSearchParams(location.search).get('args') || '';
@@ -475,6 +492,16 @@
     onAbort: function (what) { picker.hidden = false; say('The engine stopped: ' + what, true); }
   };
 
+  /* An exception out of the engine's main loop ends the loop, and a
+     canvas that has stopped says nothing on its own. */
+  window.addEventListener('error', function (e) {
+    tell('The engine stopped: ' + (e.message || 'error'), true);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    tell('The engine stopped: ' + (r && r.message ? r.message : r), true);
+  });
+
   /* Reached once the engine script has defined FS and the run
    * dependency API. Decides where the files come from. */
   Module.preRun.push(function () {
@@ -482,6 +509,8 @@
     try { FS.mkdir('/game'); } catch (e) {}
     try { FS.mkdir('/game/' + MUSIC); } catch (e) {}
     try { FS.mkdir('/game/' + MAPS); } catch (e) {}
+    try { FS.mkdir('/game/' + MOVIES); } catch (e) {}
+    try { FS.mkdir('/game/' + MOVIES + '/' + GUI); } catch (e) {}
     /* Above the return below on purpose. The player's settings are
        their own data and have nothing to do with whether the
        packager preloaded the archives, and the dev build is
@@ -850,6 +879,81 @@
     }).catch(function () {});
   }
 
+  /* ---- clips, read in place ---------------------------------------- */
+  /* A clip is a file node whose reads slice the picked File a megabyte
+     at a time through a synchronous request on a blob URL, never a
+     copy in memory. docs/notes/2026-09-14-menu-clips-and-cut-scenes.md. */
+  var SLICE = 1048576;
+  var KEEP = 4;
+
+  function readSlice(file, start, end) {
+    var url = URL.createObjectURL(file.slice(start, end));
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, false);
+      xhr.overrideMimeType('text/plain; charset=x-user-defined');
+      xhr.send(null);
+      if (xhr.status !== 200 && xhr.status !== 0) throw new Error('status ' + xhr.status);
+      var text = xhr.responseText;
+      var out = new Uint8Array(text.length);
+      for (var i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 255;
+      return out;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function lazyFile(FS, rel, file) {
+    var parts = rel.split('/');
+    var name = parts.pop();
+    var dir = '/game/' + parts.join('/');
+    mkdirp(FS, dir);
+    try { FS.unlink(dir + '/' + name); } catch (e) {}
+    var node = FS.createFile(dir, name, {}, true, false);
+    var slices = {};
+    var order = [];
+    function slice(n) {
+      var s = slices[n];
+      if (!s) {
+        s = slices[n] = readSlice(file, n * SLICE, Math.min((n + 1) * SLICE, file.size));
+        order.push(n);
+        if (order.length > KEEP) delete slices[order.shift()];
+      }
+      return s;
+    }
+    /* stat and seek to the end read the size from here. */
+    Object.defineProperty(node, 'usedBytes', { get: function () { return file.size; } });
+    var ops = {};
+    for (var k in node.stream_ops) ops[k] = node.stream_ops[k];
+    ops.read = function (stream, buffer, offset, length, position) {
+      /* A file changed on disk or evicted from storage is a read
+         error to C, not an exception through the engine's main loop. */
+      try {
+        if (position >= file.size) return 0;
+        var want = Math.min(length, file.size - position);
+        var done = 0;
+        while (done < want) {
+          var at = position + done;
+          var s = slice(Math.floor(at / SLICE));
+          var from = at % SLICE;
+          var take = Math.min(want - done, s.length - from);
+          buffer.set(s.subarray(from, from + take), offset + done);
+          done += take;
+        }
+        return done;
+      } catch (e) {
+        console.warn('[openkingdoms] could not read ' + rel + ': ' + (e && e.message ? e.message : e));
+        throw new FS.ErrnoError(5);
+      }
+    };
+    /* A reel is closed when it ends. The doors stay open and keep theirs. */
+    ops.close = function (stream) {
+      slices = {};
+      order = [];
+    };
+    node.stream_ops = ops;
+  }
+
   /* ---- OPFS cache -------------------------------------------------- */
   function opfsDir(create) {
     if (!navigator.storage || !navigator.storage.getDirectory) return Promise.resolve(null);
@@ -858,21 +962,29 @@
       .catch(function () { return null; });
   }
 
-  /* Lists {rel, handle} for the archives at the root, the wavs in Music/
-   * and the map packs in Maps/. */
+  /* Lists {rel, handle} for the archives at the root, the wavs in Music/,
+   * the map packs in Maps/ and the clips under Movies/. */
   function cacheEntries(dir) {
     var out = [];
-    function sub(folder, want) {
-      return dir.getDirectoryHandle(folder).then(function (d) {
-        return collect(d.entries(), function (name, h) {
-          if (h.kind === 'file' && want(name)) out.push({ rel: folder + '/' + name, handle: h });
+    function sub(path, want) {
+      var d = Promise.resolve(dir);
+      path.forEach(function (seg) {
+        d = d.then(function (h) { return h.getDirectoryHandle(seg); });
+      });
+      return d.then(function (h) {
+        return collect(h.entries(), function (name, fh) {
+          if (fh.kind !== 'file' || !want(name)) return;
+          var rel = path.join('/') + '/' + name;
+          out.push({ rel: rel, handle: fh, clip: isBik(name) });
         });
       }).catch(function () {});
     }
     return collect(dir.entries(), function (name, h) {
       if (h.kind === 'file' && isArchive(name)) out.push({ rel: name, handle: h });
-    }).then(function () { return sub(MUSIC, isWav); })
-      .then(function () { return sub(MAPS, isKmp); })
+    }).then(function () { return sub([MUSIC], isWav); })
+      .then(function () { return sub([MAPS], isKmp); })
+      .then(function () { return sub([MOVIES], isBik); })
+      .then(function () { return sub([MOVIES, GUI], isBik); })
       .then(function () { return out; });
   }
 
@@ -883,10 +995,15 @@
         if (!entries.some(function (e) { return isArchive(e.rel); })) return 0;
         picker.hidden = false;
         say('Loading your game files from browser storage...');
+        var nclip = entries.filter(function (e) { return e.clip; }).length;
+        if (nclip) console.log('[openkingdoms] ' + nclip + ' clip(s) read in place from browser storage');
         var i = 0;
         function next() {
           if (i >= entries.length) return entries.length;
           var e = entries[i++];
+          if (e.clip) {
+            return e.handle.getFile().then(function (f) { lazyFile(FS, e.rel, f); return next(); });
+          }
           return e.handle.getFile().then(function (f) { return f.arrayBuffer(); })
             .then(function (buf) { FS.writeFile('/game/' + e.rel, new Uint8Array(buf)); return next(); });
         }
@@ -907,15 +1024,19 @@
     return opfsDir(true).then(function (dir) {
       if (!dir) return false;
       var subs = {};
+      function subdir(parent, seg) {
+        return parent.then(function (d) { return d.getDirectoryHandle(seg, { create: true }); });
+      }
       var i = 0;
       function next() {
         if (i >= picks.length) return true;
         var p = picks[i++];
         var parts = p.rel.split('/');
         var target = Promise.resolve(dir);
-        if (parts.length === 2) {
-          if (!subs[parts[0]]) subs[parts[0]] = dir.getDirectoryHandle(parts[0], { create: true });
-          target = subs[parts[0]];
+        for (var j = 0, key = ''; j < parts.length - 1; j++) {
+          key += parts[j] + '/';
+          if (!subs[key]) subs[key] = subdir(target, parts[j]);
+          target = subs[key];
         }
         return target.then(function (d) { return d.getFileHandle(parts[parts.length - 1], { create: true }); })
           .then(function (h) { return h.createWritable(); })
@@ -933,8 +1054,14 @@
   }
 
   /* ---- picking ----------------------------------------------------- */
-  /* A pick is {file, rel}: rel is "name.hpi", "Maps/name.kmp" or
-   * "Music/name.wav". */
+  /* A pick is {file, rel}: rel is "name.hpi", "Maps/name.kmp",
+   * "Music/name.wav" or, with clip set, "Movies/name.bik" or
+   * "Movies/Gui/name.bik". A clip is mounted in place, never copied. */
+  function clipPick(file, inGui) {
+    var rel = clipRel(file.name, inGui);
+    return isClip(rel) ? { file: file, rel: rel, clip: true } : null;
+  }
+
   function picksFromFileList(files) {
     var out = [];
     for (var i = 0; i < files.length; i++) {
@@ -942,9 +1069,12 @@
       var relPath = f.webkitRelativePath || f.name;
       var parts = relPath.split('/');
       var parent = parts.length >= 2 ? parts[parts.length - 2].toLowerCase() : '';
+      var above = parts.length >= 3 ? parts[parts.length - 3].toLowerCase() : '';
       if (isArchive(f.name) && parts.length <= 2) out.push({ file: f, rel: f.name });
       else if (isKmp(f.name) && (parts.length === 1 || parent === 'maps')) out.push({ file: f, rel: MAPS + '/' + f.name });
       else if (isWav(f.name) && parts.length >= 2 && parent === 'music') out.push({ file: f, rel: MUSIC + '/' + f.name });
+      else if (isBik(f.name) && parent === 'movies') { var c = clipPick(f, false); if (c) out.push(c); }
+      else if (isBik(f.name) && parent === 'gui' && above === 'movies') { var g = clipPick(f, true); if (g) out.push(g); }
     }
     return out;
   }
@@ -953,10 +1083,25 @@
     var files = [];      /* promises of {file, rel} */
     var music = null;    /* the Music/ directory handle, if present */
     var maps = null;     /* the Maps/ directory handle, if present */
+    var movies = null;   /* the Movies/ directory handle, if present */
+    function clipsIn(h, inGui) {
+      return collect(h.entries(), function (n, fh) {
+        if (fh.kind !== 'file' || !isBik(n) || !isClip(clipRel(n, inGui))) return;
+        files.push(fh.getFile().then(function (f) { return clipPick(f, inGui); }));
+      });
+    }
     return collect(dir.entries(), function (name, h) {
       if (h.kind === 'file' && isArchive(name)) files.push(h.getFile().then(function (f) { return { file: f, rel: name }; }));
       else if (h.kind === 'directory' && name.toLowerCase() === 'music') music = h;
       else if (h.kind === 'directory' && name.toLowerCase() === 'maps') maps = h;
+      else if (h.kind === 'directory' && name.toLowerCase() === 'movies') movies = h;
+    }).then(function () {
+      if (!movies) return;
+      var gui = null;
+      return collect(movies.entries(), function (n, h) {
+        if (h.kind === 'directory' && n.toLowerCase() === 'gui') gui = h;
+      }).then(function () { return clipsIn(movies, false); })
+        .then(function () { return gui ? clipsIn(gui, true) : null; });
     }).then(function () {
       /* Walk the subfolders to completion before sealing the list, or
        * their entries arrive after Promise.all has taken its snapshot. */
@@ -1037,6 +1182,11 @@
     function next() {
       if (k >= picks.length) return Promise.resolve();
       var p = picks[k++];
+      if (p.clip) {
+        lazyFile(FS, p.rel, p.file);
+        prog.value = k;
+        return next();
+      }
       say('Reading ' + p.rel + ' (' + (p.file.size / 1048576).toFixed(1) + ' MB)...');
       return p.file.arrayBuffer().then(function (buf) {
         FS.writeFile('/game/' + p.rel, new Uint8Array(buf));
@@ -1049,11 +1199,13 @@
       say('Saving a copy in browser storage...');
       return cacheFiles(picks);
     }).then(function () {
-      var nwav = picks.length - archives.length - packs.length;
-      console.log('[openkingdoms] ' + archives.length + ' archive(s), ' + packs.length + ' map pack(s) and ' + nwav + ' music track(s) ready');
+      var nclip = picks.filter(function (p) { return p.clip; }).length;
+      var nwav = picks.length - archives.length - packs.length - nclip;
+      console.log('[openkingdoms] ' + archives.length + ' archive(s), ' + packs.length + ' map pack(s), ' + nwav + ' music track(s) and ' + nclip + ' clip(s) ready');
       showReady(archives.length + ' archives' +
                 (packs.length ? ', ' + packs.length + ' map packs' : '') +
-                (nwav ? ' and ' + nwav + ' music tracks' : '') + ' loaded.');
+                (nwav ? ', ' + nwav + ' music tracks' : '') +
+                (nclip ? ' and ' + nclip + ' video clips' : '') + ' loaded.');
     }).catch(function (e) {
       say('Could not load the files: ' + e.message, true);
       for (var i = 0; i < buttons.length; i++) buttons[i].disabled = false;

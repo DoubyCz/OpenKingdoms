@@ -14016,6 +14016,39 @@ TEST(bink_rewind_restores_the_first_frame) {
     BinkPlayer_Close(bp);
 }
 
+/* The browser mounts each clip under its lower cased name and an
+ * install spells them in capitals, so the lookup tries the case both
+ * ways. An empty file stands in for the clip: only the open is asked. */
+TEST(bink_clip_lookup_forgives_the_names_case) {
+#ifndef TAK_HAVE_FFMPEG
+    SKIP("no decoder");
+#endif
+    char root[600], sub[700], file[800];
+    snprintf(root, sizeof root, "%sclipcase", Paths_PrefDir());
+    snprintf(sub, sizeof sub, "%s/Movies", root);
+    snprintf(file, sizeof file, "%s/logo.bik", sub);
+#ifdef _WIN32
+    _mkdir(root); _mkdir(sub);
+#else
+    mkdir(root, 0755); mkdir(sub, 0755);
+#endif
+    FILE *fp = fopen(file, "wb");
+    ASSERT_NOT_NULL(fp);
+    fclose(fp);
+    Paths_SetGameDir(root);
+    ASSERT_EQ_INT(1, BinkPlayer_ClipExists("Movies/logo.bik"));
+    ASSERT_EQ_INT(1, BinkPlayer_ClipExists("Movies/LOGO.BIK"));
+    ASSERT_EQ_INT(1, BinkPlayer_ClipExists("Movies/Logo.bik"));
+    ASSERT_EQ_INT(0, BinkPlayer_ClipExists("Movies/intro.bik"));
+    Paths_SetGameDir(NULL);
+    remove(file);
+#ifdef _WIN32
+    _rmdir(sub); _rmdir(root);
+#else
+    rmdir(sub); rmdir(root);
+#endif
+}
+
 /* Each door's clips are opened when the menu opens and never again. */
 TEST(main_menu_door_clips_open_once_a_session) {
     TAK_Platform platform;
@@ -21021,6 +21054,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_C, war_galley_hits_resting_ghost_ship);
     RUN_UI_TEST(UI_GROUP_D, main_menu_doors_follow_original_states);
     RUN_UI_TEST(UI_GROUP_D, bink_rewind_restores_the_first_frame);
+    RUN_UI_TEST(UI_GROUP_A, bink_clip_lookup_forgives_the_names_case);
     RUN_UI_TEST(UI_GROUP_B, main_menu_door_clips_open_once_a_session);
     RUN_UI_TEST(UI_GROUP_C, main_menu_door_clip_keeps_its_rate_through_a_long_frame);
     RUN_UI_TEST(UI_GROUP_A, main_menu_hover_clip_loops_while_the_cursor_stays);
