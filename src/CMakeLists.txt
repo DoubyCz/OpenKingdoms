@@ -313,9 +313,15 @@ endif()
 # same directory raced under a parallel build and failed with the file
 # locked, so everything that needs it depends on this instead.
 if(WIN32)
+    # The directory is made first: copy_if_different treats a
+    # destination that does not exist yet as a file name, which on a
+    # clean tree wrote a file called Release where the directory goes.
     add_custom_target(tak_sdl2_runtime ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>
+            $<TARGET_FILE:SDL2::SDL2>
+            ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/$<TARGET_FILE_NAME:SDL2::SDL2>
         COMMENT "Copying SDL2.dll beside the binaries"
         VERBATIM
     )
