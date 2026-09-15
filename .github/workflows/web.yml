@@ -62,7 +62,11 @@ jobs:
       # A page that configured without the decoder would still build
       # and pass everything below, with every clip a still.
       - name: The browser build carries the Bink decoder
-        run: grep -q '^AVCODEC_LIBRARY:FILEPATH=.*/build-ffmpeg-wasm/lib/libavcodec\.a$' build-wasm/CMakeCache.txt
+        run: |
+          for lib in avcodec avformat swscale; do
+            grep -q "^$(echo $lib | tr a-z A-Z)_LIBRARY:FILEPATH=.*/build-ffmpeg-wasm/lib/lib$lib\.a\$" build-wasm/CMakeCache.txt \
+              || { echo "::error::lib$lib not found by the configure"; exit 1; }
+          done
 
       - name: Build
         run: cmake --build build-wasm --parallel --target tak-re test_trig
