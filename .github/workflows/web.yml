@@ -85,7 +85,10 @@ jobs:
         run: node build-wasm/src/test_sim_probe.js
 
       # ctest does not run here, so the guard that keeps libm out of the
-      # simulation runs on its own.
+      # simulation runs on its own. It reads source text, so the native
+      # jobs checking the whole list is what matters and this is the
+      # two files that carry the angles, checked where a browser change
+      # would land first.
       - name: The simulation carries its own trigonometry
         run: |
           cmake -DFILES="src/render/units.c|include/tak_math.h" -P cmake/libm_guard.cmake
