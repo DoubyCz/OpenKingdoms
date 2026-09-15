@@ -492,6 +492,16 @@
     onAbort: function (what) { picker.hidden = false; say('The engine stopped: ' + what, true); }
   };
 
+  /* An exception out of the engine's main loop ends the loop, and a
+     canvas that has stopped says nothing on its own. */
+  window.addEventListener('error', function (e) {
+    tell('The engine stopped: ' + (e.message || 'error'), true);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    tell('The engine stopped: ' + (r && r.message ? r.message : r), true);
+  });
+
   /* Reached once the engine script has defined FS and the run
    * dependency API. Decides where the files come from. */
   Module.preRun.push(function () {
@@ -920,18 +930,25 @@
     var ops = {};
     for (var k in node.stream_ops) ops[k] = node.stream_ops[k];
     ops.read = function (stream, buffer, offset, length, position) {
-      if (position >= file.size) return 0;
-      var want = Math.min(length, file.size - position);
-      var done = 0;
-      while (done < want) {
-        var at = position + done;
-        var s = slice(Math.floor(at / SLICE));
-        var from = at % SLICE;
-        var take = Math.min(want - done, s.length - from);
-        buffer.set(s.subarray(from, from + take), offset + done);
-        done += take;
+      /* A file changed on disk or evicted from storage is a read
+         error to C, not an exception through the engine's main loop. */
+      try {
+        if (position >= file.size) return 0;
+        var want = Math.min(length, file.size - position);
+        var done = 0;
+        while (done < want) {
+          var at = position + done;
+          var s = slice(Math.floor(at / SLICE));
+          var from = at % SLICE;
+          var take = Math.min(want - done, s.length - from);
+          buffer.set(s.subarray(from, from + take), offset + done);
+          done += take;
+        }
+        return done;
+      } catch (e) {
+        console.warn('[openkingdoms] could not read ' + rel + ': ' + (e && e.message ? e.message : e));
+        throw new FS.ErrnoError(5);
       }
-      return done;
     };
     node.stream_ops = ops;
   }
