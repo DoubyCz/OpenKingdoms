@@ -279,11 +279,6 @@ static int end_is_campaign(void) {
  * advances the chapter on a win. */
 void Story_MissionFinished(int won);
 
-#ifndef TAK_HAVE_STORY_MISSION_FINISHED
-/* Placeholder until the Book of Deeds screen brings its own. Delete
- * this block when src/ui/story.c defines Story_MissionFinished. */
-void Story_MissionFinished(int won) { (void)won; }
-#endif
 
 int EndScreen_Open(TAK_Platform *platform, const GameWorld *world) {
     (void)platform;
