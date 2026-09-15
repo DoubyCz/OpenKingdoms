@@ -2,6 +2,7 @@
 #define TAK_MATH_H
 
 #include "tak_types.h"
+#include "tak_trig.h"
 #include <math.h>
 
 /* ── 3D math primitives ────────────────────────────────────────────
@@ -78,9 +79,9 @@ static inline Mat3 mat3_mul(const Mat3 *a, const Mat3 *b) {
 }
 /* Build a rotation matrix from Euler ZYX angles (TA convention). */
 static inline Mat3 mat3_from_euler(float rx, float ry, float rz) {
-    float cx = cosf(rx), sx = sinf(rx);
-    float cy = cosf(ry), sy = sinf(ry);
-    float cz = cosf(rz), sz = sinf(rz);
+    float cx = tak_cosf(rx), sx = tak_sinf(rx);
+    float cy = tak_cosf(ry), sy = tak_sinf(ry);
+    float cz = tak_cosf(rz), sz = tak_sinf(rz);
     Mat3 r;
     r.m[0] = cy*cz;   r.m[1] = sx*sy*cz - cx*sz;   r.m[2] = cx*sy*cz + sx*sz;
     r.m[3] = cy*sz;   r.m[4] = sx*sy*sz + cx*cz;   r.m[5] = cx*sy*sz - sx*cz;
@@ -128,12 +129,12 @@ static inline Quat quat_identity(void) {
 }
 static inline Quat quat_from_axis_angle(Vec3 axis, float angle) {
     float h = angle * 0.5f;
-    float s = sinf(h);
+    float s = tak_sinf(h);
     Quat q;
     q.x = axis.x * s;
     q.y = axis.y * s;
     q.z = axis.z * s;
-    q.w = cosf(h);
+    q.w = tak_cosf(h);
     return q;
 }
 static inline Quat quat_mul(Quat a, Quat b) {

@@ -4,6 +4,12 @@ Play in a browser at [openkingdoms.net](https://openkingdoms.net), or download b
 
 ## Changed in 0.1.2
 
+Windows, macOS, Linux and browser players share rooms. Before this each
+platform played only its own, because each one's maths library rounded a
+sine its own way and two machines would drift apart over a match. The
+simulation now does its own trigonometry and reaches the same answer
+everywhere.
+
 Terrain draws again on macOS and Linux. In 0.1.1 a skirmish loaded with
 every ground tile black, the unit portrait blank and the build buttons
 grey, because the picture decoder asked the video library for a codec
@@ -94,6 +100,6 @@ There is no Intel Mac build. The hosted Intel runners have been retired, so that
 
 Deterministic lockstep over one relay. Type the server address on Select Game and it is remembered.
 
-A room holds players whose builds agree on arithmetic, so Windows plays Windows, macOS plays macOS, Linux plays Linux and the browser plays the browser. Each platform's maths library rounds sines its own way, which is enough to pull two machines apart over a match, so the handshake refuses a mix rather than desyncing it. A game you cannot join is still listed, greyed, with the reason. Lifting that is tracked in [docs/notes/2026-09-14-float-determinism.md](https://github.com/OpenKingdoms/OpenKingdoms/blob/main/docs/notes/2026-09-14-float-determinism.md).
+A Windows, macOS, Linux or browser player can all sit in one room. Each platform's maths library used to round a sine its own way, which is enough to pull two machines apart over a match, so the handshake used to refuse the mix. The simulation now carries its own trigonometry and every build reaches the same answer, checked on all four platforms before a release is built. A build from before that change is still refused, listed greyed with the reason, because it really would desync. The details are in [docs/notes/2026-09-14-float-determinism.md](https://github.com/OpenKingdoms/OpenKingdoms/blob/main/docs/notes/2026-09-14-float-determinism.md).
 
 Problems go to [issues](https://github.com/OpenKingdoms/OpenKingdoms/issues), with the version line from the main menu.

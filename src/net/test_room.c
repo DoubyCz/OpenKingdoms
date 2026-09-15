@@ -155,7 +155,7 @@ TEST(join_refuses_a_mismatched_build_or_determinism_class) {
                   TAK_Room_Join(&r, 2, "Brother", "", 0, BUILD + 1, DCLASS, &seat));
     ASSERT_EQ_INT(TAK_REJECT_DETERMINISM_CLASS,
                   TAK_Room_Join(&r, 2, "Brother", "", 0, BUILD,
-                                TAK_CLASS_NATIVE, &seat));
+                                TAK_CLASS_OWN_TRIG, &seat));
 }
 
 TEST(join_refuses_a_room_that_is_no_longer_open) {
@@ -591,7 +591,7 @@ TEST(an_unjoinable_room_is_listed_with_its_reason) {
 
     TAK_Room_Summary(&r, BUILD + 1, DCLASS, &sum);
     ASSERT_EQ_INT(TAK_REJECT_NEEDS_NEWER, sum.compat);
-    TAK_Room_Summary(&r, BUILD, TAK_CLASS_NATIVE, &sum);
+    TAK_Room_Summary(&r, BUILD, TAK_CLASS_OWN_TRIG, &sum);
     ASSERT_EQ_INT(TAK_REJECT_DETERMINISM_CLASS, sum.compat);
 
     for (uint32_t i = 2; i <= TAK_NET_SEATS; i++)
