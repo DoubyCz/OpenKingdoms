@@ -64,6 +64,14 @@ The minimap terrain pass is the same three cases in palette terms
 whatever the option says, and since the sight map is full with the
 option off, everything explored reads as the plain map byte.
 
+A unit's script sounds ride the same gate, so with Line of Sight off an
+enemy on ground the player has never explored is silent as well as
+invisible. Positional sounds that do not come from a script, a weapon's
+start cue and a shell's impact, still take the older short circuit in
+`sound_pos_audible` and play everywhere with the option off. The
+original puts those through the explored test too (legacy:221150). That
+is a known gap, left for its own change with its own cases.
+
 ## What it does not touch
 
 The simulation reads the sight map, never the explored map. With Line of

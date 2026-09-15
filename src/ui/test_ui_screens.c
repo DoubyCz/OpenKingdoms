@@ -18685,6 +18685,9 @@ static int sfx_load_skirmish(TAK_Platform *platform, BattleConfig *cfg,
     BattleConfig_SetDefaults(cfg);
     strncpy(cfg->map_name, "two castles", sizeof(cfg->map_name) - 1);
     cfg->line_of_sight = line_of_sight;
+    /* Callers that ask for the option off want no fog at all, which is
+     * Map Revealed. Line of Sight off only grants full sight. */
+    cfg->map_revealed = !line_of_sight;
     if (World_BeginLoad(platform, cfg, "two castles", "aramon") != 0) return -1;
     if (Loading_Init(platform) != 0) return -1;
     int next = GAMESTATE_GAME_LOADING;
