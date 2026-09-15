@@ -650,8 +650,9 @@ static void chooser_tick(StoryChooser *ch, TAK_Platform *platform) {
     if (platform && platform->has_focus)
         mouse_down = TAK_Platform_MouseThisFrame(platform, &mx, &my);
 
-    const Uint8 *keys = SDL_GetKeyboardState(NULL);
-    if (keys[SDL_SCANCODE_ESCAPE]) { chooser_close(ch); return; }
+    /* The edge, not the key state: a held escape would otherwise close
+     * this and leave the screen behind it on the next frame. */
+    if (platform && platform->pressed_escape) { chooser_close(ch); return; }
     chooser_type(ch, platform);
 
     if (mouse_down && !ch->prev_mouse && ch->idx_list >= 0 && mx >= 0) {
