@@ -267,6 +267,24 @@ static void fill_rows(const GameWorld *world) {
     if (gaf) GAF_Close(gaf);
 }
 
+/* A battle the mission file set up. The in-game menu draws the same
+ * line between single player and skirmish. */
+static int end_is_campaign(void) {
+    const GameWorld *w = World_Get();
+    return w && (w->mission.objective_count > 0 ||
+                 w->mission.placement_count > 0);
+}
+
+/* Implemented by the Book of Deeds screen: it takes the verdict and
+ * advances the chapter on a win. */
+void Story_MissionFinished(int won);
+
+#ifndef TAK_HAVE_STORY_MISSION_FINISHED
+/* Placeholder until the Book of Deeds screen brings its own. Delete
+ * this block when src/ui/story.c defines Story_MissionFinished. */
+void Story_MissionFinished(int won) { (void)won; }
+#endif
+
 int EndScreen_Open(TAK_Platform *platform, const GameWorld *world) {
     (void)platform;
     if (!world) return -1;
@@ -304,9 +322,10 @@ int EndScreen_Open(TAK_Platform *platform, const GameWorld *world) {
     fill_rows(world);
 
     /* Proceed leads back to the skirmish battle room; the original
-     * writes that as its help text (legacy:154043-154060). */
+     * writes that as its help text (legacy:154043-154060). A campaign
+     * mission keeps the dialog's own text, which names the story. */
     GUIWidget *proceed = GUIDialog_FindByName(&es.dialog, "Proceed");
-    if (proceed) {
+    if (proceed && !end_is_campaign()) {
         translate_lookup("SKIRMISH_BATTLE_ROOM", proceed->tooltip,
                          sizeof(proceed->tooltip));
     }
@@ -411,7 +430,17 @@ static int press_named(const char *name) {
         GameSound_PlayUI(w->sound);
     }
     if (tak_stricmp(name, "MainMenu") == 0) return GAMESTATE_MENU;
-    if (tak_stricmp(name, "Proceed") == 0)  return GAMESTATE_BATTLE_SETUP;
+    if (tak_stricmp(name, "Proceed") == 0) {
+        /* A campaign mission goes back to the Book of Deeds, which
+         * takes the verdict and advances the chapter on a win
+         * (legacy:154085-154096). A skirmish goes to the battle room. */
+        if (end_is_campaign()) {
+            const GameWorld *w = World_Get();
+            Story_MissionFinished(w && w->skirmish_local_result > 0);
+            return GAMESTATE_CAMPAIGN;
+        }
+        return GAMESTATE_BATTLE_SETUP;
+    }
     return GAMESTATE_IN_GAME;
 }
 

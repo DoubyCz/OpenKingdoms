@@ -18260,6 +18260,134 @@ TEST(end_screen_shows_defeat_dialog_and_proceeds_to_the_lobby) {
     VFS_Shutdown();
 }
 
+/* Every live unit that belongs to one player, or to every player but
+ * that one, struck down at once. */
+static int verdict_kill_units(int player_id, int others) {
+    int n = 0, killed = 0;
+    const Unit *units = Units_GetActive(&n);
+    for (int i = 0; i < n; i++) {
+        int mine;
+        units = Units_GetActive(&n);
+        if (units[i].alive != UNIT_ALIVE_ACTIVE) continue;
+        mine = units[i].player_id == player_id;
+        if (others ? mine : !mine) continue;
+        Units_DebugKillHandle(i);
+        killed++;
+    }
+    return killed;
+}
+
+/* Load one campaign mission and start the battle. */
+static int verdict_load_mission(TAK_Platform *platform, const char *name,
+                                GameWorld **out_world) {
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, name, sizeof(cfg.map_name) - 1);
+    if (end_load_skirmish(platform, &cfg, out_world) != 0) return -1;
+    return InGame_Init(platform);
+}
+
+/* takmission12_mt names DestroyAllUnits and AllUnitsKilled. The first
+ * wins it, and the verdict screen's Proceed goes back to the Book of
+ * Deeds (legacy:154085-154096). */
+TEST(end_screen_takes_a_won_mission_to_the_book_of_deeds) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+
+    GameWorld *world = NULL;
+    ASSERT_EQ_INT(0, verdict_load_mission(&platform, "takmission12_mt", &world));
+    ASSERT_EQ_INT(1, world->mission.victory_count);
+    ASSERT_EQ_INT(1, world->mission.defeat_count);
+
+    Timer timer;
+    Timer_Init(&timer);
+    timer.max_ticks_per_frame = 30;
+
+    /* Both armies stand and the battle runs on. */
+    timer.accumulator = timer.sim_dt * 2.0;
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
+    ASSERT_EQ_INT(0, world->skirmish_game_over);
+    ASSERT_EQ_INT(0, world->mission_victory);
+    ASSERT_EQ_INT(0, world->mission_defeat);
+
+    /* Every enemy falls. The player's own army is still on the map, so
+     * the defeat condition is not met and the mission is won. */
+    ASSERT(verdict_kill_units(1, 1) > 0);
+    ASSERT(end_run_frames(&platform, world, &timer, 40) >= 0);
+    ASSERT_EQ_INT(1, world->mission_victory);
+    ASSERT_EQ_INT(0, world->mission_defeat);
+    ASSERT_EQ_INT(1, world->skirmish_local_result);
+    ASSERT_EQ_STR("Victory", world->skirmish_end_reason);
+    /* The condition that carried it is recorded and announced once. */
+    ASSERT_EQ_INT(1, world->mission_cond_met[0]);
+    ASSERT_EQ_INT(1, world->mission_cond_celebrated[0]);
+    ASSERT_EQ_INT(1, world->mission_objectives_satisfied);
+
+    /* The banner holds, then the verdict screen takes over. */
+    ASSERT_EQ_INT(0, world->skirmish_stats_open);
+    for (int f = 0; f < 12 && !world->skirmish_stats_open; f++) {
+        timer.accumulator = timer.sim_dt * 30.0;
+        ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
+    }
+    ASSERT_EQ_INT(1, world->skirmish_stats_open);
+    ASSERT_EQ_INT(1, EndScreen_IsOpen());
+    ASSERT(tak_strnicmp(EndScreen_DialogPath(), "data/guis/victory", 17) == 0);
+
+    /* Proceed leaves for the story, not the skirmish battle room. */
+    ASSERT_EQ_INT(GAMESTATE_CAMPAIGN, EndScreen_Press("Proceed"));
+    ASSERT_EQ_STR("ok.wav", EndScreen_LastSound());
+    timer.accumulator = timer.sim_dt;
+    ASSERT_EQ_INT(GAMESTATE_CAMPAIGN, InGame_Tick(&platform, &timer));
+
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* The same mission lost: AllUnitsKilled is the defeat condition, so the
+ * player's army dying ends it with defeat.gui (legacy:239677,
+ * legacy:153765). */
+TEST(end_screen_shows_defeat_when_a_missions_army_dies) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+
+    GameWorld *world = NULL;
+    ASSERT_EQ_INT(0, verdict_load_mission(&platform, "takmission12_mt", &world));
+
+    Timer timer;
+    Timer_Init(&timer);
+    timer.max_ticks_per_frame = 30;
+
+    ASSERT(verdict_kill_units(1, 0) > 0);
+    ASSERT(end_run_frames(&platform, world, &timer, 40) >= 0);
+    ASSERT_EQ_INT(0, world->mission_victory);
+    ASSERT_EQ_INT(1, world->mission_defeat);
+    ASSERT_EQ_INT(-1, world->skirmish_local_result);
+    ASSERT_EQ_STR("Defeat", world->skirmish_end_reason);
+
+    for (int f = 0; f < 12 && !world->skirmish_stats_open; f++) {
+        timer.accumulator = timer.sim_dt * 30.0;
+        ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
+    }
+    ASSERT_EQ_INT(1, EndScreen_IsOpen());
+    ASSERT_EQ_STR("data/guis/defeat.gui", EndScreen_DialogPath());
+    ASSERT_EQ_INT(GAMESTATE_CAMPAIGN, EndScreen_Press("Proceed"));
+
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 /* ── Sound triggers ──────────────────────────────────────────────────
  *
  * These drive real scenarios through the simulation and read back the
@@ -21586,6 +21714,8 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_A, skirmish_expendable_player_stands_until_the_last_unit);
     RUN_UI_TEST(UI_GROUP_D, ai_hunts_the_last_structure_out_of_sight);
     RUN_UI_TEST(UI_GROUP_C, end_screen_shows_victory_dialog_with_the_tallies);
+    RUN_UI_TEST(UI_GROUP_D, end_screen_takes_a_won_mission_to_the_book_of_deeds);
+    RUN_UI_TEST(UI_GROUP_A, end_screen_shows_defeat_when_a_missions_army_dies);
     RUN_UI_TEST(UI_GROUP_B, end_screen_names_creon_by_its_side_data);
     RUN_UI_TEST(UI_GROUP_B, end_screen_shows_defeat_dialog_and_proceeds_to_the_lobby);
     RUN_UI_TEST(UI_GROUP_C, skirmish_ai_issues_attack_orders);
