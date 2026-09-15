@@ -791,7 +791,7 @@ static float projectile_gravity_ppt2(float gravity_adjust) {
 }
 
 /* Launch pitch for a gravity weapon. Legacy solves
- * tan(theta) = k -/+ sqrt(k^2 - 2*rise*k/run - 1) with
+ * the tangent of theta is k -/+ sqrt(k^2 - 2*rise*k/run - 1) with
  * k = v^2 / (g * gravityadjustment * run), taking the low arc unless
  * lobpreferred (legacy:246535). A negative discriminant means the shot
  * cannot reach; legacy then fires flat (legacy:246568). */
@@ -1523,7 +1523,7 @@ static int projectile_height_inside_flyer(const Unit *v, float height) {
 }
 
 /* Legacy projector: sy = −z − (y >> 1) (legacy:197689) —
- * the camera tilt is exactly 0.5, not tan(30°). The old 0.577 made
+ * the camera tilt is exactly 0.5, not the tangent of 30°). The old 0.577 made
  * every model taller than the original and needed per-def y-squash
  * hacks to compensate. */
 static float g_tan_tilt = 0.5f;
@@ -2594,8 +2594,8 @@ static ProjectileEffect *spawn_ring_sparkle(int sprite, int32_t cx, int32_t cy,
                                             int height, int rising,
                                             uint32_t n) {
     float a = (float)(n & 0xffffu) * (6.2831853f / 65536.0f);
-    int32_t x = cx + (int32_t)((float)radius * sinf(a));
-    int32_t y = cy - (int32_t)((float)radius * cosf(a));
+    int32_t x = cx + (int32_t)((float)radius * tak_sinf(a));
+    int32_t y = cy - (int32_t)((float)radius * tak_cosf(a));
     int32_t speed = 0x10000 + (int32_t)((n >> 16) & 0x7fffu) * 2;
     ProjectileEffect *e = spawn_unit_fx_moving(
         sprite, x, y, rising ? ground : ground + height,
@@ -5839,7 +5839,7 @@ static int32_t cob_host_call_function(void *user, int fn_id,
             if (n_args > 1 && args) {
                 int16_t dx = (int16_t)((uint32_t)args[1] >> 16);
                 int16_t dz = (int16_t)((uint32_t)args[1] & 0xffff);
-                int32_t ang = (int32_t)(atan2f((float)dx, (float)dz)
+                int32_t ang = (int32_t)(tak_atan2f((float)dx, (float)dz)
                                         * 65536.0f / 6.2831853f);
                 int32_t hdg = (int32_t)(u->heading * 65536.0f / 6.2831853f);
                 return (hdg - ang) & 0xffff;   /* CCW under LH sense */
@@ -5858,7 +5858,7 @@ static int32_t cob_host_call_function(void *user, int fn_id,
         case 14: {
             /* ATAN(args[1], args[2]) in TA angle units (223263-223265). */
             if (n_args > 2 && args) {
-                return (int32_t)(atan2f((float)args[1], (float)args[2])
+                return (int32_t)(tak_atan2f((float)args[1], (float)args[2])
                                  * 65536.0f / 6.2831853f) & 0xffff;
             }
             return 0;
@@ -6213,7 +6213,7 @@ static void build_stance_args(const Unit *u, const UnitDef *def,
     int32_t bdx = u->cmd_x - u->world_x;
     int32_t bdy = u->cmd_y - u->world_y;
     if (bdx == 0 && bdy == 0) return;
-    int32_t site_ang = (int32_t)(atan2f((float)bdx, -(float)bdy)
+    int32_t site_ang = (int32_t)(tak_atan2f((float)bdx, -(float)bdy)
                                  * 65536.0f / 6.2831853f);
     int32_t hdg_ang = (int32_t)(u->heading * 65536.0f / 6.2831853f);
     out[0] = (site_ang - hdg_ang) & 0xffff;
@@ -7054,7 +7054,7 @@ static int unit_heading_err_units(const Unit *u, int32_t px, int32_t py) {
     float dx = (float)(px - u->world_x);
     float dy = (float)(py - u->world_y);
     if (dx == 0.0f && dy == 0.0f) return 0;
-    float d = atan2f(dx, -dy) - u->heading;
+    float d = tak_atan2f(dx, -dy) - u->heading;
     while (d >  3.14159265f) d -= 6.2831853f;
     while (d < -3.14159265f) d += 6.2831853f;
     if (d < 0.0f) d = -d;
@@ -7298,7 +7298,7 @@ static int walk_tick(Unit *u, const UnitDef *def, int32_t gx, int32_t gy) {
         float dx = (float)(ax - u->world_x);
         float dy = (float)(ay - u->world_y);
         if (dx != 0.0f || dy != 0.0f) {
-            float delta = atan2f(dx, -dy) - u->heading;
+            float delta = tak_atan2f(dx, -dy) - u->heading;
             while (delta >  3.14159265f) delta -= 6.2831853f;
             while (delta < -3.14159265f) delta += 6.2831853f;
             if (def->turn_rate > 0.0f) {
@@ -7345,8 +7345,8 @@ static int walk_tick(Unit *u, const UnitDef *def, int32_t gx, int32_t gy) {
     }
 
     /* Move along the heading (legacy:183366-183372). */
-    float dir_x = sinf(u->heading);
-    float dir_y = -cosf(u->heading);
+    float dir_x = tak_sinf(u->heading);
+    float dir_y = -tak_cosf(u->heading);
     float fx = u->subpixel_x + dir_x * v;
     float fy = u->subpixel_y + dir_y * v;
     int32_t mx = (int32_t)floorf(fx);
@@ -7673,7 +7673,7 @@ static int weapon_aim_ready(Unit *u, int slot, int aim_key,
         int32_t adx = aim_x - u->world_x;
         int32_t ady = aim_y - u->world_y;
         if (adx != 0 || ady != 0) {
-            int32_t aim_ang = (int32_t)(atan2f((float)adx, -(float)ady)
+            int32_t aim_ang = (int32_t)(tak_atan2f((float)adx, -(float)ady)
                                         * 65536.0f / 6.2831853f);
             int32_t hdg_ang = (int32_t)(u->heading
                                         * 65536.0f / 6.2831853f);
@@ -7853,7 +7853,7 @@ static void fire_weapon_shot(Unit *u, int shooter_idx, int slot,
                                                   (uint32_t)(slot * 17 + burst_ordinal));
             float unit = ((float)(n & 0xffffu) / 65535.0f) * 2.0f - 1.0f;
             float radians = ((float)wp->spray_angle / 65536.0f) * 6.2831853f;
-            float offset = tanf(radians * 0.5f) * len * unit;
+            float offset = tak_tanf(radians * 0.5f) * len * unit;
             float nx = -dy / len;
             float ny =  dx / len;
             tx += (int32_t)(nx * offset);
@@ -8623,7 +8623,7 @@ static void Units_TickCombat(void) {
              * turret/bowmen PIECES via the COB AimWeapon script while
              * the structure itself stays put. */
             if ((dx != 0 || dy != 0) && def->max_velocity > 0.0f)
-                u->heading = atan2f((float)dx, -(float)dy);
+                u->heading = tak_atan2f((float)dx, -(float)dy);
         } else if ((u->cmd_kind == UNIT_CMD_RECLAIM ||
                     u->cmd_kind == UNIT_CMD_RESURRECT) &&
                    u->target < 0 && u->reclaim_tile_x >= 0) {
@@ -8668,7 +8668,7 @@ static void Units_TickCombat(void) {
                     desired = UNIT_ANIM_BUILDING;
                 }
                 if ((dx != 0 || dy != 0) && def->max_velocity > 0.0f)
-                    u->heading = atan2f((float)dx, -(float)dy);
+                    u->heading = tak_atan2f((float)dx, -(float)dy);
             }
         } else if (u->cmd_kind == UNIT_CMD_LOAD && u->target >= 0 &&
                    (def->cap_flags & UNIT_CAP_TRANSPORT)) {
@@ -8721,7 +8721,7 @@ static void Units_TickCombat(void) {
              * turret/bowmen PIECES via the COB AimWeapon script while
              * the structure itself stays put. */
             if ((dx != 0 || dy != 0) && def->max_velocity > 0.0f)
-                u->heading = atan2f((float)dx, -(float)dy);
+                u->heading = tak_atan2f((float)dx, -(float)dy);
         } else if (u->target >= 0) {
             Unit *t = &g_units[u->target];
             int64_t dx = (int64_t)(t->world_x - u->world_x);
@@ -8762,7 +8762,7 @@ static void Units_TickCombat(void) {
              * pieces aim through the COB AimWeapon script. */
             if (target_in_range && (dx != 0 || dy != 0) &&
                 def->max_velocity > 0.0f)
-                u->heading = atan2f((float)dx, -(float)dy);
+                u->heading = tak_atan2f((float)dx, -(float)dy);
         } else if (u->cmd_kind == UNIT_CMD_ATTACK_GROUND &&
                    def->num_weapons > 0) {
             /* Fire at a map point until a new order (legacy attack-
@@ -8784,7 +8784,7 @@ static void Units_TickCombat(void) {
             }
             if (target_in_range && (dx != 0 || dy != 0) &&
                 def->max_velocity > 0.0f)
-                u->heading = atan2f((float)dx, -(float)dy);
+                u->heading = tak_atan2f((float)dx, -(float)dy);
         } else if (u->cmd_kind == UNIT_CMD_MOVE) {
             desired = UNIT_ANIM_MOVING;
             goal_x = u->cmd_x;
@@ -8861,7 +8861,7 @@ static void Units_TickCombat(void) {
                 /* Face the build site even before arrival — looks
                  * cleaner than walking sideways into it. */
                 if (vx != 0 || vy != 0) {
-                    u->heading = atan2f((float)vx, -(float)vy);
+                    u->heading = tak_atan2f((float)vx, -(float)vy);
                 }
             } else {
                 goal_x = u->world_x;
@@ -8870,7 +8870,7 @@ static void Units_TickCombat(void) {
                  * facing the work, not whatever heading we approached
                  * from. */
                 if (vx != 0 || vy != 0) {
-                    u->heading = atan2f((float)vx, -(float)vy);
+                    u->heading = tak_atan2f((float)vx, -(float)vy);
                 }
             }
             if (arrived_at_site && target_alive_inprog) {
@@ -9968,7 +9968,7 @@ static int unit_factory_build_spot(Unit *f, int32_t *out_x, int32_t *out_y) {
      * mirror submit_run applies to vertices. Legacy composes the same
      * chain and negates z before adding the unit position
      * (legacy:185790-185859). */
-    float ch = cosf(f->heading), sh = sinf(f->heading);
+    float ch = tak_cosf(f->heading), sh = tak_sinf(f->heading);
     float rx = -(ch * mx + sh * mz);
     float rz = -(sh * mx - ch * mz);
     *out_x = f->world_x + (int32_t)lroundf(rx * UNIT_MODEL_TO_WORLD);
@@ -10037,11 +10037,11 @@ int Units_DebugPieceWorldHeading(int handle, const char *piece_name,
     float mz = -xf[node].rot[8];
     tak_free(xf);
     /* Same model->world map the submit path applies to vertices. */
-    float ch = cosf(u->heading), sh = sinf(u->heading);
+    float ch = tak_cosf(u->heading), sh = tak_sinf(u->heading);
     float wx = -(ch * mx + sh * mz);
     float wy = -(sh * mx - ch * mz);
     if (wx == 0.0f && wy == 0.0f) return 0;
-    *out_heading = atan2f(wx, -wy);
+    *out_heading = tak_atan2f(wx, -wy);
     return 1;
 }
 
@@ -10088,7 +10088,7 @@ int Units_DebugPieceWorldOffset(int handle, const char *piece_name,
         c[0] = o[0]; c[1] = o[1]; c[2] = o[2];
     }
     /* Same model->world map the submit path applies to vertices. */
-    const float ch = cosf(u->heading), sh = sinf(u->heading);
+    const float ch = tak_cosf(u->heading), sh = tak_sinf(u->heading);
     out_origin[0]   = -(ch * o[0] + sh * o[2]) * UNIT_MODEL_TO_WORLD;
     out_origin[1]   = o[1] * UNIT_MODEL_TO_WORLD;
     out_origin[2]   = -(sh * o[0] - ch * o[2]) * UNIT_MODEL_TO_WORLD;
@@ -10135,10 +10135,10 @@ static void transform_unit_verts(const UnitMesh *m, const struct GameWorld *worl
     const float uz = (float)u->world_y;
     const float uh = (float)Terrain_SampleHeight(world, u->world_x, u->world_y)
                    + u->flight_alt;   /* airborne units draw at their height */
-    const float ch = cosf(u->heading);
-    const float sh = sinf(u->heading);
-    const float cp = cosf(u->pitch), sp = sinf(u->pitch);
-    const float cr = cosf(u->roll),  sr = sinf(u->roll);
+    const float ch = tak_cosf(u->heading);
+    const float sh = tak_sinf(u->heading);
+    const float cp = tak_cosf(u->pitch), sp = tak_sinf(u->pitch);
+    const float cr = tak_cosf(u->roll),  sr = tak_sinf(u->roll);
     const int   V  = m->vert_count;
 
     /* Construction fade: while under_construction, the building starts
@@ -10736,7 +10736,7 @@ void Units_RenderBuildGhost(TAK_Platform *plat,
     const float uz = (float)world_y;
     const float uh = (float)Terrain_SampleHeight(world, world_x, world_y);
     const float heading = build_heading_for_def(def);
-    const float ch = cosf(heading), sh = sinf(heading);
+    const float ch = tak_cosf(heading), sh = tak_sinf(heading);
     const float y_scale = render_y_scale_for_def(def);
 
     /* Use the ghost's persistent COB engine — same way live units
@@ -10978,8 +10978,8 @@ static void render_selection_rings(const struct GameWorld *world, TAK_Platform *
                 for (int i = 0; i <= DASH_SEG; i++) {
                     float t = (float)i / (float)DASH_SEG;
                     float a = a0 + (a1 - a0) * t;
-                    pts[i].x = fx + cosf(a) * radius_x + thick_dx[pass];
-                    pts[i].y = fy + sinf(a) * radius_y + thick_dy[pass];
+                    pts[i].x = fx + tak_cosf(a) * radius_x + thick_dx[pass];
+                    pts[i].y = fy + tak_sinf(a) * radius_y + thick_dy[pass];
                 }
                 SDL_RenderDrawLinesF(r, pts, DASH_SEG + 1);
             }
@@ -11094,9 +11094,9 @@ static void submit_static_mesh_run(TAK_Platform *plat,
             const float ux = p->world_x;
             const float uz = p->world_y;
             const float uh = p->height;
-            const float ch = cosf(p->heading), sh = sinf(p->heading);
-            const float cp = cosf(p->pitch),   sp = sinf(p->pitch);
-            const float cr = cosf(p->roll),    sr = sinf(p->roll);
+            const float ch = tak_cosf(p->heading), sh = tak_sinf(p->heading);
+            const float cp = tak_cosf(p->pitch),   sp = tak_sinf(p->pitch);
+            const float cr = tak_cosf(p->roll),    sr = tak_sinf(p->roll);
             const int v_off = ci * V;
             for (int v = 0; v < V; v++) {
                 const uint16_t node = m->vert_node_idx[v];
@@ -12172,7 +12172,7 @@ static void transform_shadow_verts(const UnitMesh *m,
     const float base_x = (float)(u->world_x - world->cam_x) + 5.0f;
     const float base_y = (float)(u->world_y - world->cam_y)
                        - (float)(shadow_ground_height(world, u) >> 1);
-    const float ch = cosf(u->heading), sh = sinf(u->heading);
+    const float ch = tak_cosf(u->heading), sh = tak_sinf(u->heading);
     const int   V  = m->vert_count;
 
     compose_node_xforms(m, u->cob ? u->cob->pieces : NULL, g_scratch_node_xform);

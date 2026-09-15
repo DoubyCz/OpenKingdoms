@@ -715,6 +715,17 @@ set(TAK_INTEGER_ONLY_SOURCES
 )
 string(JOIN "|" TAK_INTEGER_ONLY_ARG ${TAK_INTEGER_ONLY_SOURCES})
 
+# Files that may use float but must take their trigonometry from
+# include/tak_trig.h rather than the platform's libm. units.c writes
+# heading, pitch and the subpixel position, all of which the sim hash
+# reads, and tak_math.h is the shared 3D header it builds poses with.
+# See cmake/libm_guard.cmake.
+set(TAK_OWN_TRIG_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/render/units.c
+    ${CMAKE_SOURCE_DIR}/include/tak_math.h
+)
+string(JOIN "|" TAK_OWN_TRIG_ARG ${TAK_OWN_TRIG_SOURCES})
+
 # ── HPI decompression + public API tests ────────────────────────────────────
 add_executable(test_hpi
     core/hpi/test_hpi.c
@@ -2039,6 +2050,9 @@ if(BUILD_TESTING)
     add_test(NAME test_float_guard COMMAND ${CMAKE_COMMAND}
              -DFILES=${TAK_INTEGER_ONLY_ARG}
              -P ${CMAKE_SOURCE_DIR}/cmake/float_guard.cmake)
+    add_test(NAME test_libm_guard COMMAND ${CMAKE_COMMAND}
+             -DFILES=${TAK_OWN_TRIG_ARG}
+             -P ${CMAKE_SOURCE_DIR}/cmake/libm_guard.cmake)
     add_test(NAME test_ui_order_lint
              COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}
                      -P ${CMAKE_SOURCE_DIR}/cmake/order_lint.cmake)
