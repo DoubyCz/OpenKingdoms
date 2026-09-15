@@ -1523,7 +1523,7 @@ static int projectile_height_inside_flyer(const Unit *v, float height) {
 }
 
 /* Legacy projector: sy = −z − (y >> 1) (legacy:197689) —
- * the camera tilt is exactly 0.5, not the tangent of 30°). The old 0.577 made
+ * the camera tilt is exactly 0.5, not the tangent of 30°. The old 0.577 made
  * every model taller than the original and needed per-def y-squash
  * hacks to compensate. */
 static float g_tan_tilt = 0.5f;
