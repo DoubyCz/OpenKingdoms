@@ -65,3 +65,44 @@ share of the frame count, never below the first frame and never past
 the last (:158702-158710). The exact float expression is not readable in the
 legacy reference, but the inputs are the percentage and the count and the
 result is clamped to 1..count.
+
+## In the browser
+
+The decoder is the same FFmpeg 7.1.1 the desktop release builds, the
+Bink decoder and demuxer and nothing else, compiled with Emscripten by
+scripts/build-ffmpeg-wasm.sh and linked in by scripts/build-wasm.sh
+and the site workflow. bink_player.c is unchanged: it opens a clip by
+path with fopen and streams it frame by frame. --enable-small takes
+200 KB off the archives. The engine's wasm grows from 1.62 MB to
+2.44 MB, and from 553 KB to 915 KB gzipped, which is what the wire
+carries. The site build caches the installed prefix on the FFmpeg and
+Emscripten versions, so a push does not build FFmpeg again.
+
+The page never copies a clip into the engine's memory. The archives
+are copied, 289 MB of them, and that is already most of what the tab
+holds. The Movies folder is another 539 MB, of which the engine plays
+39 MB: the logo, the intro, the two credits reels and the seventeen
+pieces under Gui. Those are the only ones the page takes, and each one
+becomes a file node in the in-memory filesystem whose reads slice the
+File the player picked, or its copy in browser storage, a megabyte at a
+time. A slice comes across through a synchronous request on a blob
+URL. That is the one way the main thread can read a File without
+waiting on a promise, and the engine runs on the main thread with no
+way to wait, since the build has ASYNCIFY off. Four slices a clip stay
+cached, enough for a door clip to rewind without a second read and for
+a reel to stream front to back. The other two designs were WORKERFS,
+which mounts File objects for free but only inside a worker, and a
+custom AVIOContext fed from JavaScript, which would have needed the
+same synchronous read plus a second open path in the player.
+
+The names are lower cased when mounted. An install spells them
+LOGO.BIK and CREDITS.BIK, the engine asks for logo.bik and
+Credits.bik, and the lookup's third try is the lower case name.
+
+Measured with scripts/web-smoke.js against the GOG install on this
+machine, in headless Edge on the software renderer: the logo opened in
+24 ms and its frames a second apart differed in 50 percent of the
+pixels, the sixteen door clips opened in 2 to 9 ms each, a hovered
+machine door changed 12 to 18 percent of its pixels every 250 ms and
+the door at rest changed none, and the credits reel opened from a
+click on its door and moved.

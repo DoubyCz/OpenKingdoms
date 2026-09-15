@@ -50,15 +50,18 @@ contributes its map, so adding one cannot change anything else.
 
 The hosted page at <https://openkingdoms.net/> asks for
 your game folder on the first visit. Chrome and Edge can pick the folder
-itself, which also picks up the `Music/` tracks and the `Maps/` packs.
-Firefox and Safari take the archives and the `.kmp` map packs through the
-file button or by drag and drop (no music that way). A Start button then
-launches the engine. The click matters,
-since browsers keep audio muted until the page has had one. The page reads the archives locally in the browser
+itself, which also picks up the `Music/` tracks, the `Maps/` packs and
+the `Movies/` clips the menu and the reels play. Firefox and Safari take
+the archives and the `.kmp` map packs through the file button or by drag
+and drop (no music or clips that way). A Start button then launches the
+engine. The click matters, since browsers keep audio muted until the
+page has had one. The page reads the archives locally in the browser
 and, with the "remember" box ticked, keeps a copy in the browser's private
-storage (OPFS) so later visits boot without asking. Nothing is uploaded.
-The "Forget my game files" link at the bottom of the page deletes that
-copy.
+storage (OPFS) so later visits boot without asking. The clips are read
+in place from the folder, or from that copy, a piece at a time as they
+play, and only the ones the engine plays (about 39 MB of the 539) are
+kept. Nothing is uploaded. The "Forget my game files" link at the bottom
+of the page deletes that copy.
 
 ### Native builds today: at build time
 
