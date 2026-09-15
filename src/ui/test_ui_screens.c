@@ -7854,6 +7854,198 @@ TEST(story_screen_renders_book_of_deeds) {
     VFS_Shutdown();
 }
 
+/* The campaign list is a scan of camps\*.tdf named through the
+ * translate table (legacy:141576, 143362). An Iron Plague install ships
+ * three such files and offers two books: ipalt.tdf is the data the
+ * hidden Play swaps in and no table names it. */
+TEST(story_offers_both_campaigns_with_the_expansion) {
+    if (mount_iron_plague() != 0) SKIP("no game dir");
+    if (!install_has_iron_plague_files()) {
+        VFS_Shutdown();
+        SKIP("install has no Iron Plague");
+    }
+    int count = Story_CampaignCount();
+    char first[64] = "", second[64] = "";
+    if (count > 0) snprintf(first, sizeof first, "%s", Story_CampaignName(0));
+    if (count > 1) snprintf(second, sizeof second, "%s", Story_CampaignName(1));
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(2, count);
+    ASSERT_EQ_STR("Book of Darien", first);
+    ASSERT_EQ_STR("The Iron Plague", second);
+}
+
+TEST(story_offers_one_campaign_in_the_base_game) {
+    if (mount_base_game() != 0) SKIP("no game dir");
+    int count = Story_CampaignCount();
+    char first[64] = "";
+    if (count > 0) snprintf(first, sizeof first, "%s", Story_CampaignName(0));
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(1, count);
+    ASSERT_EQ_STR("Book of Darien", first);
+}
+
+TEST(story_never_offers_the_alternate_iron_plague_file) {
+    if (mount_iron_plague() != 0) SKIP("no game dir");
+    if (!install_has_iron_plague_files()) {
+        VFS_Shutdown();
+        SKIP("install has no Iron Plague");
+    }
+    int count = Story_CampaignCount();
+    int alt_offered = 0;
+    for (int i = 0; i < count; i++) {
+        const char *f = Story_CampaignFile(i);
+        if (f && tak_stricmp(f, "ipalt.tdf") == 0) alt_offered = 1;
+    }
+    int alt_present = VFS_FileExists("camps/ipalt.tdf") == 0;
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(1, alt_present);
+    ASSERT_EQ_INT(0, alt_offered);
+}
+
+/* ChapterText is the localised title, keyed by the campaign's mission
+ * name (legacy:144520-144540), not the raw name the .tdf carries. */
+TEST(story_chapter_title_is_the_localised_one) {
+    if (mount_iron_plague() != 0) SKIP("no game dir");
+    if (!install_has_iron_plague_files()) {
+        VFS_Shutdown();
+        SKIP("install has no Iron Plague");
+    }
+    char darien[96] = "", plague[96] = "";
+    Story_SelectCampaign(0);
+    snprintf(darien, sizeof darien, "%s", Story_ChapterText());
+    Story_SelectCampaign(1);
+    snprintf(plague, sizeof plague, "%s", Story_ChapterText());
+    VFS_Shutdown();
+
+    ASSERT_EQ_STR("All Hell Broken Loose", darien);
+    ASSERT_EQ_STR("Blood and Gold", plague);
+}
+
+/* The chapter art frame is the chapter number for Book of Darien and
+ * 0x32 above it for The Iron Plague, clamped to zero past the art's
+ * last frame (legacy:144484-144513). */
+TEST(story_chapter_image_frame_follows_the_campaign) {
+    if (mount_iron_plague() != 0) SKIP("no game dir");
+    if (!install_has_iron_plague_files()) {
+        VFS_Shutdown();
+        SKIP("install has no Iron Plague");
+    }
+    Story_SelectCampaign(0);
+    Story_UnlockAllChapters();
+    Story_SelectChapter(0);
+    int darien_first = Story_ChapterImageFrame();
+    Story_SelectChapter(5);
+    int darien_sixth = Story_ChapterImageFrame();
+    Story_SelectCampaign(1);
+    Story_UnlockAllChapters();
+    Story_SelectChapter(0);
+    int plague_first = Story_ChapterImageFrame();
+    int plague_last_chapter = Story_ChapterCount() - 1;
+    Story_SelectChapter(plague_last_chapter);
+    int plague_last = Story_ChapterImageFrame();
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(1, darien_first);
+    ASSERT_EQ_INT(6, darien_sixth);
+    ASSERT_EQ_INT(24, plague_last_chapter);
+    ASSERT_EQ_INT(0x32, plague_first);
+    ASSERT_EQ_INT(0x32 + 24, plague_last);
+}
+
+/* Shift held on Play, on The Iron Plague's last chapter, launches the
+ * mission that ships with no chapter of its own (legacy:143903-143923). */
+TEST(story_shift_play_on_the_last_chapter_launches_the_hidden_one) {
+    if (mount_iron_plague() != 0) SKIP("no game dir");
+    if (!install_has_iron_plague_files()) {
+        VFS_Shutdown();
+        SKIP("install has no Iron Plague");
+    }
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+
+    Story_SelectCampaign(1);
+    Story_UnlockAllChapters();
+    Story_SelectChapter(Story_ChapterCount() - 1);
+
+    int plain_next = Story_StartChapter(&platform, 0);
+    GameWorld *world = World_Get();
+    char plain[96] = "";
+    if (world) snprintf(plain, sizeof plain, "%s", world->map_name);
+    World_End(&platform);
+
+    int shift_next = Story_StartChapter(&platform, 1);
+    world = World_Get();
+    char shifted[96] = "";
+    if (world) snprintf(shifted, sizeof shifted, "%s", world->map_name);
+    World_End(&platform);
+
+    teardown_platform(&platform);
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(GAMESTATE_GAME_LOADING, plain_next);
+    ASSERT_EQ_INT(GAMESTATE_GAME_LOADING, shift_next);
+    ASSERT_EQ_STR("takx25_dh", plain);
+    ASSERT_EQ_STR("takx26_dh", shifted);
+}
+
+/* The page turners stop at the furthest chapter reached. A win moves
+ * it on, a loss leaves it (legacy:144404-144422). */
+TEST(story_a_won_mission_opens_the_next_chapter) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    Story_SelectCampaign(0);
+    Story_SelectChapter(0);
+    int start_high = Story_HighWaterChapter();
+
+    Story_MissionFinished(0);
+    int after_loss = Story_HighWaterChapter();
+    int chapter_after_loss = Story_SelectedChapter();
+
+    Story_MissionFinished(1);
+    int after_win = Story_HighWaterChapter();
+    int chapter_after_win = Story_SelectedChapter();
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(0, start_high);
+    ASSERT_EQ_INT(0, after_loss);
+    ASSERT_EQ_INT(0, chapter_after_loss);
+    ASSERT_EQ_INT(1, after_win);
+    ASSERT_EQ_INT(1, chapter_after_win);
+}
+
+/* Typing the cheat sets the high water mark to the whole campaign
+ * (legacy:144228-144232). */
+TEST(story_wasabi_unlocks_every_chapter) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    Story_SelectCampaign(0);
+    Story_SelectChapter(0);
+    int locked = Story_HighWaterChapter();
+    Story_TypeText("wasab");
+    int part_way = Story_HighWaterChapter();
+    Story_TypeText("i");
+    int unlocked = Story_HighWaterChapter();
+    int chapters = Story_ChapterCount();
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(0, locked);
+    ASSERT_EQ_INT(0, part_way);
+    ASSERT_EQ_INT(48, chapters);
+    ASSERT_EQ_INT(chapters - 1, unlocked);
+}
+
+/* BookName carries the player, beside the authored "Book of"
+ * (legacy:144267). The campaign name belongs in the chooser. */
+TEST(story_book_name_is_the_player_not_the_campaign) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    Story_SetPlayerName("Darien");
+    char shown[64] = "";
+    snprintf(shown, sizeof shown, "%s", Story_PlayerName());
+    VFS_Shutdown();
+    ASSERT_EQ_STR("Darien", shown);
+}
+
 /* ── Entry ───────────────────────────────────────────────────────────── */
 
 TEST(tech_tree_all_builder_menus_resolve) {
@@ -21060,6 +21252,15 @@ int main(int argc, char **argv) {
 
     TEST_SUITE("Battle setup screen");
     RUN_UI_TEST(UI_GROUP_D, battle_setup_init_tick_shutdown);
+    RUN_UI_TEST(UI_GROUP_B, story_offers_both_campaigns_with_the_expansion);
+    RUN_UI_TEST(UI_GROUP_B, story_offers_one_campaign_in_the_base_game);
+    RUN_UI_TEST(UI_GROUP_B, story_never_offers_the_alternate_iron_plague_file);
+    RUN_UI_TEST(UI_GROUP_C, story_chapter_title_is_the_localised_one);
+    RUN_UI_TEST(UI_GROUP_C, story_chapter_image_frame_follows_the_campaign);
+    RUN_UI_TEST(UI_GROUP_A, story_shift_play_on_the_last_chapter_launches_the_hidden_one);
+    RUN_UI_TEST(UI_GROUP_A, story_a_won_mission_opens_the_next_chapter);
+    RUN_UI_TEST(UI_GROUP_C, story_wasabi_unlocks_every_chapter);
+    RUN_UI_TEST(UI_GROUP_D, story_book_name_is_the_player_not_the_campaign);
     RUN_UI_TEST(UI_GROUP_D, battle_setup_play_refuses_everyone_on_one_team);
     RUN_UI_TEST(UI_GROUP_B, skirmish_lobby_offers_creon_after_zhon);
     RUN_UI_TEST(UI_GROUP_B, skirmish_lobby_offers_four_sides_in_the_base_game);

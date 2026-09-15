@@ -270,6 +270,45 @@ int Story_Tick(TAK_Platform *platform, float frame_dt) {
     return next;
 }
 
+/* What the screen shows, for the chooser and for the tests. */
+
+int Story_CampaignCount(void) { return 1; }
+
+const char *Story_CampaignName(int index) {
+    return index == 0 ? "Book of Darien" : NULL;
+}
+
+const char *Story_CampaignFile(int index) {
+    return index == 0 ? "book of darien.tdf" : NULL;
+}
+
+int  Story_SelectedCampaign(void) { return 0; }
+void Story_SelectCampaign(int index) { (void)index; }
+
+const char *Story_PlayerName(void) { return ""; }
+void Story_SetPlayerName(const char *name) { (void)name; }
+
+int Story_SelectedChapter(void) { return story.selected; }
+void Story_SelectChapter(int chapter) { story.selected = chapter; }
+int Story_ChapterCount(void) { return story.mission_count; }
+
+const char *Story_ChapterText(void) {
+    if (story.selected < 0 || story.selected >= story.mission_count) return "";
+    return story.missions[story.selected].name;
+}
+
+int Story_ChapterImageFrame(void) { return -1; }
+
+int Story_StartChapter(TAK_Platform *platform, int shift_held) {
+    (void)shift_held;
+    return Story_StartMission(platform, story.selected);
+}
+
+int  Story_HighWaterChapter(void) { return story.mission_count - 1; }
+void Story_MissionFinished(int won) { (void)won; }
+void Story_UnlockAllChapters(void) { }
+void Story_TypeText(const char *text) { (void)text; }
+
 void Story_Shutdown(void) {
     if (!story.initialized) return;
     if (story.rt) GUIRuntime_Destroy(story.rt);
