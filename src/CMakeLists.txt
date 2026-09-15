@@ -755,9 +755,27 @@ string(JOIN "|" TAK_INTEGER_ONLY_ARG ${TAK_INTEGER_ONLY_SOURCES})
 # include/tak_trig.h rather than the platform's libm. units.c writes
 # heading, pitch and the subpixel position, all of which the sim hash
 # reads, and tak_math.h is the shared 3D header it builds poses with.
-# See cmake/libm_guard.cmake.
+# The rest were already clean when the guard was written and are named
+# so they stay that way. Files that may not use float at all are in
+# TAK_INTEGER_ONLY_SOURCES above instead. See cmake/libm_guard.cmake.
 set(TAK_OWN_TRIG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/render/units.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/render/cob.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/render/cob_vm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/render/obj3d.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/render/terrain.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/game/world.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/game/economy.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/game/features.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/game/fog.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/game/ai.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/game/mission.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/game/sim_rand.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/game/sim_hash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/game/game_speed.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/net/command_exec.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/net/command_queue.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/net/match.c
     ${CMAKE_SOURCE_DIR}/include/tak_math.h
 )
 string(JOIN "|" TAK_OWN_TRIG_ARG ${TAK_OWN_TRIG_SOURCES})
