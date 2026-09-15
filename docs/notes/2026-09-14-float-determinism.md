@@ -71,10 +71,13 @@ Only `tak_tanf` is slower, 16.8 ns against 13.0, and it is called once
 per shot from a weapon with a spray angle.
 
 `perf_probe_shadows` draws 64 units for 60 frames and times them. Four
-runs before the migration read 10.6, 10.9, 11.2 and 12.0 ms a frame, and
-two after read 9.9 and 9.9. The probe's own spread is wider than the
-difference, so the honest reading is that the change is not visible
-there, not that it is faster.
+runs before the migration read 10.6, 10.9, 11.2 and 12.0 ms a frame
+without shadows, and four after read 9.9, 9.9, 10.0 and 10.2. With
+shadows on it was 18.1, 18.3, 18.8 and 20.8 before, and 16.9, 16.9, 16.9
+and 17.1 after. The after runs are faster and steadier than the before
+runs, but a machine shared with other work is not the place to claim a
+speed up, so the reading to take away is that the cost feared here did
+not appear.
 
 The reason the fear did not materialise is that the model drawing paths
 hoist their trigonometry out of the vertex loop already. `transform_unit_verts`,
