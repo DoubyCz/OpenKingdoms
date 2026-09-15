@@ -246,6 +246,17 @@ async function waitLog(since, re, ms) {
   await page.waitForFunction(() => /In Game/.test(document.title), null, { timeout: BOOT_TIMEOUT });
   console.log('   in game: ' + await page.title());
   await page.waitForTimeout(6000);
+  /* One css pixel is one world pixel only while the canvas element is
+   * the size of its css box. SDL scales a click by element over box,
+   * so a box that drifted from the element would put every click off
+   * by that ratio, growing away from the corner. */
+  const box = await page.evaluate(() => {
+    const c = window.Module.canvas, r = c.getBoundingClientRect();
+    return { w: c.width, h: c.height, cssW: Math.round(r.width), cssH: Math.round(r.height) };
+  });
+  if (box.w !== box.cssW || box.h !== box.cssH)
+    return fail('canvas element ' + box.w + 'x' + box.h + ' is not its css box ' + box.cssW + 'x' + box.cssH + ': clicks would land off by that ratio', 'canvas-box');
+  console.log('   canvas element ' + box.w + 'x' + box.h + ' is its css box');
   /* Every map the player handed over has to be in the chooser, map
    * packs included. */
   const counts = log.slice(mark)

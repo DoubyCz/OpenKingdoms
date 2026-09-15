@@ -68,7 +68,7 @@ jobs:
           done
 
       - name: Build
-        run: cmake --build build-wasm --parallel --target tak-re test_trig test_sim_probe
+        run: cmake --build build-wasm --parallel --target tak-re test_trig test_sim_probe test_click_map
 
       # The browser is one of the platforms a room holds together, so
       # it has to reach the same bits from the same arithmetic. The
@@ -92,6 +92,13 @@ jobs:
       - name: The simulation carries its own trigonometry
         run: |
           cmake -DFILES="src/render/units.c|include/tak_math.h" -P cmake/libm_guard.cmake
+
+      # A click lands on the same world pixel in the browser as on the
+      # desktop: the window to canvas, window to world and pointer to
+      # ground arithmetic, pinned in numbers over a range of window
+      # sizes and pixel ratios (src/ui/test_click_map.c).
+      - name: The browser puts a click where the desktop does
+        run: node build-wasm/src/test_click_map.js
 
       # A map fingerprint has to come out the same in the browser as it
       # does natively, or matched players would be told their maps differ.

@@ -111,6 +111,7 @@ set(TAK_UI_SOURCES
     ui/select_game.c
     ui/translate.c
     ui/ingame.c
+    ui/click_map.c
     ui/ingame_debug_keys.c
     ui/ingame_keys.c
     ui/save_browser.c
@@ -350,6 +351,7 @@ set(TAK_SCREEN_TEST_SOURCES
     ui/credits.c
     ui/story.c
     ui/ingame.c
+    ui/click_map.c
     ui/ingame_debug_keys.c
     ui/ingame_keys.c
     ui/save_browser.c
@@ -479,6 +481,18 @@ if(NOT MSVC AND NOT EMSCRIPTEN)
     target_link_libraries(test_sim_probe PRIVATE m)
 endif()
 
+# The screen to world mapping, pinned in numbers. No SDL and no data,
+# built for the browser too, so a click lands on the same world pixel
+# on every platform we ship. See src/ui/click_map.c.
+add_executable(test_click_map
+    ui/test_click_map.c
+    ui/click_map.c
+)
+
+target_include_directories(test_click_map PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+
 if(EMSCRIPTEN)
     return()
 endif()
@@ -580,6 +594,7 @@ add_executable(test_unit_stall
     ui/credits.c
     ui/story.c
     ui/ingame.c
+    ui/click_map.c
     ui/ingame_debug_keys.c
     ui/ingame_keys.c
     ui/save_browser.c
@@ -2039,6 +2054,7 @@ if(BUILD_TESTING)
     add_test(NAME test_io          COMMAND test_io)
     add_test(NAME test_util        COMMAND test_util)
     add_test(NAME test_trig        COMMAND test_trig)
+    add_test(NAME test_click_map   COMMAND test_click_map)
     add_test(NAME test_framework_self COMMAND test_framework_self)
     add_test(NAME test_hpi_vfs     COMMAND test_hpi_vfs)
     add_test(NAME test_dataset     COMMAND test_dataset)

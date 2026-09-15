@@ -8,6 +8,7 @@
  */
 
 #include "tak_platform.h"
+#include "tak_click_map.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <string.h>
@@ -332,31 +333,24 @@ int TAK_Platform_MouseThisFrame(const TAK_Platform *plat, int *out_cx, int *out_
 int TAK_Platform_MapMouseToCanvas(const TAK_Platform *plat,
                                    int wx, int wy,
                                    int *out_cx, int *out_cy) {
-    if (!plat || plat->window_w <= 0 || plat->window_h <= 0) return 0;
-    /* The canvas is now stretched to fill the window (no letterbox).
-     * Mouse coords map by the full-window aspect ratio. */
-    int cx = (int)((float)wx * (float)plat->canvas_w / (float)plat->window_w);
-    int cy = (int)((float)wy * (float)plat->canvas_h / (float)plat->window_h);
-    if (cx < 0 || cy < 0 || cx >= plat->canvas_w || cy >= plat->canvas_h)
-        return 0;
-    if (out_cx) *out_cx = cx;
-    if (out_cy) *out_cy = cy;
-    return 1;
+    if (!plat) return 0;
+    /* The canvas is stretched over the whole window, no letterbox. The
+     * arithmetic lives in click_map.c so the browser build checks it. */
+    return ClickMap_WindowToCanvas(plat->window_w, plat->window_h,
+                                   plat->canvas_w, plat->canvas_h,
+                                   wx, wy, out_cx, out_cy);
 }
 
 SDL_Rect TAK_Platform_CanvasRectToWindow(const TAK_Platform *plat,
                                           SDL_Rect r) {
     SDL_Rect o = r;
-    if (!plat || plat->canvas_w <= 0 || plat->canvas_h <= 0) return o;
-    /* Same transform TAK_Platform_Present uses for the canvas texture
-     * (full-window stretch, no letterbox), inverted from
-     * TAK_Platform_MapMouseToCanvas. Scale the far edge rather than the
-     * width so adjacent rects stay seamless. */
-    float sx = (float)plat->window_w / (float)plat->canvas_w;
-    float sy = (float)plat->window_h / (float)plat->canvas_h;
-    o.x = (int)((float)r.x * sx + 0.5f);
-    o.y = (int)((float)r.y * sy + 0.5f);
-    o.w = (int)((float)(r.x + r.w) * sx + 0.5f) - o.x;
-    o.h = (int)((float)(r.y + r.h) * sy + 0.5f) - o.y;
+    if (!plat) return o;
+    /* Same transform TAK_Platform_Present uses for the canvas texture,
+     * inverted from TAK_Platform_MapMouseToCanvas. */
+    int out[4];
+    ClickMap_CanvasRectToWindow(plat->window_w, plat->window_h,
+                                plat->canvas_w, plat->canvas_h,
+                                r.x, r.y, r.w, r.h, out);
+    o.x = out[0]; o.y = out[1]; o.w = out[2]; o.h = out[3];
     return o;
 }
