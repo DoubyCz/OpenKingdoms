@@ -950,6 +950,11 @@
         throw new FS.ErrnoError(5);
       }
     };
+    /* A reel is closed when it ends. The doors stay open and keep theirs. */
+    ops.close = function (stream) {
+      slices = {};
+      order = [];
+    };
     node.stream_ops = ops;
   }
 
