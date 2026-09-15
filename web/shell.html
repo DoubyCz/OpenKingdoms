@@ -880,13 +880,9 @@
   }
 
   /* ---- clips, read in place ---------------------------------------- */
-  /* The Movies folder is half a gigabyte, so a clip is never copied
-     into the engine's memory the way an archive is. It is a file node
-     whose reads slice the File on disk (or in browser storage) a
-     megabyte at a time through a synchronous request on a blob URL,
-     the one way the main thread can read a File without waiting on a
-     promise. The decoder streams a clip front to back, so a few
-     slices are all that stays around. */
+  /* A clip is a file node whose reads slice the picked File a megabyte
+     at a time through a synchronous request on a blob URL, never a
+     copy in memory. docs/notes/2026-09-14-menu-clips-and-cut-scenes.md. */
   var SLICE = 1048576;
   var KEEP = 4;
 

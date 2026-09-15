@@ -36,11 +36,9 @@ jobs:
           emcc --version
           echo "version=$(emcc -dumpversion)" >> "$GITHUB_OUTPUT"
 
-      # The menu doors and the reels are Bink clips, and a page without
-      # the decoder shows them still. Only the Bink decoder is built,
-      # once per FFmpeg version, Emscripten version and configure line,
-      # and the installed prefix is cached on those so a push does not
-      # rebuild it.
+      # The Bink decoder for the menu doors and the reels, built once
+      # per FFmpeg version, Emscripten version and configure line, and
+      # the installed prefix cached on those.
       - name: Cache FFmpeg for the browser
         uses: actions/cache@v6
         with:

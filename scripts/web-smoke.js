@@ -320,12 +320,9 @@ async function waitLog(since, re, ms) {
     console.log('   ' + playing.trim() + ', audio context running');
   }
 
-  /* 7. clips: the folder pick brought the Movies clips, mounted in
-     place rather than copied, and a plain reload brings them back the
-     same way from browser storage. The logo reel plays before the
-     menu, a hovered door plays its clip, and the Credits door plays
-     the reel. The step before booted with --skirmish, which skips the
-     logo, so this one boots the menu. */
+  /* 7. clips: back from browser storage read in place, the logo reel,
+     a hovered door's pixels moving, the Credits reel. Step 6 booted
+     with --skirmish, which skips the logo, so this boots the menu. */
   console.log('7. clips (logo, doors, credits)');
   const picked = log.slice(mark).find(t => /(\d+) clip\(s\) ready/.test(t));
   const npicked = picked ? parseInt(picked.match(/(\d+) clip\(s\)/)[1], 10) : 0;
