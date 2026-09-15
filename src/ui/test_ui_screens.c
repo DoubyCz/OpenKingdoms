@@ -16049,6 +16049,17 @@ static int minimap_dot_is(SDL_Surface *s, SDL_Rect d, uint32_t rgba) {
     return 1;
 }
 
+/* Some pixel of the dot is bright enough that dimming it shows. */
+static int minimap_dot_bright(SDL_Surface *s, SDL_Rect d) {
+    for (int y = d.y; y < d.y + d.h; y++)
+        for (int x = d.x; x < d.x + d.w; x++) {
+            uint32_t p = minimap_px(s, x, y);
+            if ((p & 0xFFu) >= 16u || ((p >> 8) & 0xFFu) >= 16u ||
+                ((p >> 16) & 0xFFu) >= 16u) return 1;
+        }
+    return 0;
+}
+
 /* Nothing in the dot moved since the baseline shot. */
 static int minimap_dot_unchanged(SDL_Surface *s, SDL_Surface *base, SDL_Rect d) {
     for (int y = d.y; y < d.y + d.h; y++)
@@ -16288,13 +16299,8 @@ TEST(los_off_minimap_blacks_only_unexplored_ground) {
     const size_t cells = (size_t)world->fog_w * (size_t)world->fog_h;
     const int fc = world->fog_cell_px;
 
-    /* The map in full sight, then the black baseline the spots come
-     * from. */
+    /* Nothing seen: the black baseline the spots come from. */
     world->cfg.line_of_sight = 1;
-    memset(world->fog_layers[1], TAK_FOG_VISIBLE, cells);
-    Minimap_Draw(&platform);
-    SDL_Surface *raw = minimap_shoot(&platform);
-    ASSERT(raw != NULL);
     memset(world->fog_layers[1], TAK_FOG_UNEXPLORED, cells);
     Minimap_Draw(&platform);
     SDL_Surface *base = minimap_shoot(&platform);
@@ -16307,12 +16313,24 @@ TEST(los_off_minimap_blacks_only_unexplored_ground) {
                                            &sx[i], &sy[i]));
         ASSERT_EQ_INT(1, Minimap_DebugDotRect(&platform, sx[i], sy[i], &dot[i]));
     }
-    /* Both spots have terrain to show or to lose. */
-    ASSERT_EQ_INT(0, minimap_dot_is(raw, dot[0], 0));
-    ASSERT_EQ_INT(0, minimap_dot_is(raw, dot[1], 0));
 
-    /* Explore a block around the first spot and nothing else. */
+    /* Light a block around the first spot and nothing else. That shot
+     * is what explored ground has to look like with the option off. */
     const int fx = sx[0] / fc, fy = sy[0] / fc;
+    for (int y = fy - 3; y <= fy + 3; y++) {
+        for (int x = fx - 3; x <= fx + 3; x++) {
+            if (x < 0 || y < 0 || x >= world->fog_w || y >= world->fog_h)
+                continue;
+            world->fog_layers[1][y * world->fog_w + x] = TAK_FOG_VISIBLE;
+        }
+    }
+    Minimap_Draw(&platform);
+    SDL_Surface *lit = minimap_shoot(&platform);
+    ASSERT(lit != NULL);
+    /* The spot has terrain bright enough to show or to lose. */
+    ASSERT_EQ_INT(1, minimap_dot_bright(lit, dot[0]));
+    ASSERT_EQ_INT(1, minimap_dot_is(lit, dot[1], 0));
+
     for (int y = fy - 3; y <= fy + 3; y++) {
         for (int x = fx - 3; x <= fx + 3; x++) {
             if (x < 0 || y < 0 || x >= world->fog_w || y >= world->fog_h)
@@ -16321,13 +16339,20 @@ TEST(los_off_minimap_blacks_only_unexplored_ground) {
         }
     }
 
-    /* Line of Sight off: explored ground reads as the map and ground
-     * never explored is black. */
-    world->cfg.line_of_sight = 0;
+    /* With the option on, explored ground out of sight is dimmed. */
     Minimap_Draw(&platform);
     SDL_Surface *shot = minimap_shoot(&platform);
     ASSERT(shot != NULL);
-    ASSERT_EQ_INT(1, minimap_dot_unchanged(shot, raw, dot[0]));
+    ASSERT_EQ_INT(0, minimap_dot_unchanged(shot, lit, dot[0]));
+    SDL_FreeSurface(shot);
+
+    /* With it off the same ground reads as the map, and ground never
+     * explored is still black. */
+    world->cfg.line_of_sight = 0;
+    Minimap_Draw(&platform);
+    shot = minimap_shoot(&platform);
+    ASSERT(shot != NULL);
+    ASSERT_EQ_INT(1, minimap_dot_unchanged(shot, lit, dot[0]));
     ASSERT_EQ_INT(1, minimap_dot_is(shot, dot[1], 0));
     SDL_FreeSurface(shot);
 
@@ -16345,17 +16370,15 @@ TEST(los_off_minimap_blacks_only_unexplored_ground) {
     ASSERT_EQ_INT(1, minimap_dot_is(shot, dot[1], 0));
     SDL_FreeSurface(shot);
 
-    /* With the option on the explored block is dimmed and has no blip,
-     * as before. */
+    /* With the option back on neither enemy draws, as before. */
     world->cfg.line_of_sight = 1;
     Minimap_Draw(&platform);
     shot = minimap_shoot(&platform);
     ASSERT(shot != NULL);
-    ASSERT_EQ_INT(0, minimap_dot_unchanged(shot, raw, dot[0]));
     ASSERT_EQ_INT(0, minimap_dot_is(shot, dot[0], foe_rgba));
     ASSERT_EQ_INT(1, minimap_dot_is(shot, dot[1], 0));
     SDL_FreeSurface(shot);
-    SDL_FreeSurface(raw);
+    SDL_FreeSurface(lit);
     SDL_FreeSurface(base);
 
     InGame_Shutdown();
