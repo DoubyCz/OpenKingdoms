@@ -262,24 +262,28 @@ int Units_CanAttackTarget(int handle, int target_handle) {
     return 0;
 }
 
+/* The original's one draw gate (legacy:206797): the viewer's own units
+ * always, anything else where Fog_ShowsAt says. Picking and the minimap
+ * blips share it (legacy:237319-237321, legacy:208684-208701). */
 static int unit_visible_to_local_player(const GameWorld *world,
                                         const Unit *u) {
     if (!u) return 0;
-    if (!world || !world->cfg.line_of_sight) return 1;
+    if (!world) return 1;
     if (u->player_id == g_local_player) return 1;
-    return Fog_IsVisible(world, u->world_x, u->world_y);
+    return Fog_ShowsAt(world, u->world_x, u->world_y);
 }
 
 int Units_IsVisibleToLocalPlayer(const Unit *u) {
     return unit_visible_to_local_player(World_Get(), u);
 }
 
+/* Shots take the same gate (legacy:246721-246738). */
 static int projectile_visible_to_local_player(const GameWorld *world,
                                               const Projectile *p) {
     if (!p) return 0;
-    if (!world || !world->cfg.line_of_sight) return 1;
+    if (!world) return 1;
     if (p->player_id == g_local_player) return 1;
-    return Fog_IsVisible(world, p->world_x, p->world_y);
+    return Fog_ShowsAt(world, p->world_x, p->world_y);
 }
 
 static uint8_t weapon_visual_kind(const UnitWeapon *wp);
@@ -11583,8 +11587,8 @@ static void render_projectile_effects(const struct GameWorld *world,
     for (int i = 0; i < g_proj_effect_count; i++) {
         const ProjectileEffect *e = &g_proj_effects[i];
         if (!e->alive) continue;
-        if (world->cfg.line_of_sight &&
-            Fog_IsVisible(world, e->world_x, e->world_y) == 0) continue;
+        /* The same gate again (legacy:215736-215749). */
+        if (!Fog_ShowsAt(world, e->world_x, e->world_y)) continue;
         if (proj_sprite_ensure(r, e->sprite_idx) != 0) continue;
         const ProjSpriteArt *ps = &g_proj_sprites[e->sprite_idx];
         int frame = e->age_ticks /

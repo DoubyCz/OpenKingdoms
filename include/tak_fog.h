@@ -25,6 +25,9 @@ int  Fog_IsVisibleForPlayer(const struct GameWorld *world, int player_id,
                             int32_t world_x, int32_t world_y);
 int  Fog_StateAt(const struct GameWorld *world, int32_t world_x, int32_t world_y);
 int  Fog_IsVisible(const struct GameWorld *world, int32_t world_x, int32_t world_y);
+/* The local player's draw test: current sight with Line of Sight on,
+ * explored ground with it off. Presentation only. */
+int  Fog_ShowsAt(const struct GameWorld *world, int32_t world_x, int32_t world_y);
 void Fog_RenderOverlay(const struct GameWorld *world, struct TAK_Platform *plat);
 
 #endif

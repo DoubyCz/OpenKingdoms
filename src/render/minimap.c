@@ -140,8 +140,9 @@ static int minimap_dot_rect(const GameWorld *world, const SDL_Rect *map,
  * (legacy:208470-208524), colouring the blip from the owner's player
  * record rather than the viewer's (legacy:208505). Own units carry the
  * bit unconditionally, anyone else's only while the local player's
- * sight covers the ground they stand on (legacy:208633-208707), which
- * is the rule Units_IsVisibleToLocalPlayer already applies. */
+ * sight covers the ground they stand on, or with Line of Sight off
+ * while that ground is explored (legacy:208633-208707). That is the
+ * rule Units_IsVisibleToLocalPlayer applies. */
 static void minimap_draw_unit_dots(TAK_Platform *plat, const GameWorld *world,
                                    const SDL_Rect *map) {
     int count = 0;
@@ -211,9 +212,10 @@ int Minimap_RenderThumbnail(uint8_t *out_rgb, int tw, int th) {
 
     /* Fog, the same three cases the radar composites: never seen is
      * black, seen and not currently visible is darkened, visible is
-     * left alone. Off with line of sight, as there it is off. */
+     * left alone. The middle case needs Line of Sight on
+     * (legacy:208407-208418, legacy:167211-167219). */
     int viewer = Fog_Viewer();
-    if (world->cfg.line_of_sight && viewer >= 0 &&
+    if (viewer >= 0 &&
         viewer <= TAK_MAX_PLAYERS && world->fog_layers[viewer] &&
         world->map_pixels_w > 0 && world->map_pixels_h > 0) {
         const uint8_t *fog = world->fog_layers[viewer];
@@ -229,6 +231,8 @@ int Minimap_RenderThumbnail(uint8_t *out_rgb, int tw, int th) {
                 if (fx >= world->fog_w) fx = world->fog_w - 1;
                 int st = fog[(size_t)fy * (size_t)world->fog_w + fx];
                 if (st == TAK_FOG_VISIBLE) continue;
+                if (st == TAK_FOG_EXPLORED && !world->cfg.line_of_sight)
+                    continue;
                 uint8_t *p = out_rgb + ((size_t)y * (size_t)tw + x) * 3u;
                 if (st == TAK_FOG_EXPLORED) {
                     /* The radar's stand in for the shade table, which
@@ -306,12 +310,16 @@ void Minimap_Draw(TAK_Platform *plat) {
     /* Per-cell composite, exactly legacy's three cases (:208407-208418):
      * never seen writes 0 (black), seen but not currently visible takes
      * the map byte through the fog shade table, visible takes it raw. */
-    if (world->fog_layers[Fog_Viewer()] && world->cfg.line_of_sight) {
+    if (world->fog_layers[Fog_Viewer()]) {
         SDL_GetRenderDrawBlendMode(plat->renderer, &prev_blend);
         for (int fy = 0; fy < world->fog_h; fy++) {
             for (int fx = 0; fx < world->fog_w; fx++) {
                 int st = world->fog_layers[Fog_Viewer()][fy * world->fog_w + fx];
                 if (st == TAK_FOG_VISIBLE) continue;
+                /* Line of Sight off fills the sight map, so explored
+                 * ground reads raw (legacy:167211-167219). */
+                if (st == TAK_FOG_EXPLORED && !world->cfg.line_of_sight)
+                    continue;
                 if (st == TAK_FOG_EXPLORED) {
                     /* Stand-in for the shade LUT: darken what's there. */
                     SDL_SetRenderDrawBlendMode(plat->renderer,

@@ -16191,6 +16191,182 @@ TEST(minimap_draws_a_dot_per_visible_unit) {
 }
 
 
+/* With Line of Sight off the original draws whatever stands on ground
+ * the player explored earlier and nothing on ground never explored. Its
+ * one gate reads the explored map in that mode (legacy:206877-206884)
+ * and the current sight map with the option on (legacy:206887-206892),
+ * and the pick list is the draw list (legacy:237319-237321). */
+TEST(los_off_draws_what_stands_on_explored_ground) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    GameWorld *world = NULL;
+    ASSERT_EQ_INT(0, gates_setup_world(&platform, &world));
+    ASSERT(world->fog_w > 0 && world->fog_h > 0 && world->fog_cell_px > 0);
+    const size_t cells = (size_t)world->fog_w * (size_t)world->fog_h;
+
+    /* Line of Sight off, and only what the player's units see from
+     * here on counts as explored. */
+    world->cfg.line_of_sight = 0;
+    memset(world->fog_layers[1], TAK_FOG_UNEXPLORED, cells);
+    Fog_Update(world, 1);
+
+    /* Two spots nobody has seen yet, far apart. */
+    int32_t ax = -1, ay = -1, bx = -1, by = -1;
+    for (int gy = 1; gy < 8 && bx < 0; gy++) {
+        for (int gx = 1; gx < 8 && bx < 0; gx++) {
+            int32_t x = (int32_t)((int64_t)world->map_pixels_w * gx / 8);
+            int32_t y = (int32_t)((int64_t)world->map_pixels_h * gy / 8);
+            if (Fog_StateAt(world, x, y) != TAK_FOG_UNEXPLORED) continue;
+            if (ax < 0) { ax = x; ay = y; continue; }
+            if (abs(x - ax) + abs(y - ay) < 800) continue;
+            bx = x;
+            by = y;
+        }
+    }
+    ASSERT(ax >= 0 && bx >= 0);
+
+    /* A scout of the player's sees the first spot and dies there, so
+     * that ground was explored earlier and is out of sight now. */
+    int sword = Units_FindDefByName("ARASWORD");
+    ASSERT(sword >= 0);
+    int scout = Units_Spawn(sword, 1, 0, ax, ay);
+    ASSERT(scout >= 0);
+    Fog_Update(world, 1);
+    ASSERT_EQ_INT(TAK_FOG_VISIBLE, Fog_StateAt(world, ax, ay));
+    ASSERT_EQ_INT(scout, Units_DebugKillHandle(scout));
+    Fog_Update(world, 1);
+    ASSERT_EQ_INT(TAK_FOG_EXPLORED, Fog_StateAt(world, ax, ay));
+    ASSERT_EQ_INT(TAK_FOG_UNEXPLORED, Fog_StateAt(world, bx, by));
+
+    int foe_a = Units_Spawn(sword, 2, 1, ax, ay);
+    int foe_b = Units_Spawn(sword, 2, 1, bx, by);
+    ASSERT(foe_a >= 0 && foe_b >= 0);
+    int n = 0;
+    const Unit *u = Units_GetActive(&n);
+    ASSERT_EQ_INT(1, Units_IsVisibleToLocalPlayer(&u[foe_a]));
+    ASSERT_EQ_INT(0, Units_IsVisibleToLocalPlayer(&u[foe_b]));
+
+    /* What draws can be clicked and nothing else can. */
+    ASSERT_EQ_INT(foe_a, Units_PickAt(ax, tr_drawn_y(world, &u[foe_a]), 8));
+    ASSERT(Units_PickAt(bx, tr_drawn_y(world, &u[foe_b]), 8) != foe_b);
+
+    /* With Line of Sight on the enemy on explored ground out of sight
+     * stays hidden, as it always did. */
+    world->cfg.line_of_sight = 1;
+    ASSERT_EQ_INT(0, Units_IsVisibleToLocalPlayer(&u[foe_a]));
+    ASSERT_EQ_INT(0, Units_IsVisibleToLocalPlayer(&u[foe_b]));
+
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* The minimap with Line of Sight off: ground never explored is black,
+ * explored ground shows the map undimmed, and an enemy blip shows on
+ * explored ground only. The original's terrain pass blacks a cell whose
+ * explored bit is clear whatever the option says, its sight map is full
+ * in that mode (legacy:208407-208418, legacy:167211-167219), and blips
+ * take the drawing's gate (legacy:208684-208701). */
+TEST(los_off_minimap_blacks_only_unexplored_ground) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    GameWorld *world = NULL;
+    ASSERT_EQ_INT(0, gates_setup_world(&platform, &world));
+    ASSERT_EQ_INT(0, InGame_Init(&platform));
+    Timer timer;
+    Timer_Init(&timer);
+    timer.accumulator = 0.0;
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(&platform, &timer));
+    ASSERT_EQ_INT(0, Minimap_Init(&platform));
+    ASSERT(world->fog_w > 0 && world->fog_h > 0 && world->fog_cell_px > 0);
+    const size_t cells = (size_t)world->fog_w * (size_t)world->fog_h;
+    const int fc = world->fog_cell_px;
+
+    /* The map in full sight, then the black baseline the spots come
+     * from. */
+    world->cfg.line_of_sight = 1;
+    memset(world->fog_layers[1], TAK_FOG_VISIBLE, cells);
+    Minimap_Draw(&platform);
+    SDL_Surface *raw = minimap_shoot(&platform);
+    ASSERT(raw != NULL);
+    memset(world->fog_layers[1], TAK_FOG_UNEXPLORED, cells);
+    Minimap_Draw(&platform);
+    SDL_Surface *base = minimap_shoot(&platform);
+    ASSERT(base != NULL);
+
+    SDL_Rect dot[2];
+    int32_t sx[2], sy[2];
+    for (int i = 0; i < 2; i++) {
+        ASSERT_EQ_INT(1, minimap_find_spot(&platform, world, base, dot, i,
+                                           &sx[i], &sy[i]));
+        ASSERT_EQ_INT(1, Minimap_DebugDotRect(&platform, sx[i], sy[i], &dot[i]));
+    }
+    /* Both spots have terrain to show or to lose. */
+    ASSERT_EQ_INT(0, minimap_dot_is(raw, dot[0], 0));
+    ASSERT_EQ_INT(0, minimap_dot_is(raw, dot[1], 0));
+
+    /* Explore a block around the first spot and nothing else. */
+    const int fx = sx[0] / fc, fy = sy[0] / fc;
+    for (int y = fy - 3; y <= fy + 3; y++) {
+        for (int x = fx - 3; x <= fx + 3; x++) {
+            if (x < 0 || y < 0 || x >= world->fog_w || y >= world->fog_h)
+                continue;
+            world->fog_layers[1][y * world->fog_w + x] = TAK_FOG_EXPLORED;
+        }
+    }
+
+    /* Line of Sight off: explored ground reads as the map and ground
+     * never explored is black. */
+    world->cfg.line_of_sight = 0;
+    Minimap_Draw(&platform);
+    SDL_Surface *shot = minimap_shoot(&platform);
+    ASSERT(shot != NULL);
+    ASSERT_EQ_INT(1, minimap_dot_unchanged(shot, raw, dot[0]));
+    ASSERT_EQ_INT(1, minimap_dot_is(shot, dot[1], 0));
+    SDL_FreeSurface(shot);
+
+    /* An enemy on each spot: the one on explored ground gets a blip in
+     * its owner's colour, the one on ground never explored gets none. */
+    int sword = Units_FindDefByName("ARASWORD");
+    ASSERT(sword >= 0);
+    ASSERT(Units_Spawn(sword, 2, 1, sx[0], sy[0]) >= 0);
+    ASSERT(Units_Spawn(sword, 2, 1, sx[1], sy[1]) >= 0);
+    uint32_t foe_rgba = Units_GetTeamColorRGBA(1);
+    Minimap_Draw(&platform);
+    shot = minimap_shoot(&platform);
+    ASSERT(shot != NULL);
+    ASSERT_EQ_INT(1, minimap_dot_is(shot, dot[0], foe_rgba));
+    ASSERT_EQ_INT(1, minimap_dot_is(shot, dot[1], 0));
+    SDL_FreeSurface(shot);
+
+    /* With the option on the explored block is dimmed and has no blip,
+     * as before. */
+    world->cfg.line_of_sight = 1;
+    Minimap_Draw(&platform);
+    shot = minimap_shoot(&platform);
+    ASSERT(shot != NULL);
+    ASSERT_EQ_INT(0, minimap_dot_unchanged(shot, raw, dot[0]));
+    ASSERT_EQ_INT(0, minimap_dot_is(shot, dot[0], foe_rgba));
+    ASSERT_EQ_INT(1, minimap_dot_is(shot, dot[1], 0));
+    SDL_FreeSurface(shot);
+    SDL_FreeSurface(raw);
+    SDL_FreeSurface(base);
+
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+
 /* The stance and gate pairs draw their icons at rest. Frame 1 is the
  * lit state, frame 2 the plain icon, frame 0 the disabled slot; the
  * original sets 1 or 2 outright every update (legacy:150868,
@@ -17333,6 +17509,73 @@ TEST(idle_units_of_a_closed_slot_see_their_foes) {
     teardown_platform(&platform);
     VFS_Shutdown();
 }
+
+/* A simulation guard for the Line of Sight off drawing. An idle unit
+ * takes a foe whatever its side's explored map says, since the original
+ * fills the sight map in that mode (legacy:167211-167219) and the idle
+ * search reads only that. With the option on the same foe on ground the
+ * side has not seen is left alone. */
+TEST(los_off_idle_search_ignores_the_explored_map) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, "two castles", sizeof(cfg.map_name) - 1);
+    ASSERT_EQ_INT(1, cfg.line_of_sight);
+    GameWorld *world = NULL;
+    ASSERT_EQ_INT(0, end_load_skirmish(&platform, &cfg, &world));
+    int n = 0;
+    const Unit *u = Units_GetActive(&n);
+    int sword_def = Units_FindDefByName("ARASWORD");
+    ASSERT(sword_def >= 0);
+    int32_t sx = 0, sy = 0;
+    ASSERT(corpse_find_clear_ground(world, u[0].world_x + 640, u[0].world_y,
+                                    200, &sx, &sy));
+    int foe = Units_Spawn(sword_def, 1, 0, sx, sy);
+    int hunter = Units_Spawn(sword_def, 3, 2, sx + 56, sy);
+    ASSERT(foe >= 0);
+    ASSERT(hunter >= 0);
+    Units_DebugSetAggro(foe, UNIT_AGGRO_PASSIVE);
+    Units_DebugSetAggro(hunter, UNIT_AGGRO_OFFENSIVE);
+    ASSERT_EQ_INT(0, InGame_Init(&platform));
+    Timer timer;
+    Timer_Init(&timer);
+    const size_t cells = (size_t)world->fog_w * (size_t)world->fog_h;
+
+    /* The hunter's side is kept blind: its map is wiped before every
+     * tick, so the foe's ground is never seen or explored. */
+    int took = 0;
+    for (int i = 0; i < 120 && !took; i++) {
+        memset(world->fog_layers[3], TAK_FOG_UNEXPLORED, cells);
+        timer.accumulator = timer.sim_dt;
+        InGame_Tick(&platform, &timer);
+        u = Units_GetActive(&n);
+        took = u[hunter].target >= 0 && u[hunter].target < n &&
+               u[u[hunter].target].player_id == 1;
+    }
+    ASSERT_EQ_INT(0, took);
+
+    world->cfg.line_of_sight = 0;
+    for (int i = 0; i < 240 && !took; i++) {
+        memset(world->fog_layers[3], TAK_FOG_UNEXPLORED, cells);
+        timer.accumulator = timer.sim_dt;
+        InGame_Tick(&platform, &timer);
+        u = Units_GetActive(&n);
+        took = u[hunter].target >= 0 && u[hunter].target < n &&
+               u[u[hunter].target].player_id == 1;
+    }
+    ASSERT(took);
+
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 
 /* A unit's own kills show in the sidebar for your units, hidden at
  * zero (legacy:152496-152506). Reported from play: no kill count. */
@@ -21805,6 +22048,7 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_B, cannoneer_uphill_shell_leaves_the_muzzle_and_lands_on_the_aim);
     RUN_UI_TEST(UI_GROUP_B, hud_rank_shield_follows_the_units_rank);
     RUN_UI_TEST(UI_GROUP_C, idle_units_of_a_closed_slot_see_their_foes);
+    RUN_UI_TEST(UI_GROUP_C, los_off_idle_search_ignores_the_explored_map);
     RUN_UI_TEST(UI_GROUP_A, an_unfinished_kill_earns_nothing);
     RUN_UI_TEST(UI_GROUP_B, sound_cannon_fire_and_impact_are_heard);
     RUN_UI_TEST(UI_GROUP_D, sound_arrow_material_follows_bodytype);
@@ -21846,6 +22090,8 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_B, veteran_swap_keeps_the_crew_drawn);
     RUN_UI_TEST(UI_GROUP_D, minimap_draws_a_dot_per_visible_unit);
     RUN_UI_TEST(UI_GROUP_D, minimap_draws_a_dot_per_visible_unit_in_its_setup_colour);
+    RUN_UI_TEST(UI_GROUP_D, los_off_draws_what_stands_on_explored_ground);
+    RUN_UI_TEST(UI_GROUP_D, los_off_minimap_blacks_only_unexplored_ground);
     RUN_UI_TEST(UI_GROUP_D, a_starved_build_slows_but_never_rots);
     RUN_UI_TEST(UI_GROUP_B, a_builder_whose_frame_dies_drops_the_order);
     RUN_UI_TEST(UI_GROUP_C, healing_spends_mana_over_time);

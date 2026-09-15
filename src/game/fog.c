@@ -283,6 +283,17 @@ int Fog_IsVisible(const GameWorld *world, int32_t world_x, int32_t world_y) {
     return Fog_IsVisibleForPlayer(world, g_fog_viewer, world_x, world_y);
 }
 
+/* The original's draw test for the local player (legacy:206797). With
+ * Line of Sight on it reads the current sight map
+ * (legacy:206887-206892), with it off the explored map
+ * (legacy:206877-206884), so explored ground keeps showing whatever
+ * stands on it. Presentation only, never read by the simulation. */
+int Fog_ShowsAt(const GameWorld *world, int32_t world_x, int32_t world_y) {
+    if (world && !world->cfg.line_of_sight)
+        return Fog_StateAt(world, world_x, world_y) != TAK_FOG_UNEXPLORED;
+    return Fog_IsVisible(world, world_x, world_y);
+}
+
 /* Legacy-exact fog overlay (legacy:130167-130436):
  * the quad lattice is shifted by half a fog cell so each quad's four
  * corners land on the CENTRES of the four surrounding fog cells. Each
