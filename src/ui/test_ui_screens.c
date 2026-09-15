@@ -4391,7 +4391,9 @@ TEST(campaign_loading_spawns_units_and_renders) {
     timer.accumulator = timer.sim_dt;
     next = InGame_Tick(&platform, &timer);
     ASSERT_EQ_INT(GAMESTATE_IN_GAME, next);
-    ASSERT_EQ_INT(world->mission.objective_count,
+    /* The counter tracks the victory list only, and this mission
+     * also carries the implicit defeat condition. */
+    ASSERT_EQ_INT(world->mission.victory_count,
                   world->mission_objectives_satisfied);
     ASSERT_EQ_INT(1, world->mission_victory);
     ASSERT_EQ_INT(0, save_and_check_renderer(&platform,
