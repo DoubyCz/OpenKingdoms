@@ -282,10 +282,17 @@ invisible.
 Every client must simulate bit identically. These rules are binding on
 simulation code.
 
+- No arithmetic the platform is free to round its own way. IEEE 754 pins
+  + - * / and sqrt, so those and floorf are safe anywhere. A sine is not
+  pinned by anything, so simulation code calls tak_sinf and its neighbours
+  from include/tak_trig.h, never libm. cmake/libm_guard.cmake enforces it
+  on the files that write simulation state.
 - No floating point in simulation state. This is the goal and not yet the
   state of the tree. Positions, angles, speeds and accumulators become fixed
   point during the conversion work, with 16.16 for position and 65536 per
-  turn for angles. Floats stay fine for rendering.
+  turn for angles. It is about precision and about matching the original,
+  not about platforms disagreeing, which the rule above already settles.
+  Floats stay fine for rendering.
 - One seeded generator, advanced only by the simulation, never by rendering,
   the interface or audio.
 - No wall clock in the simulation. The tick counter is the only clock.
@@ -295,12 +302,14 @@ simulation code.
 - No uninitialised reads. A field that is garbage on one machine and zero on
   another diverges the match.
 
-Because the browser build is already float safe, and two native machines are
-not yet safe with respect to each other, the join handshake carries a
-determinism class and only clients of the same class share a room. The
-browser class ships first and serves Windows, macOS and Linux players
-immediately. Native clients join the same rooms once the fixed point work
-passes a golden hash check on every build target.
+The join handshake carries a determinism class and only clients of the same
+class share a room. There is one class, TAK_CLASS_OWN_TRIG, and every
+platform is in it, so a Windows, macOS, Linux or browser player can all sit
+in one room. Two data free gates hold it up and both run on all four in CI:
+test_trig pins the arithmetic, and test_sim_probe runs a synthetic battle
+through the real mover and the real combat path and pins the simulation hash
+it reaches. The retired per platform classes keep their numbers so an older
+build, which really would desync, is refused rather than admitted.
 
 ### Catching a desync
 
@@ -460,9 +469,9 @@ out of this repository.
 
 Good entry points, roughly in the order they unblock other work:
 
-- Determinism auditing. Find a float, a `rand()` or a `time()` call reachable
-  from simulation code. Each one is a real bug, and it is the work the native
-  determinism class waits on.
+- Determinism auditing. Find a `rand()`, a `time()` or a libm call reachable
+  from simulation code. Each one is a real bug. The trigonometry is done and
+  guarded, and what is left is everything the guard does not name yet.
 - Taking the piece hierarchy out of the renderer so a headless target can
   step the simulation with no window.
 - Replay recording and playback from the turn log.

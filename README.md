@@ -251,12 +251,13 @@ Choose Multiplayer, type the address of a server and press Enter. The
 address is remembered. Anyone on that server can host a game or join one,
 and a browser player and a desktop player use the same server.
 
-A room holds players whose builds agree on arithmetic, so today the browser
-plays the browser and each desktop platform plays its own. Every platform's
-maths library rounds a sine its own way, which is enough to pull two
-machines apart over a match, so the handshake refuses a mix rather than
-desyncing it, and a game you cannot join is listed greyed with the reason.
-Closing that gap is measured and planned in
+A room holds any of them. Windows, macOS, Linux and browser players play
+together, because the simulation carries its own trigonometry rather than
+borrowing each platform's maths library, which used to round a sine its own
+way and pull two machines apart over a match. Two gates in CI keep it that
+way, and a build old enough to predate them is still refused rather than
+desynced, listed greyed with the reason. The measurement and what was done
+about it are in
 [docs/notes/2026-09-14-float-determinism.md](docs/notes/2026-09-14-float-determinism.md).
 
 See [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md) for the design.

@@ -67,18 +67,12 @@ size_t TAK_Msg_EmptyEncode(uint8_t type, void *out, size_t cap) {
 
 /* ── Handshake ──────────────────────────────────────────────────────── */
 
-/* Each platform's libm rounds sinf, cosf and atan2f its own way, so the
- * class is the platform until the simulation carries its own maths. */
+/* One class for every platform. The simulation carries its own
+ * trigonometry, test_libm_guard keeps libm out of the files that write
+ * simulation state, and test_sim_probe runs a battle on all four
+ * platforms in CI and pins the hash it reaches. */
 uint8_t TAK_Net_DeterminismClass(void) {
-#if defined(__EMSCRIPTEN__)
-    return TAK_CLASS_BROWSER;
-#elif defined(_WIN32)
-    return TAK_CLASS_WINDOWS;
-#elif defined(__APPLE__)
-    return TAK_CLASS_MACOS;
-#else
-    return TAK_CLASS_LINUX;
-#endif
+    return TAK_CLASS_OWN_TRIG;
 }
 
 size_t TAK_Msg_HelloEncode(const TAK_MsgHello *m, void *out, size_t cap) {

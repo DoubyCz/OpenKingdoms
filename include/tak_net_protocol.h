@@ -160,19 +160,20 @@ typedef enum TAK_NetHashGroup {
 } TAK_NetHashGroup;
 
 /* A room's determinism class. Only clients of the same class share a
- * room, which is what lets browser players start before the fixed point
- * conversion makes native builds agree with each other. */
+ * room, and every build that carries the engine's own trigonometry is
+ * in one class, so Windows, macOS, Linux and the browser play together
+ * (docs/notes/2026-09-14-float-determinism.md). */
 typedef enum TAK_NetClass {
-    TAK_CLASS_UNKNOWN = 0,
-    TAK_CLASS_BROWSER = 1,   /* one wasm binary, one libm */
-    TAK_CLASS_NATIVE  = 2,   /* every native build, once the conversion lands */
-    TAK_CLASS_TEST    = 3,   /* the in process harness */
-    /* Until then each platform's libm is its own class. Measured, the
-     * three disagree on sinf, cosf and atan2f, so a room holds one of
-     * them (docs/notes/2026-09-14-float-determinism.md). */
-    TAK_CLASS_WINDOWS = 4,
-    TAK_CLASS_MACOS   = 5,
-    TAK_CLASS_LINUX   = 6
+    TAK_CLASS_UNKNOWN  = 0,
+    TAK_CLASS_BROWSER  = 1,   /* retired, a browser build that used libm */
+    TAK_CLASS_OWN_TRIG = 2,   /* every platform, the simulation's own maths */
+    TAK_CLASS_TEST     = 3,   /* the in process harness */
+    /* Retired with the migration off libm. They are kept so no later
+     * class reuses a number an older build still sends, which would
+     * put two machines that really do disagree into one room. */
+    TAK_CLASS_WINDOWS  = 4,
+    TAK_CLASS_MACOS    = 5,
+    TAK_CLASS_LINUX    = 6
 } TAK_NetClass;
 
 /* The float environment this build simulates in. */
