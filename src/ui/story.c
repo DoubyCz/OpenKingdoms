@@ -217,11 +217,11 @@ static int campaign_known(const char *file) {
     return 0;
 }
 
-/* One camps\*.tdf entry. A book is offered when the translate table
- * names it, which is the line the shipped data draws between the two
- * real campaigns and ipalt.tdf, the file the hidden Play swaps in.
- * Book of Darien is offered whatever the table says: a base install
- * carries no entry for it and it is the only book there. */
+/* One camps\*.tdf entry. Every file the scan finds is a book, and the
+ * blank entry is the only one the original drops (legacy:143366-143377).
+ * The name is the translate table's, and a miss hands back the key
+ * (legacy:267931), so a book no table names reads as its own file name.
+ * The chapter art's catch-all frame exists for exactly those books. */
 static void consider_campaign(const char *path) {
     char file[80];
     lower_copy(file, sizeof(file), path_base(path));
@@ -232,20 +232,19 @@ static void consider_campaign(const char *path) {
 
     /* -pretendnoexpansion cuts the list back to the one book
      * (legacy:141580-141710), as an install without the files does. */
-    int is_darien = tak_stricmp(file, STORY_DARIEN) == 0;
-    if (!is_darien && !TAK_DataSet_HasIronPlague()) return;
-
-    const char *shown = Translate_Find(&story.tt, file);
-    if (!shown && !is_darien) return;
+    if (tak_stricmp(file, STORY_DARIEN) != 0 && !TAK_DataSet_HasIronPlague())
+        return;
 
     StoryCampaign *c = &story.camps[story.camp_count];
     memset(c, 0, sizeof(*c));
     copy_bounded(c->file, sizeof(c->file), file);
-    copy_bounded(c->name, sizeof(c->name), shown ? shown : "Book of Darien");
+    copy_bounded(c->name, sizeof(c->name), Translate_Lookup(&story.tt, file));
     if (read_campaign(c) != 0) return;
     story.camp_count++;
 }
 
+/* The chooser sorts on the shown name, case-insensitively
+ * (legacy:261900-261990, legacy:143490). */
 static int campaign_cmp(const void *a, const void *b) {
     return tak_stricmp(((const StoryCampaign *)a)->name,
                        ((const StoryCampaign *)b)->name);

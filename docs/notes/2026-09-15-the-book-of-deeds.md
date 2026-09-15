@@ -1,8 +1,7 @@
 # The Book of Deeds
 
 The story screen is `bod.gui`, reached from the main menu. This note
-records what the original does on it and where the engine follows,
-along with the one place the engine deliberately does not.
+records what the original does on it and where the engine follows.
 
 ## Which books an install offers
 
@@ -13,6 +12,10 @@ through the translate table, keyed by its own lower case file name
 (legacy:143453). `-pretendnoexpansion` cuts the scan down to `book of
 darien.tdf` alone before anything else looks at it (legacy:141580-141710,
 legacy:143377-143405).
+
+The blank entry is the only one the scan drops
+(legacy:143366-143377). Every other file it finds becomes a book, and
+nothing filters on whether a name for it exists.
 
 The shipped data carries three such files. `data.hpi` has `book of
 darien.tdf` with 48 missions. `IPData.hpi` has `the iron plague.tdf` with
@@ -27,15 +30,23 @@ are named in a translate table, both in `IPEnglish.hpi`'s
 A base install has no `guiexpansion.tdf` at all, so it names neither, and
 it does not need to: one book is the whole list.
 
-**Where the engine differs.** Nothing in the original's own code filters
-the scan by whether a translate entry exists, and the string `ipalt` does
-not appear in the executable anywhere. Read plainly, the original would
-list a third book called `ipalt.tdf`, since a lookup that misses hands
-back the key (legacy:267931). The engine offers only the books a
-translate table names, and offers Book of Darien whatever the table says
-so a base install still has its one book. The visible result is the two
-books a player expects. This is a deliberate deviation and it is in
-docs/MANUAL_DEVIATIONS.md.
+`ipalt.tdf` is named nowhere, and a lookup that misses hands back the key
+it was given (legacy:267931), so that book reads as its own lower case
+file name. The string `ipalt` does not appear in the executable at all.
+It is not a special case in the original and it is not one here: the
+chapter art's catch-all frame at 0x31 exists precisely for a campaign
+file the art does not know by name, which is what makes it plain that
+such files are expected to reach this screen.
+
+An Iron Plague install therefore offers three books. The list is sorted
+on the shown name with a case-insensitive compare
+(legacy:261900-261990, legacy:143490), which puts them in this order:
+
+| shown | file | chapter art |
+| --- | --- | --- |
+| Book of Darien | `book of darien.tdf` | chapter index plus 1 |
+| ipalt.tdf | `ipalt.tdf` | 0x31, every chapter |
+| The Iron Plague | `the iron plague.tdf` | chapter index plus 0x32 |
 
 With more than one book the Change User button opens
 `PlayerCampaignDialogue.gui`, a combined player and campaign chooser, and

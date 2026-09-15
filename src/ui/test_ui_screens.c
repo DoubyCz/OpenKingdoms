@@ -7855,24 +7855,33 @@ TEST(story_screen_renders_book_of_deeds) {
 }
 
 /* The campaign list is a scan of camps\*.tdf named through the
- * translate table (legacy:141576, 143362). An Iron Plague install ships
- * three such files and offers two books: ipalt.tdf is the data the
- * hidden Play swaps in and no table names it. */
-TEST(story_offers_both_campaigns_with_the_expansion) {
+ * translate table (legacy:141576, legacy:143362). The blank entry is the
+ * only one dropped (legacy:143366-143377), so an Iron Plague install
+ * offers all three files it ships. The list is sorted on the shown name,
+ * case-insensitively (legacy:261900-261990). */
+TEST(story_offers_every_campaign_file_with_the_expansion) {
     if (mount_iron_plague() != 0) SKIP("no game dir");
     if (!install_has_iron_plague_files()) {
         VFS_Shutdown();
         SKIP("install has no Iron Plague");
     }
     int count = Story_CampaignCount();
-    char first[64] = "", second[64] = "";
-    if (count > 0) snprintf(first, sizeof first, "%s", Story_CampaignName(0));
-    if (count > 1) snprintf(second, sizeof second, "%s", Story_CampaignName(1));
+    char names[3][64], files[3][64];
+    for (int i = 0; i < 3; i++) {
+        snprintf(names[i], sizeof names[i], "%s",
+                 i < count ? Story_CampaignName(i) : "");
+        snprintf(files[i], sizeof files[i], "%s",
+                 i < count ? Story_CampaignFile(i) : "");
+    }
     VFS_Shutdown();
 
-    ASSERT_EQ_INT(2, count);
-    ASSERT_EQ_STR("Book of Darien", first);
-    ASSERT_EQ_STR("The Iron Plague", second);
+    ASSERT_EQ_INT(3, count);
+    ASSERT_EQ_STR("Book of Darien", names[0]);
+    ASSERT_EQ_STR("ipalt.tdf", names[1]);
+    ASSERT_EQ_STR("The Iron Plague", names[2]);
+    ASSERT_EQ_STR("book of darien.tdf", files[0]);
+    ASSERT_EQ_STR("ipalt.tdf", files[1]);
+    ASSERT_EQ_STR("the iron plague.tdf", files[2]);
 }
 
 TEST(story_offers_one_campaign_in_the_base_game) {
@@ -7886,23 +7895,39 @@ TEST(story_offers_one_campaign_in_the_base_game) {
     ASSERT_EQ_STR("Book of Darien", first);
 }
 
-TEST(story_never_offers_the_alternate_iron_plague_file) {
+/* A lookup that misses hands back the key it was given
+ * (legacy:267931), and no translate table names ipalt.tdf, so the book
+ * reads as its own lower case file name. It carries the same 25
+ * chapters as The Iron Plague except that its last is takx26_dh. */
+TEST(story_a_book_no_table_names_shows_its_file_name) {
     if (mount_iron_plague() != 0) SKIP("no game dir");
     if (!install_has_iron_plague_files()) {
         VFS_Shutdown();
         SKIP("install has no Iron Plague");
     }
-    int count = Story_CampaignCount();
-    int alt_offered = 0;
-    for (int i = 0; i < count; i++) {
+    int alt = -1;
+    for (int i = 0; i < Story_CampaignCount(); i++) {
         const char *f = Story_CampaignFile(i);
-        if (f && tak_stricmp(f, "ipalt.tdf") == 0) alt_offered = 1;
+        if (f && tak_stricmp(f, "ipalt.tdf") == 0) alt = i;
+    }
+    char shown[64] = "", last[64] = "";
+    int chapters = 0;
+    if (alt >= 0) {
+        snprintf(shown, sizeof shown, "%s", Story_CampaignName(alt));
+        Story_SelectCampaign(alt);
+        Story_UnlockAllChapters();
+        chapters = Story_ChapterCount();
+        Story_SelectChapter(chapters - 1);
+        snprintf(last, sizeof last, "%s", Story_ChapterText());
     }
     int alt_present = VFS_FileExists("camps/ipalt.tdf") == 0;
     VFS_Shutdown();
 
     ASSERT_EQ_INT(1, alt_present);
-    ASSERT_EQ_INT(0, alt_offered);
+    ASSERT(alt >= 0);
+    ASSERT_EQ_STR("ipalt.tdf", shown);
+    ASSERT_EQ_INT(25, chapters);
+    ASSERT_EQ_STR("Father's Day", last);
 }
 
 /* ChapterText is the localised title, keyed by the campaign's mission
@@ -7916,7 +7941,7 @@ TEST(story_chapter_title_is_the_localised_one) {
     char darien[96] = "", plague[96] = "";
     Story_SelectCampaign(0);
     snprintf(darien, sizeof darien, "%s", Story_ChapterText());
-    Story_SelectCampaign(1);
+    Story_SelectCampaign(2);
     snprintf(plague, sizeof plague, "%s", Story_ChapterText());
     VFS_Shutdown();
 
@@ -7925,8 +7950,9 @@ TEST(story_chapter_title_is_the_localised_one) {
 }
 
 /* The chapter art frame is the chapter number for Book of Darien and
- * 0x32 above it for The Iron Plague, clamped to zero past the art's
- * last frame (legacy:144484-144513). */
+ * 0x32 above it for The Iron Plague. Any other book falls to the
+ * catch-all 0x31, whatever chapter it is open at, which is the branch
+ * ipalt.tdf takes (legacy:144460-144495). */
 TEST(story_chapter_image_frame_follows_the_campaign) {
     if (mount_iron_plague() != 0) SKIP("no game dir");
     if (!install_has_iron_plague_files()) {
@@ -7939,7 +7965,17 @@ TEST(story_chapter_image_frame_follows_the_campaign) {
     int darien_first = Story_ChapterImageFrame();
     Story_SelectChapter(5);
     int darien_sixth = Story_ChapterImageFrame();
+
+    /* ipalt.tdf is named by no table, so it is neither of the two the
+     * art knows and every chapter of it draws the one generic frame. */
     Story_SelectCampaign(1);
+    Story_UnlockAllChapters();
+    Story_SelectChapter(0);
+    int alt_first = Story_ChapterImageFrame();
+    Story_SelectChapter(Story_ChapterCount() - 1);
+    int alt_last = Story_ChapterImageFrame();
+
+    Story_SelectCampaign(2);
     Story_UnlockAllChapters();
     Story_SelectChapter(0);
     int plague_first = Story_ChapterImageFrame();
@@ -7950,6 +7986,8 @@ TEST(story_chapter_image_frame_follows_the_campaign) {
 
     ASSERT_EQ_INT(1, darien_first);
     ASSERT_EQ_INT(6, darien_sixth);
+    ASSERT_EQ_INT(0x31, alt_first);
+    ASSERT_EQ_INT(0x31, alt_last);
     ASSERT_EQ_INT(24, plague_last_chapter);
     ASSERT_EQ_INT(0x32, plague_first);
     ASSERT_EQ_INT(0x32 + 24, plague_last);
@@ -7966,7 +8004,7 @@ TEST(story_shift_play_on_the_last_chapter_launches_the_hidden_one) {
     TAK_Platform platform;
     if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
 
-    Story_SelectCampaign(1);
+    Story_SelectCampaign(2);
     Story_UnlockAllChapters();
     Story_SelectChapter(Story_ChapterCount() - 1);
 
@@ -21314,9 +21352,9 @@ int main(int argc, char **argv) {
 
     TEST_SUITE("Battle setup screen");
     RUN_UI_TEST(UI_GROUP_D, battle_setup_init_tick_shutdown);
-    RUN_UI_TEST(UI_GROUP_B, story_offers_both_campaigns_with_the_expansion);
+    RUN_UI_TEST(UI_GROUP_B, story_offers_every_campaign_file_with_the_expansion);
     RUN_UI_TEST(UI_GROUP_B, story_offers_one_campaign_in_the_base_game);
-    RUN_UI_TEST(UI_GROUP_B, story_never_offers_the_alternate_iron_plague_file);
+    RUN_UI_TEST(UI_GROUP_B, story_a_book_no_table_names_shows_its_file_name);
     RUN_UI_TEST(UI_GROUP_C, story_chapter_title_is_the_localised_one);
     RUN_UI_TEST(UI_GROUP_C, story_chapter_image_frame_follows_the_campaign);
     RUN_UI_TEST(UI_GROUP_A, story_shift_play_on_the_last_chapter_launches_the_hidden_one);

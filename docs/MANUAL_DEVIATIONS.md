@@ -720,22 +720,18 @@ Format per entry:
 - Citation: Manual §III Saving and Loading describes files in a
   directory, which is what a desktop has and a browser does not.
 
-## D-011: Only a campaign the translate table names is offered
+## D-011: Withdrawn
 
-- Change: The story screen lists the `camps/*.tdf` files an install
-  carries, and offers one only when a translate table names it, with
-  Book of Darien always offered because a base install names nothing.
-  An Iron Plague install therefore offers Book of Darien and The Iron
-  Plague, and not `ipalt.tdf`.
-- Why: `ipalt.tdf` is `the iron plague.tdf` with `takx26_dh` in place of
-  `takx25_dh` as the last chapter. No translate table names it and the
-  original's own code never names it either, so listing it would put a
-  book called "ipalt.tdf" in front of the player and give away a hidden
-  mission. The original's campaign scan has no such filter, so read
-  plainly it would list that third book. The engine takes the data files
-  at their word instead.
-- Citation: Manual §II describes the Book of Deeds as the campaign the
-  player is playing, and names one campaign per product. There is no
-  third campaign in either manual.
+- This entry proposed listing only a campaign the translate table names,
+  which would have kept `ipalt.tdf` out of the story screen's chooser.
+  It is withdrawn and nothing in the engine implements it.
+- Why: the original anticipates campaign files it does not know by name.
+  The chapter art picks its frame by comparing the campaign's file name
+  against `the iron plague.tdf`, the blank entry and `book of
+  darien.tdf` in that order, and everything else falls to a catch-all
+  frame of 0x31 (legacy:144460-144495). A file like `ipalt.tdf` is
+  exactly what that catch-all is for, so the original lists it and draws
+  it with the generic frame. The engine now does the same. See
+  docs/notes/2026-09-15-the-book-of-deeds.md.
 
 *(More entries added as deviations land.)*
