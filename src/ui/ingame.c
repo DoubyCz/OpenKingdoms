@@ -245,6 +245,24 @@ static void InGame_EvaluateSkirmishRules(GameWorld *world) {
             world->skirmish_winner_team, world->skirmish_end_tick);
 }
 
+/* The verdict for a campaign mission. The original reads the victory
+ * list first and only then the defeat list, so a tick that satisfies
+ * both is a win (legacy:206655-206672). */
+static void InGame_ReadMissionVerdict(GameWorld *world, int victory, int defeat) {
+    if (world->skirmish_game_over) return;
+    if (!victory && !defeat) return;
+    world->skirmish_game_over = 1;
+    world->skirmish_end_tick = world->mission_elapsed_ticks;
+    world->skirmish_winner_team = 0;
+    world->skirmish_local_result = victory ? 1 : -1;
+    strncpy(world->skirmish_end_reason, victory ? "Victory" : "Defeat",
+            sizeof(world->skirmish_end_reason) - 1);
+    /* One cue for any outcome (legacy:240280). */
+    GameSound_PlayUI("Victory Condition");
+    fprintf(stderr, "Mission: %s at tick %d\n", world->skirmish_end_reason,
+            world->mission_elapsed_ticks);
+}
+
 static void InGame_EvaluateMissionObjectives(GameWorld *world) {
     int unit_count = 0;
     const Unit *units;
@@ -276,18 +294,29 @@ static void InGame_EvaluateMissionObjectives(GameWorld *world) {
     }
 
     for (int i = 0; i < world->mission.objective_count; i++) {
-        if (Mission_ObjectiveSatisfied(&world->mission.objectives[i],
-                                       snapshots, unit_count, 1,
-                                       world->mission_elapsed_seconds)) {
-            satisfied++;
+        const MissionObjective *obj = &world->mission.objectives[i];
+        int met = Mission_ObjectiveSatisfied(obj, snapshots, unit_count, 1,
+                                             world->mission_elapsed_seconds);
+        if (met && obj->role == MISSION_ROLE_VICTORY) satisfied++;
+        /* Met once stays met, and the line goes out once. */
+        if (met && i < TAK_MISSION_MAX_CONDITIONS) {
+            world->mission_cond_met[i] = 1;
+            if (!world->mission_cond_celebrated[i]) {
+                world->mission_cond_celebrated[i] = 1;
+                fprintf(stderr, "Mission condition met: %s\n", obj->key);
+            }
         }
     }
     world->mission_objectives_satisfied = satisfied;
     world->mission_victory =
-        Mission_AllObjectivesSatisfied(&world->mission, snapshots,
-                                       unit_count, 1,
-                                       world->mission_elapsed_seconds);
+        Mission_VictoryMet(&world->mission, snapshots, unit_count, 1,
+                           world->mission_elapsed_seconds);
+    world->mission_defeat =
+        Mission_DefeatMet(&world->mission, snapshots, unit_count, 1,
+                          world->mission_elapsed_seconds);
     free(snapshots);
+    InGame_ReadMissionVerdict(world, world->mission_victory,
+                              world->mission_defeat);
 }
 
 /* Per-subsystem sim timing (ms, cumulative): 0 ai, 1 engines,
@@ -302,6 +331,15 @@ static double prof_now_ms(void) {
 /* Banner time before the statistics screen: 90 ticks at the original's
  * 30 Hz (legacy:206566), 180 here. */
 #define IG_BANNER_TICKS 180
+
+/* The banner holds over the running battle and then the statistics
+ * screen takes over, on whichever clock the battle counts. */
+static void InGame_OpenStatsAfterBanner(GameWorld *world, int elapsed) {
+    if (!world->skirmish_game_over || world->skirmish_stats_open) return;
+    if (elapsed - world->skirmish_end_tick >= IG_BANNER_TICKS) {
+        world->skirmish_stats_open = 1;
+    }
+}
 
 static void InGame_SimulationStep(GameWorld *world) {
     if (!world || !world->loaded) return;
@@ -364,13 +402,11 @@ static void InGame_SimulationStep(GameWorld *world) {
         world->mission_elapsed_ticks++;
         world->mission_elapsed_seconds = world->mission_elapsed_ticks / 60;
         InGame_EvaluateMissionObjectives(world);
+        InGame_OpenStatsAfterBanner(world, world->mission_elapsed_ticks);
     } else {
         world->skirmish_elapsed_ticks++;
         InGame_EvaluateSkirmishRules(world);
-        if (world->skirmish_game_over && !world->skirmish_stats_open &&
-            world->skirmish_elapsed_ticks - world->skirmish_end_tick >= IG_BANNER_TICKS) {
-            world->skirmish_stats_open = 1;
-        }
+        InGame_OpenStatsAfterBanner(world, world->skirmish_elapsed_ticks);
     }
     PerfProbe_AfterTick(world, prof_now_ms() - t0);
 }

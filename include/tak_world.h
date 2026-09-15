@@ -96,6 +96,12 @@ typedef struct GameWorld {
     int          mission_elapsed_seconds;
     int          mission_objectives_satisfied;
     int          mission_victory;
+    int          mission_defeat;
+    /* One entry per condition, in mission.objectives order. A condition
+     * that has been met stays met, and the line it prints is printed
+     * once (legacy:164957-164958). */
+    uint8_t      mission_cond_met[TAK_MISSION_MAX_CONDITIONS];
+    uint8_t      mission_cond_celebrated[TAK_MISSION_MAX_CONDITIONS];
 
     /* Skirmish end-state. Campaign maps use MissionData objectives;
      * skirmish maps use the original's unit-count rule (docs/notes/
