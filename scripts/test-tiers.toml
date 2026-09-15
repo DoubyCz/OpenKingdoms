@@ -147,6 +147,7 @@ ui = [
   ["sound_", 14],
   ["skirmish_monarch_death_ends_match", 1],
   ["end_screen_shows_defeat_dialog_and_proceeds_to_the_lobby", 1],
+  ["end_screen_shows_defeat_when_a_missions_army_dies", 1],
 ]
 
 [[tier1]]
@@ -198,7 +199,7 @@ ui = [
   ["mp_room", 21],
   ["options_", 1],
   ["story_", 11],
-  ["end_screen", 3],
+  ["end_screen", 5],
   ["main_menu", 6],
   ["credits_screen", 2],
   ["damage_bars_follow_visual_option", 1],
@@ -249,6 +250,8 @@ ctest = "^(test_command_pipeline|test_mission|test_movement|test_render_cache|te
 ui = [
   ["campaign_loading_spawns_units_and_renders", 1],
   ["story_play_starts_campaign_loading", 1],
+  ["end_screen_takes_a_won_mission_to_the_book_of_deeds", 1],
+  ["end_screen_shows_defeat_when_a_missions_army_dies", 1],
 ]
 
 [[tier1]]

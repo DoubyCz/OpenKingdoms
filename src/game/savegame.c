@@ -58,7 +58,7 @@ _Static_assert(CFGB_END == TAK_CFGB_BYTES, "CFGB layout and width disagree");
 #define WRLD_END_REASON     (WRLD_KINGDOM + WRLD_KINGDOM_CAP)
 #define WRLD_END_REASON_CAP 64u
 #define WRLD_SCALARS        (WRLD_END_REASON + WRLD_END_REASON_CAP)
-#define WRLD_SCALAR_COUNT   12u
+#define WRLD_SCALAR_COUNT   13u
 #define WRLD_STATS          (WRLD_SCALARS + WRLD_SCALAR_COUNT * 4u)
 #define WRLD_STAT_BYTES     24u
 /* The diplomacy a battle sets, and the seats that gave up. One byte a
@@ -70,7 +70,11 @@ _Static_assert(CFGB_END == TAK_CFGB_BYTES, "CFGB layout and width disagree");
 #define WRLD_SHARE_UNITS    (WRLD_SHARE_VISION + WRLD_DIPLO_N)
 #define WRLD_SHARE_MANA     (WRLD_SHARE_UNITS + WRLD_DIPLO_N)
 #define WRLD_RESIGNED       (WRLD_SHARE_MANA + WRLD_DIPLO_N)
-#define WRLD_END            (WRLD_RESIGNED + (TAK_MAX_PLAYERS + 1))
+/* One byte a condition for met and for celebrated, so a reloaded
+ * mission does not announce a condition twice. */
+#define WRLD_COND_MET       (WRLD_RESIGNED + (TAK_MAX_PLAYERS + 1))
+#define WRLD_COND_CELEB     (WRLD_COND_MET + TAK_MISSION_MAX_CONDITIONS)
+#define WRLD_END            (WRLD_COND_CELEB + TAK_MISSION_MAX_CONDITIONS)
 _Static_assert(WRLD_END == TAK_WRLD_BYTES, "WRLD layout and width disagree");
 
 /* The scalars, in the order they are written. */
@@ -86,6 +90,7 @@ _Static_assert(WRLD_END == TAK_WRLD_BYTES, "WRLD layout and width disagree");
 #define WS_MI_OBJECTIVES   9u
 #define WS_MI_VICTORY     10u
 #define WS_RAND_STATE     11u
+#define WS_MI_DEFEAT      12u
 
 #define CAMR_X 0u
 #define CAMR_Y 4u
@@ -2010,6 +2015,12 @@ static void encode_wrld(uint8_t *p, const GameWorld *w) {
     /* The simulation generator. A load that does not restore it drifts
      * from the first draw on, and seeding cannot put it back. */
     tak_put_u32(s + WS_RAND_STATE    * 4, World_RandState());
+    tak_put_i32(s + WS_MI_DEFEAT     * 4, (int32_t)w->mission_defeat);
+
+    for (int i = 0; i < TAK_MISSION_MAX_CONDITIONS; i++) {
+        tak_put_u8(p + WRLD_COND_MET + (size_t)i, w->mission_cond_met[i]);
+        tak_put_u8(p + WRLD_COND_CELEB + (size_t)i, w->mission_cond_celebrated[i]);
+    }
 
     for (int i = 0; i <= TAK_MAX_PLAYERS; i++) {
         uint8_t *t = p + WRLD_STATS + (size_t)i * WRLD_STAT_BYTES;
@@ -2054,7 +2065,13 @@ static void apply_wrld(const uint8_t *p, GameWorld *w) {
     w->mission_elapsed_seconds      = tak_get_i32(s + WS_MI_SECONDS    * 4);
     w->mission_objectives_satisfied = tak_get_i32(s + WS_MI_OBJECTIVES * 4);
     w->mission_victory              = tak_get_i32(s + WS_MI_VICTORY    * 4);
+    w->mission_defeat               = tak_get_i32(s + WS_MI_DEFEAT     * 4);
     World_SetRandState(tak_get_u32(s + WS_RAND_STATE * 4));
+
+    for (int i = 0; i < TAK_MISSION_MAX_CONDITIONS; i++) {
+        w->mission_cond_met[i] = tak_get_u8(p + WRLD_COND_MET + (size_t)i);
+        w->mission_cond_celebrated[i] = tak_get_u8(p + WRLD_COND_CELEB + (size_t)i);
+    }
 
     for (int i = 0; i <= TAK_MAX_PLAYERS; i++) {
         const uint8_t *t = p + WRLD_STATS + (size_t)i * WRLD_STAT_BYTES;
@@ -2129,8 +2146,10 @@ int Save_Write(const char *path, char *err, size_t err_cap) {
     TAK_SaveHeader hdr;
     Save_HeaderInit(&hdr);
     hdr.schema_version = TAK_SAVE_SCHEMA_VERSION;
-    /* A campaign map counts its own clock and carries objectives. */
-    int campaign = w->mission.objective_count > 0;
+    /* A campaign map counts its own clock and carries the mission's
+     * conditions and army. The in-game menu draws the same line. */
+    int campaign = w->mission.objective_count > 0 ||
+                   w->mission.placement_count > 0;
     hdr.save_kind = campaign ? TAK_SAVE_KIND_CAMPAIGN_BATTLE
                              : TAK_SAVE_KIND_SKIRMISH;
     if (campaign) hdr.flags |= TAK_SAVE_F_CAMPAIGN;

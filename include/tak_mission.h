@@ -61,11 +61,25 @@ typedef enum MissionObjectiveType {
     MISSION_OBJ_UNIT_TYPE_KILLED,
     MISSION_OBJ_UNIT_TYPE_PASSES_X,
     MISSION_OBJ_UNIT_TYPE_PASSES_Z,
-    MISSION_OBJ_VICTORY_TIMER_RUNS_OUT
+    MISSION_OBJ_VICTORY_TIMER_RUNS_OUT,
+    MISSION_OBJ_BUILD_UNIT_TYPE,
+    MISSION_OBJ_CAPTURE_UNIT_TYPE,
+    MISSION_OBJ_ANY_UNIT_PASSES_X,
+    MISSION_OBJ_ANY_UNIT_PASSES_Z
 } MissionObjectiveType;
+
+/* The original keeps two condition lists: eleven victory conditions
+ * combined with AND and seven defeat conditions combined with OR
+ * (legacy:239243-239850). */
+typedef enum MissionConditionRole {
+    MISSION_ROLE_VICTORY = 0,
+    MISSION_ROLE_DEFEAT  = 1
+} MissionConditionRole;
 
 typedef struct MissionObjective {
     MissionObjectiveType type;
+    /* MISSION_ROLE_VICTORY or MISSION_ROLE_DEFEAT. */
+    int  role;
     char key[32];
     char text[64];
     int a;
@@ -82,6 +96,10 @@ typedef struct MissionUnitSnapshot {
     int  mobile;
     int  commander;
 } MissionUnitSnapshot;
+
+/* Eleven victory keys plus seven defeat keys is the whole vocabulary,
+ * and no shipped mission names more than three. */
+#define TAK_MISSION_MAX_CONDITIONS 18
 
 /* GlobalHeader PlayerN lines, N = 1..10, as written ("logo 6 CREON").
  * Index 0 is unused. */
@@ -101,6 +119,9 @@ typedef struct MissionData {
     int placement_count;
     MissionObjective *objectives;
     int objective_count;
+    /* How many of `objectives` carry each role. */
+    int victory_count;
+    int defeat_count;
 } MissionData;
 
 int  Mission_LoadOTA(const char *vfs_path, MissionData *out);
@@ -112,11 +133,27 @@ int  Mission_ObjectiveSatisfied(const MissionObjective *objective,
                                 int unit_count,
                                 int local_player,
                                 int elapsed_seconds);
-int  Mission_AllObjectivesSatisfied(const MissionData *mission,
-                                    const MissionUnitSnapshot *units,
-                                    int unit_count,
-                                    int local_player,
-                                    int elapsed_seconds);
+/* Victory needs every victory condition at once and never fires with
+ * none of them (legacy:239922). Defeat needs any one of the defeat
+ * conditions (legacy:239952). Victory is read first, so it wins a tie. */
+int  Mission_VictoryMet(const MissionData *mission,
+                        const MissionUnitSnapshot *units,
+                        int unit_count,
+                        int local_player,
+                        int elapsed_seconds);
+int  Mission_DefeatMet(const MissionData *mission,
+                       const MissionUnitSnapshot *units,
+                       int unit_count,
+                       int local_player,
+                       int elapsed_seconds);
+
+/* The conditions the original adds when a mission names none: a
+ * victory by destroying every enemy outside campaign mode, and a
+ * defeat when the player's own army dies (legacy:239825-239851).
+ * Mission_LoadOTA applies this with campaign_mode set, because every
+ * file it reads is a campaign mission. Applying it again is a no-op
+ * unless the mode differs. */
+void Mission_ApplyImplicitConditions(MissionData *mission, int campaign_mode);
 void Mission_FreeCommands(MissionCommand *commands);
 void Mission_Free(MissionData *mission);
 

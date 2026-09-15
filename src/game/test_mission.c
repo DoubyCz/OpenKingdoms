@@ -171,8 +171,11 @@ TEST(loads_known_campaign_mission) {
     ASSERT_EQ_STR("Aramon", mission.kingdom);
     ASSERT_EQ_INT(6, mission.size_x);
     ASSERT_EQ_INT(6, mission.size_y);
-    ASSERT_EQ_INT(1, mission.objective_count);
+    ASSERT_EQ_INT(2, mission.objective_count);
+    ASSERT_EQ_INT(1, mission.victory_count);
+    ASSERT_EQ_INT(1, mission.defeat_count);
     ASSERT_EQ_INT(MISSION_OBJ_MOVE_UNIT_TO_RADIUS, mission.objectives[0].type);
+    ASSERT_EQ_INT(MISSION_ROLE_VICTORY, mission.objectives[0].role);
     ASSERT_EQ_STR("NPCEMEN", mission.objectives[0].text);
     ASSERT_EQ_INT(130, mission.objectives[0].a);
     ASSERT_EQ_INT(76, mission.objectives[0].b);
@@ -398,15 +401,34 @@ TEST(evaluates_objective_vocabulary) {
     obj.c = 15;
     ASSERT(Mission_ObjectiveSatisfied(&obj, units, 4, 1, 0));
 
-    obj.type = MISSION_OBJ_UNIT_TYPE_KILLED;
+    obj.type = MISSION_OBJ_KILL_UNIT_TYPE;
     strcpy(obj.text, "TARSOLD");
     ASSERT(Mission_ObjectiveSatisfied(&obj, units, 4, 1, 0));
+
+    /* The defeat key of the pair asks the same question. Which list it
+     * is in is what makes one a win and the other a loss. */
+    obj.type = MISSION_OBJ_UNIT_TYPE_KILLED;
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 4, 1, 0));
+    strcpy(obj.text, "NPCEMEN");
+    ASSERT(!Mission_ObjectiveSatisfied(&obj, units, 4, 1, 0));
+    units[2].alive = 0;
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 4, 1, 0));
+    units[2].alive = 1;
 
     obj.type = MISSION_OBJ_KILL_ENEMY_COMMANDER;
     strcpy(obj.text, "TARKING");
     ASSERT(!Mission_ObjectiveSatisfied(&obj, units, 4, 1, 0));
     units[1].alive = 0;
     ASSERT(Mission_ObjectiveSatisfied(&obj, units, 4, 1, 0));
+
+    /* CommanderKilled is the defeat side of the same pair: it reads the
+     * player's own monarch, which is still standing. */
+    obj.type = MISSION_OBJ_COMMANDER_KILLED;
+    obj.text[0] = '\0';
+    ASSERT(!Mission_ObjectiveSatisfied(&obj, units, 4, 1, 0));
+    units[0].alive = 0;
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 4, 1, 0));
+    units[0].alive = 1;
 
     obj.type = MISSION_OBJ_DESTROY_ALL_UNITS;
     ASSERT(Mission_ObjectiveSatisfied(&obj, units, 4, 1, 0));
@@ -439,8 +461,11 @@ TEST(evaluates_all_objectives) {
     mission.objectives[0].a = 130;
     mission.objectives[0].b = 76;
     mission.objectives[0].c = 15;
+    mission.objectives[0].role = MISSION_ROLE_VICTORY;
     mission.objectives[1].type = MISSION_OBJ_VICTORY_TIMER_RUNS_OUT;
     mission.objectives[1].a = 10;
+    mission.objectives[1].role = MISSION_ROLE_VICTORY;
+    mission.victory_count = 2;
 
     memset(units, 0, sizeof(units));
     strcpy(units[0].unitname, "NPCEMEN");
@@ -450,9 +475,262 @@ TEST(evaluates_all_objectives) {
     units[0].alive = 1;
     units[0].mobile = 1;
 
-    ASSERT(!Mission_AllObjectivesSatisfied(&mission, units, 1, 1, 9));
-    ASSERT(Mission_AllObjectivesSatisfied(&mission, units, 1, 1, 10));
+    ASSERT(!Mission_VictoryMet(&mission, units, 1, 1, 9));
+    ASSERT(Mission_VictoryMet(&mission, units, 1, 1, 10));
+    ASSERT(!Mission_DefeatMet(&mission, units, 1, 1, 10));
     Mission_Free(&mission);
+}
+
+
+/* The base campaign. The Iron Plague missions are only mounted in the
+ * archives-only build, so the tallies count takmission* and the role
+ * checks run over every file the archive set offers. */
+#define CORPUS_MISSION_FILES 48
+/* Sixteen of them name only defeat conditions. Campaign mode adds no
+ * implicit victory condition, so no condition wins them
+ * (legacy:239825). */
+#define CORPUS_NO_VICTORY_CONDITION 16
+#define CORPUS_DESTROY_ALL_UNITS 15
+
+/* The role a mission gives one condition key, or -1 when it has none. */
+static int condition_role(const MissionData *mission, const char *key) {
+    for (int i = 0; i < mission->objective_count; i++) {
+        if (tak_stricmp(mission->objectives[i].key, key) == 0) {
+            return mission->objectives[i].role;
+        }
+    }
+    return -1;
+}
+
+/* takmission12_mt names DestroyAllUnits and AllUnitsKilled together.
+ * The original puts them in different lists, so the mission is won by
+ * destroying the enemy and lost by losing its own army
+ * (legacy:239270, legacy:239677). */
+TEST(a_mission_carrying_all_units_killed_is_won_by_its_victory_conditions) {
+    MissionData mission;
+    MissionUnitSnapshot units[2];
+    ensure_vfs();
+    ASSERT_EQ_INT(0, Mission_LoadOTA("missions/missions/takmission12_mt.ota",
+                                     &mission));
+    ASSERT_EQ_INT(2, mission.objective_count);
+    ASSERT_EQ_INT(1, mission.victory_count);
+    ASSERT_EQ_INT(1, mission.defeat_count);
+    ASSERT_EQ_INT(MISSION_ROLE_VICTORY, condition_role(&mission, "DestroyAllUnits"));
+    ASSERT_EQ_INT(MISSION_ROLE_DEFEAT, condition_role(&mission, "AllUnitsKilled"));
+
+    memset(units, 0, sizeof(units));
+    strcpy(units[0].unitname, "ARASWORD");
+    units[0].player = 1;
+    units[0].alive = 1;
+    units[0].mobile = 1;
+    strcpy(units[1].unitname, "TARSOLD");
+    units[1].player = 2;
+    units[1].alive = 1;
+    units[1].mobile = 1;
+
+    /* Both armies stand and nothing is decided. */
+    ASSERT(!Mission_VictoryMet(&mission, units, 2, 1, 0));
+    ASSERT(!Mission_DefeatMet(&mission, units, 2, 1, 0));
+
+    /* The enemy is gone: a win, with the player's own army intact. */
+    units[1].alive = 0;
+    ASSERT(Mission_VictoryMet(&mission, units, 2, 1, 0));
+    ASSERT(!Mission_DefeatMet(&mission, units, 2, 1, 0));
+
+    /* The player's army is gone: a loss. */
+    units[1].alive = 1;
+    units[0].alive = 0;
+    ASSERT(!Mission_VictoryMet(&mission, units, 2, 1, 0));
+    ASSERT(Mission_DefeatMet(&mission, units, 2, 1, 0));
+    Mission_Free(&mission);
+}
+
+/* takmission03_mt names AllUnitsKilled and nothing else, so it has a
+ * way to lose and, in campaign mode, no way to win (legacy:239825,
+ * legacy:239925). */
+TEST(a_mission_with_only_a_defeat_condition_can_still_be_lost) {
+    MissionData mission;
+    MissionUnitSnapshot units[2];
+    ensure_vfs();
+    ASSERT_EQ_INT(0, Mission_LoadOTA("missions/missions/takmission03_mt.ota",
+                                     &mission));
+    ASSERT_EQ_INT(1, mission.objective_count);
+    ASSERT_EQ_INT(0, mission.victory_count);
+    ASSERT_EQ_INT(1, mission.defeat_count);
+    ASSERT_EQ_INT(MISSION_ROLE_DEFEAT, condition_role(&mission, "AllUnitsKilled"));
+
+    memset(units, 0, sizeof(units));
+    strcpy(units[0].unitname, "ARASWORD");
+    units[0].player = 1;
+    units[0].alive = 1;
+    strcpy(units[1].unitname, "TARSOLD");
+    units[1].player = 2;
+    units[1].alive = 1;
+
+    ASSERT(!Mission_VictoryMet(&mission, units, 2, 1, 0));
+    ASSERT(!Mission_DefeatMet(&mission, units, 2, 1, 0));
+    units[1].alive = 0;
+    ASSERT(!Mission_VictoryMet(&mission, units, 2, 1, 0));
+    units[1].alive = 1;
+    units[0].alive = 0;
+    ASSERT(Mission_DefeatMet(&mission, units, 2, 1, 0));
+    Mission_Free(&mission);
+}
+
+/* A mission that names no defeat condition loses when its army dies,
+ * and outside campaign mode one that names no victory condition wins
+ * by destroying every enemy (legacy:239825-239851). */
+TEST(implicit_conditions_follow_the_original) {
+    MissionData mission;
+    ensure_vfs();
+    ASSERT_EQ_INT(0, Mission_LoadOTA("missions/missions/takmission01_mt.ota",
+                                     &mission));
+    ASSERT_EQ_INT(MISSION_ROLE_DEFEAT, condition_role(&mission, "AllUnitsKilled"));
+    ASSERT_EQ_INT(MISSION_OBJ_ALL_UNITS_KILLED, mission.objectives[1].type);
+    Mission_Free(&mission);
+
+    memset(&mission, 0, sizeof(mission));
+    Mission_ApplyImplicitConditions(&mission, 1);
+    ASSERT_EQ_INT(1, mission.objective_count);
+    ASSERT_EQ_INT(0, mission.victory_count);
+    ASSERT_EQ_INT(1, mission.defeat_count);
+    Mission_ApplyImplicitConditions(&mission, 1);
+    ASSERT_EQ_INT(1, mission.objective_count);
+    Mission_Free(&mission);
+
+    memset(&mission, 0, sizeof(mission));
+    Mission_ApplyImplicitConditions(&mission, 0);
+    ASSERT_EQ_INT(2, mission.objective_count);
+    ASSERT_EQ_INT(1, mission.victory_count);
+    ASSERT_EQ_INT(1, mission.defeat_count);
+    ASSERT_EQ_INT(MISSION_OBJ_DESTROY_ALL_UNITS, mission.objectives[0].type);
+    ASSERT_EQ_INT(MISSION_ROLE_VICTORY, mission.objectives[0].role);
+    ASSERT_EQ_INT(MISSION_OBJ_ALL_UNITS_KILLED, mission.objectives[1].type);
+    ASSERT_EQ_INT(MISSION_ROLE_DEFEAT, mission.objectives[1].role);
+    Mission_Free(&mission);
+}
+
+/* The four keys the original reads that no shipped mission names, and
+ * the ANYTYPE wildcard (legacy:239310, legacy:239352, legacy:239791,
+ * legacy:239808, legacy:239493). */
+TEST(evaluates_the_conditions_no_shipped_mission_uses) {
+    MissionUnitSnapshot units[2];
+    MissionObjective obj;
+
+    memset(units, 0, sizeof(units));
+    strcpy(units[0].unitname, "ARAKEEP");
+    units[0].player = 1;
+    units[0].x = 200;
+    units[0].z = 90;
+    units[0].alive = 1;
+    strcpy(units[1].unitname, "TARSOLD");
+    units[1].player = 2;
+    units[1].x = 300;
+    units[1].z = 310;
+    units[1].alive = 1;
+    units[1].mobile = 1;
+
+    /* Built or captured both read as a unit of that type the player
+     * now owns. */
+    memset(&obj, 0, sizeof(obj));
+    obj.type = MISSION_OBJ_BUILD_UNIT_TYPE;
+    strcpy(obj.text, "ARAKEEP");
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    strcpy(obj.text, "ARACASTL");
+    ASSERT(!Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    obj.type = MISSION_OBJ_CAPTURE_UNIT_TYPE;
+    strcpy(obj.text, "TARSOLD");
+    ASSERT(!Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    units[1].player = 1;
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    units[1].player = 2;
+    /* The keys that name a type read every side, so the enemy unit at
+     * x 300 answers the wildcard line at 250. */
+    memset(&obj, 0, sizeof(obj));
+    obj.type = MISSION_OBJ_UNIT_TYPE_PASSES_X;
+    obj.a = 250;
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+
+    /* The bare coordinate pair reads any enemy. */
+    memset(&obj, 0, sizeof(obj));
+    obj.type = MISSION_OBJ_ANY_UNIT_PASSES_X;
+    obj.a = 250;
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    obj.a = 350;
+    ASSERT(!Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    obj.type = MISSION_OBJ_ANY_UNIT_PASSES_Z;
+    obj.a = 300;
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    obj.a = 320;
+    ASSERT(!Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+
+    /* ANYTYPE is stored as no name, and matches whatever the player
+     * owns. */
+    memset(&obj, 0, sizeof(obj));
+    obj.type = MISSION_OBJ_UNIT_TYPE_PASSES_X;
+    obj.a = 150;
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    obj.a = 400;
+    ASSERT(!Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    obj.type = MISSION_OBJ_UNIT_TYPE_PASSES_Z;
+    obj.a = 80;
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    obj.type = MISSION_OBJ_MOVE_UNIT_TO_RADIUS;
+    obj.a = 205;
+    obj.b = 92;
+    obj.c = 10;
+    ASSERT(Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+    obj.c = 2;
+    ASSERT(!Mission_ObjectiveSatisfied(&obj, units, 2, 1, 0));
+}
+
+/* The shipped corpus, split the way the original splits it. Every
+ * mission ends up with a way to lose, AllUnitsKilled is always a
+ * defeat condition, and DestroyAllUnits is always a victory one. */
+TEST(campaign_corpus_splits_conditions_by_role) {
+    MissionData mission;
+    char **paths = NULL;
+    int count = 0;
+    int files = 0, destroy_all = 0;
+    int no_way_to_win = 0, bad_role = 0;
+
+    ensure_vfs();
+    ASSERT_EQ_INT(0, VFS_ListFiles("missions/missions/*.ota", &paths, &count));
+    for (int i = 0; i < count; i++) {
+        const char *base = strrchr(paths[i], '/');
+        base = base ? base + 1 : paths[i];
+        if (has_prefix_ci(paths[i], "missions/missions/") &&
+            Mission_LoadOTA(paths[i], &mission) == 0) {
+            int counted = tak_strnicmp(base, "takmission", 10) == 0;
+            /* The implicit defeat condition guarantees this. */
+            if (mission.defeat_count < 1) bad_role++;
+            if (counted) {
+                files++;
+                if (mission.victory_count == 0) no_way_to_win++;
+                if (condition_role(&mission, "DestroyAllUnits") >= 0) destroy_all++;
+            }
+            for (int j = 0; j < mission.objective_count; j++) {
+                const MissionObjective *obj = &mission.objectives[j];
+                if (obj->role != MISSION_ROLE_VICTORY &&
+                    obj->role != MISSION_ROLE_DEFEAT) bad_role++;
+                if (tak_stricmp(obj->key, "AllUnitsKilled") == 0 &&
+                    obj->role != MISSION_ROLE_DEFEAT) bad_role++;
+                if (tak_stricmp(obj->key, "DestroyAllUnits") == 0 &&
+                    obj->role != MISSION_ROLE_VICTORY) bad_role++;
+            }
+            Mission_Free(&mission);
+        }
+        tak_free(paths[i]);
+    }
+    tak_free(paths);
+    fprintf(stderr, "corpus roles: files=%d destroyall=%d no_victory=%d bad=%d\n",
+            files, destroy_all, no_way_to_win, bad_role);
+    ASSERT_EQ_INT(0, bad_role);
+    ASSERT_EQ_INT(CORPUS_MISSION_FILES, files);
+    /* Campaign mode adds no implicit victory condition, so the tally is
+     * what the files themselves say. */
+    ASSERT_EQ_INT(CORPUS_DESTROY_ALL_UNITS, destroy_all);
+    ASSERT_EQ_INT(CORPUS_NO_VICTORY_CONDITION, no_way_to_win);
 }
 
 int main(int argc, char **argv) {
@@ -467,6 +745,11 @@ int main(int argc, char **argv) {
     RUN(campaign_corpus_placements_parse);
     RUN(evaluates_objective_vocabulary);
     RUN(evaluates_all_objectives);
+    RUN(a_mission_carrying_all_units_killed_is_won_by_its_victory_conditions);
+    RUN(a_mission_with_only_a_defeat_condition_can_still_be_lost);
+    RUN(implicit_conditions_follow_the_original);
+    RUN(evaluates_the_conditions_no_shipped_mission_uses);
+    RUN(campaign_corpus_splits_conditions_by_role);
 
     if (vfs_ready) VFS_Shutdown();
     tak_mem_shutdown();

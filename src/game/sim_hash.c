@@ -420,6 +420,11 @@ static uint32_t hash_world(uint32_t h, const GameWorld *w) {
     h = TAK_HashI32(h, w->mission_elapsed_ticks);
     h = TAK_HashI32(h, w->mission_objectives_satisfied);
     h = TAK_HashI32(h, w->mission_victory);
+    h = TAK_HashI32(h, w->mission_defeat);
+    for (int i = 0; i < TAK_MISSION_MAX_CONDITIONS; i++) {
+        h = TAK_HashI32(h, w->mission_cond_met[i]);
+        h = TAK_HashI32(h, w->mission_cond_celebrated[i]);
+    }
     h = TAK_HashI32(h, w->water_height);
     /* Diplomacy and resignation. They arrive as commands every machine
      * applies, so two peers agree about them, and they decide who
