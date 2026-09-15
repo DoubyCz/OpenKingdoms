@@ -720,4 +720,22 @@ Format per entry:
 - Citation: Manual §III Saving and Loading describes files in a
   directory, which is what a desktop has and a browser does not.
 
+## D-011: Only a campaign the translate table names is offered
+
+- Change: The story screen lists the `camps/*.tdf` files an install
+  carries, and offers one only when a translate table names it, with
+  Book of Darien always offered because a base install names nothing.
+  An Iron Plague install therefore offers Book of Darien and The Iron
+  Plague, and not `ipalt.tdf`.
+- Why: `ipalt.tdf` is `the iron plague.tdf` with `takx26_dh` in place of
+  `takx25_dh` as the last chapter. No translate table names it and the
+  original's own code never names it either, so listing it would put a
+  book called "ipalt.tdf" in front of the player and give away a hidden
+  mission. The original's campaign scan has no such filter, so read
+  plainly it would list that third book. The engine takes the data files
+  at their word instead.
+- Citation: Manual §II describes the Book of Deeds as the campaign the
+  player is playing, and names one campaign per product. There is no
+  third campaign in either manual.
+
 *(More entries added as deviations land.)*
