@@ -72,16 +72,29 @@ the named type, which covers building one and capturing one alike. The
 last two take a bare coordinate and ask whether any enemy unit has
 passed it.
 
-## What is still open
+## Missions that name no victory condition
 
 Sixteen of the 48 base missions and seven of the 26 Iron Plague ones
-name only defeat conditions. Read literally, the rules above give those
-missions no way to win, because campaign mode adds no implicit victory
-condition. The engine sets its victory flag in one place only,
-:206549, reached only from the victory list, so nothing else in the
-game can end those missions. Either the original shipped them that way
-or there is a path this note has not found. The engine follows the
-rules above until someone settles it.
+name only defeat conditions. Campaign mode adds no implicit victory
+condition, so nothing in the condition lists can win them, and the
+engine sets its victory flag in one place only, :206549, reached only
+from the victory list.
+
+Those missions are won by their mission script. Every campaign mission
+can carry one: the original resolves `Missions\<base>.cob` as asset
+slot 2 and loads it at :177668. 63 of them ship, 43 in `missions.hpi`
+and 20 in `IPMissions.hpi`, and all 23 of the missions above are among
+them. The script engine takes the callbacks `Start`, `UnitCreated`,
+`UnitDestroyed`, `TriggerHit` and `Trigger%i`, and offers host
+functions including `SetMission` and `SetTrigger`. It is also what the
+per-player tick asks before it reads the conditions at all, :206644,
+and it is the likely writer of the forced verdict pair on the condition
+object that :240090 and :240122 read.
+
+So there is nothing to decide here and no deviation to record. Those
+missions become winnable when mission scripting lands. Until then they
+run without a way to win, which is the same behaviour the rules above
+give them.
 
 ## Which side a condition reads
 
