@@ -720,4 +720,18 @@ Format per entry:
 - Citation: Manual §III Saving and Loading describes files in a
   directory, which is what a desktop has and a browser does not.
 
+## D-011: Withdrawn
+
+- This entry proposed listing only a campaign the translate table names,
+  which would have kept `ipalt.tdf` out of the story screen's chooser.
+  It is withdrawn and nothing in the engine implements it.
+- Why: the original anticipates campaign files it does not know by name.
+  The chapter art picks its frame by comparing the campaign's file name
+  against `the iron plague.tdf`, the blank entry and `book of
+  darien.tdf` in that order, and everything else falls to a catch-all
+  frame of 0x31 (legacy:144460-144495). A file like `ipalt.tdf` is
+  exactly what that catch-all is for, so the original lists it and draws
+  it with the generic frame. The engine now does the same. See
+  docs/notes/2026-09-15-the-book-of-deeds.md.
+
 *(More entries added as deviations land.)*
