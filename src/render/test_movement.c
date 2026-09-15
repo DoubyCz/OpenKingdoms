@@ -18,6 +18,9 @@
 #include "tak_memory.h"
 #include "tak_battle_config.h"
 #include "tak_ai.h"
+#include "tak_ingame.h"
+#include "tak_command_queue.h"
+#include "tak_terrain.h"
 
 #include <SDL.h>
 #include <stdio.h>
@@ -380,9 +383,121 @@ TEST(a_cold_planner_hashes_the_same) {
     }
 }
 
+/* Ticks until the unit has stood still for a while, or gives up. */
+static int mv_settle(int h, int max_ticks) {
+    int still = 0, t = 0;
+    while (t < max_ticks && still < 120) {
+        Units_TickEngines();
+        t++;
+        const Unit *u = mv_unit(h);
+        if (!u) return t;
+        if (u->velocity == 0 && u->cur_speed_ppt == 0.0f) still++;
+        else still = 0;
+    }
+    return t;
+}
+
+/* A move order ends at the point it was given, whichever way the unit
+ * had to walk to get there. */
+TEST(a_move_order_ends_at_its_point) {
+    static const int32_t goals[][2] = {
+        { 2300, 1500 }, { 700, 1500 }, { 1500, 2300 }, { 1500, 700 },
+        { 2100, 2100 }, { 2317, 1433 }, { 803, 2197 },
+    };
+    static const int defs[] = { MV_DEF_WALKER, MV_DEF_KNIGHT };
+    int64_t worst = 0;
+    for (int d = 0; d < 2; d++) {
+        for (size_t i = 0; i < sizeof(goals) / sizeof(goals[0]); i++) {
+            ASSERT_NOT_NULL(mv_world());
+            int h = Units_Spawn(defs[d], 1, 0, 1500, 1500);
+            ASSERT(h >= 0);
+            Units_CommandMoveUnit(h, goals[i][0], goals[i][1]);
+            int t = mv_settle(h, 6000);
+            const Unit *u = mv_unit(h);
+            ASSERT_NOT_NULL(u);
+            int64_t d2 = mv_dist2(u, goals[i][0], goals[i][1]);
+            printf("\n    def %d goal (%d,%d) stopped at (%d,%d) off by (%d,%d) d2=%lld after %d ticks cmd=%d",
+                   d, goals[i][0], goals[i][1], u->world_x, u->world_y,
+                   (int)(u->world_x - goals[i][0]), (int)(u->world_y - goals[i][1]),
+                   (long long)d2, t, (int)u->cmd_kind);
+            if (d2 > worst) worst = d2;
+            mv_end();
+        }
+    }
+    printf("\n    worst d2=%lld ", (long long)worst);
+    ASSERT(worst <= 8 * 8);
+}
+
+/* Where a unit is drawn: lifted by half the ground's height. */
+static int32_t mv_drawn_y(const Unit *u) {
+    return u->world_y - (int32_t)((float)Terrain_SampleHeight(
+                            World_Get(), u->world_x, u->world_y) *
+                        Units_GetTanTilt());
+}
+
+/* A click on the ground sends the unit to the spot under the pointer,
+ * so it stops where the pointer was, not half the ground's height
+ * above it. The harness ground sits at 64, a 32 px lift. */
+TEST(a_click_sends_the_unit_to_the_ground_under_the_pointer) {
+    static const int32_t clicks[][2] = {
+        { 1500, 1900 }, { 1500, 1100 }, { 1900, 1500 }, { 1180, 1820 },
+    };
+    ASSERT_EQ_INT(32, (int)(MV_GROUND * Units_GetTanTilt()));
+    for (size_t i = 0; i < sizeof(clicks) / sizeof(clicks[0]); i++) {
+        GameWorld *w = mv_world();
+        ASSERT_NOT_NULL(w);
+        w->cam_x = 0;
+        w->cam_y = 0;
+        Units_SetLocalPlayer(1);
+        int h = Units_Spawn(MV_DEF_WALKER, 1, 0, 1500, 1500);
+        ASSERT(h >= 0);
+        Units_SelectSingle(h);
+        InGame_WorldClick(clicks[i][0], clicks[i][1], 0);
+        TAK_CmdQueue_Run();
+        mv_settle(h, 6000);
+        const Unit *u = mv_unit(h);
+        ASSERT_NOT_NULL(u);
+        int32_t dx = u->world_x - clicks[i][0];
+        int32_t dy = mv_drawn_y(u) - clicks[i][1];
+        printf("\n    click (%d,%d) drawn at (%d,%d) off by (%d,%d)",
+               clicks[i][0], clicks[i][1], u->world_x, mv_drawn_y(u),
+               (int)dx, (int)dy);
+        ASSERT(dx * dx + dy * dy <= 10 * 10);
+        mv_end();
+    }
+    printf("\n    ");
+}
+
+/* A marquee takes the units drawn inside it. The box is on the screen,
+ * so a unit counts by where it is drawn, lifted, not by its flat
+ * position half the ground's height below. */
+TEST(a_marquee_takes_the_units_it_is_drawn_over) {
+    GameWorld *w = mv_world();
+    ASSERT_NOT_NULL(w);
+    Units_SetLocalPlayer(1);
+    int h = Units_Spawn(MV_DEF_WALKER, 1, 0, 1500, 1500);
+    ASSERT(h >= 0);
+    const Unit *u = mv_unit(h);
+    ASSERT_NOT_NULL(u);
+    ASSERT_EQ_INT(1468, (int)mv_drawn_y(u));
+    int n = 0;
+    /* Over the drawn unit, clear of its flat position. */
+    InGame_WorldDrag(1450, 1440, 1550, 1490, 0);
+    Units_GetSelection(&n);
+    ASSERT_EQ_INT(1, n);
+    /* Over the flat position, clear of the drawn unit. */
+    InGame_WorldDrag(1450, 1495, 1550, 1540, 0);
+    Units_GetSelection(&n);
+    ASSERT_EQ_INT(0, n);
+    mv_end();
+}
+
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
     TEST_SUITE("Movement without game data");
+    RUN(a_move_order_ends_at_its_point);
+    RUN(a_click_sends_the_unit_to_the_ground_under_the_pointer);
+    RUN(a_marquee_takes_the_units_it_is_drawn_over);
     RUN(a_walker_crosses_open_ground);
     RUN(unit_walks_around_a_wall_of_friendly_units);
     RUN(units_do_not_stack_on_one_another);

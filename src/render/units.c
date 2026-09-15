@@ -1879,12 +1879,16 @@ int Units_SelectInRect(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
     if (x1 < x0) { int32_t t = x0; x0 = x1; x1 = t; }
     if (y1 < y0) { int32_t t = y0; y0 = y1; y1 = t; }
     if (!additive) g_selection_count = 0;
+    const GameWorld *world = World_Get();
     for (int i = 0; i < g_unit_count; i++) {
         const Unit *u = &g_units[i];
         if (u->alive != 1) continue;
         if (u->player_id != g_local_player) continue;
+        /* The box is on the screen, so a unit counts where it is
+         * drawn, as Units_PickAt reads it. */
+        int32_t uy = unit_drawn_y(world, u);
         if (u->world_x < x0 || u->world_x > x1) continue;
-        if (u->world_y < y0 || u->world_y > y1) continue;
+        if (uy < y0 || uy > y1) continue;
         Units_SelectAdd(i);
     }
     return g_selection_count;

@@ -1629,8 +1629,11 @@ void HUD_DrawCommandCursor(TAK_Platform *plat, int win_x, int win_y) {
     if (g_cmd_mode == HUD_CMD_PLACE_BUILD && g_build_def_idx >= 0) {
         const GameWorld *wd = World_Get();
         if (wd) {
+            /* The ground under the pointer, where the placing click
+             * lands, so the ghost stands where the building will. */
             int32_t world_x = wd->cam_x + win_x;
             int32_t world_y = wd->cam_y + win_y;
+            Units_GroundUnderPoint(world_x, world_y, &world_x, &world_y);
             int valid = Units_IsBuildSiteClear(g_build_def_idx, world_x, world_y);
             /* Match the player's current team colour so the ghost reads
              * as theirs. Pull from the first selected unit (the builder)

@@ -22,6 +22,7 @@
 #include "tak_ui.h"
 #include "tak_debug_panel.h"
 #include "tak_hud.h"
+#include "tak_click_map.h"
 #include "tak_command_emit.h"
 #include "tak_command_queue.h"
 #include "tak_sim_hash.h"
@@ -772,8 +773,10 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
     if (!world || !world->loaded) return;
     int cmd = HUD_GetCommandMode();
     int hit = Units_PickAt(world_x, world_y, 48);
-    /* The orders that resolve on a map cell take the ground under the
-     * pointer, as the cursor over a body does. */
+    /* Every order on the ground takes the cell under the pointer, the
+     * one that projects there (legacy:212277). Units draw lifted by
+     * half the ground's height, so the flat reading sits that far
+     * above where the pointer is. */
     int32_t gx = world_x, gy = world_y;
     Units_GroundUnderPoint(world_x, world_y, &gx, &gy);
     int n_sel = 0;
@@ -785,12 +788,10 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
          * the registered hotkey + click target. */
         switch (cmd) {
             case HUD_CMD_MOVE:
-                TAK_Cmd_EmitSelection(TAK_CMD_MOVE, world_x, world_y,
-                                      -1, 0, 0);
+                TAK_Cmd_EmitSelection(TAK_CMD_MOVE, gx, gy, -1, 0, 0);
                 break;
             case HUD_CMD_PATROL:
-                TAK_Cmd_EmitSelection(TAK_CMD_PATROL, world_x, world_y,
-                                      -1, 0, 0);
+                TAK_Cmd_EmitSelection(TAK_CMD_PATROL, gx, gy, -1, 0, 0);
                 break;
             case HUD_CMD_ATTACK:
                 if (hit >= 0)
@@ -798,7 +799,7 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
                                           hit, 0, 0);
                 else
                     TAK_Cmd_EmitSelection(TAK_CMD_ATTACK_GROUND,
-                                          world_x, world_y, -1, 0, 0);
+                                          gx, gy, -1, 0, 0);
                 break;
             case HUD_CMD_HEAL:
                 /* Heal and load reach only your own units. */
@@ -827,8 +828,7 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
                                           hit, 0, 0);
                 break;
             case HUD_CMD_UNLOAD:
-                TAK_Cmd_EmitSelection(TAK_CMD_UNLOAD, world_x, world_y,
-                                      -1, 0, 0);
+                TAK_Cmd_EmitSelection(TAK_CMD_UNLOAD, gx, gy, -1, 0, 0);
                 break;
             case HUD_CMD_PLACE_BUILD: {
                 /* Building placement: spawn the building at
@@ -841,7 +841,7 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
                     /* Same cell snap the ghost drew at, so the
                      * building lands where the preview was
                      * (legacy:184168). */
-                    int32_t bx = world_x, by = world_y;
+                    int32_t bx = gx, by = gy;
                     Units_SnapBuildSite(bdef, &bx, &by);
                     /* The click is answered now
                      * (legacy:243684-243688), and a site the
@@ -922,10 +922,9 @@ void InGame_WorldClick(int32_t world_x, int32_t world_y, int shift_held) {
             ig_play_order_ack(world, "default");
             fprintf(stderr, "Raise -> (%d,%d)\n", gx, gy);
         } else {
-            TAK_Cmd_EmitSelection(TAK_CMD_MOVE, world_x, world_y, -1, 0, 0);
+            TAK_Cmd_EmitSelection(TAK_CMD_MOVE, gx, gy, -1, 0, 0);
             ig_play_order_ack(world, "Move");
-            fprintf(stderr, "Move -> (%d,%d)\n",
-                    world_x, world_y);
+            fprintf(stderr, "Move -> (%d,%d)\n", gx, gy);
         }
     }
 }
@@ -1267,8 +1266,9 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
      *     on terrain = move (legacy default-cursor behaviour).
      *   - Right-click: cancel command mode if active, else deselect. */
     if (platform->has_focus && !dp_active && !HUD_HitTest(wx, wy, platform)) {
-        int32_t world_click_x = world->cam_x + wx;
-        int32_t world_click_y = world->cam_y + wy;
+        int32_t world_click_x = 0, world_click_y = 0;
+        ClickMap_WindowToWorld(world->cam_x, world->cam_y, wx, wy,
+                               &world_click_x, &world_click_y);
 
         /* Press arms drag-tracking; movement past a 4px threshold
          * upgrades it to a marquee; release resolves to either a
