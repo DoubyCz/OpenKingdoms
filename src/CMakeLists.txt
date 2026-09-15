@@ -429,6 +429,7 @@ set(TAK_SCREEN_TEST_SOURCES
     core/settings.c
     core/paths.c
     core/util.c
+    core/trig.c
     core/io.c
     core/game_loop.c
     core/battle_config.c
@@ -556,6 +557,7 @@ add_executable(test_unit_stall
     core/settings.c
     core/paths.c
     core/util.c
+    core/trig.c
     core/io.c
     core/game_loop.c
     core/battle_config.c

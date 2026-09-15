@@ -17394,6 +17394,193 @@ TEST(trebuchet_waits_for_a_spotter) {
     VFS_Shutdown();
 }
 
+/* Where a cannoneer's first shell starts and where it goes off under an
+ * attack-ground order. */
+typedef struct ShellTrace {
+    int     seen, hit;
+    float   first_dist;    /* px from the shooter, first tick in flight */
+    float   first_up;      /* height over the ground under it then */
+    int32_t hit_x, hit_y;
+    float   hit_h;
+} ShellTrace;
+
+static float trace_dist(int32_t ax, int32_t ay, int32_t bx, int32_t by) {
+    float dx = (float)(ax - bx), dy = (float)(ay - by);
+    return sqrtf(dx * dx + dy * dy);
+}
+
+static void trace_cannoneer_ground_shot(TAK_Platform *platform,
+                                        int32_t sx, int32_t sy,
+                                        int32_t gx, int32_t gy,
+                                        ShellTrace *tr) {
+    memset(tr, 0, sizeof(*tr));
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+    int def = Units_FindDefByName("ARACAN");
+    ASSERT(def >= 0);
+    int can = Units_Spawn(def, 1, 0, sx, sy);
+    ASSERT(can >= 0);
+    ASSERT_EQ_INT(0, InGame_Init(platform));
+    Units_SelectSingle(can);
+    Units_CommandAttackGroundSelected(gx, gy);
+    Units_SelectSingle(-1);
+    Timer timer;
+    Timer_Init(&timer);
+    int slot = -1;
+    int32_t last_x = 0, last_y = 0;
+    for (int i = 0; i < 1200 && !tr->hit; i++) {
+        timer.accumulator = timer.sim_dt;
+        ASSERT_EQ_INT(GAMESTATE_IN_GAME, InGame_Tick(platform, &timer));
+        int np = 0;
+        const Projectile *ps = Units_GetProjectiles(&np);
+        if (slot < 0) {
+            for (int k = 0; k < np; k++) {
+                if (!ps[k].alive || ps[k].is_beam || ps[k].shooter != can)
+                    continue;
+                slot = k;
+                tr->seen = 1;
+                tr->first_dist = trace_dist(ps[k].world_x, ps[k].world_y,
+                                            sx, sy);
+                tr->first_up = ps[k].height - (float)Terrain_SampleHeight(
+                    world, ps[k].world_x, ps[k].world_y);
+                last_x = ps[k].world_x;
+                last_y = ps[k].world_y;
+                break;
+            }
+            continue;
+        }
+        if (slot < np && ps[slot].alive) {
+            last_x = ps[slot].world_x;
+            last_y = ps[slot].world_y;
+            continue;
+        }
+        /* Gone this tick. Its impact effect marks the spot. */
+        int ne = 0;
+        const ProjectileEffect *fx = Units_GetProjectileEffects(&ne);
+        int64_t best = -1;
+        for (int k = 0; k < ne; k++) {
+            if (!fx[k].alive || fx[k].age_ticks != 0) continue;
+            int64_t ex = fx[k].world_x - last_x, ey = fx[k].world_y - last_y;
+            int64_t d2 = ex * ex + ey * ey;
+            if (best >= 0 && d2 >= best) continue;
+            best = d2;
+            tr->hit_x = fx[k].world_x;
+            tr->hit_y = fx[k].world_y;
+            tr->hit_h = (float)fx[k].height;
+        }
+        if (best < 0) {
+            tr->hit_x = last_x;
+            tr->hit_y = last_y;
+            tr->hit_h = -1.0f;
+        }
+        tr->hit = 1;
+    }
+    fprintf(stderr, "shell from %d,%d at %d,%d: first %.1f px out %.1f up, "
+            "off at %d,%d h=%.1f (%.1f px from the shooter, %.1f from the "
+            "aim)\n", sx, sy, gx, gy, tr->first_dist, tr->first_up,
+            tr->hit_x, tr->hit_y, tr->hit_h,
+            trace_dist(tr->hit_x, tr->hit_y, sx, sy),
+            trace_dist(tr->hit_x, tr->hit_y, gx, gy));
+}
+
+/* A shell leaves the piece QueryWeapon names, which on ARACAN stands
+ * clear of the hull and well above the dirt (legacy:246594-246598,
+ * :185941-185948). */
+#define SHELL_FIRST_DIST_MIN 40.0f
+#define SHELL_FIRST_UP_MIN   10.0f
+
+/* A cannoneer on a plateau shooting at low ground behind the lip. The
+ * original solves the low arc on the line from the muzzle
+ * (legacy:249230-249245, :246535-246562) and tests the shell against the
+ * lowest corner of its cell on every step (legacy:245463-245470), so the
+ * shell digs into the plateau well short of the aim point. */
+TEST(cannoneer_downhill_shell_lands_where_the_original_does) {
+    if (setup_vfs() != 0) { printf("SKIP (no data dir) "); return; }
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    GameWorld *world = NULL;
+    ASSERT_EQ_INT(0, gates_setup_world(&platform, &world));
+    ASSERT_EQ_INT(200, Terrain_SampleHeight(world, 1052, 4636));
+    ASSERT_EQ_INT(80, Terrain_SampleHeight(world, 1372, 4636));
+    ShellTrace tr;
+    trace_cannoneer_ground_shot(&platform, 1052, 4636, 1372, 4636, &tr);
+    if (_tf_current_failed) goto done;
+    ASSERT(tr.seen);
+    ASSERT(tr.first_dist >= SHELL_FIRST_DIST_MIN);
+    ASSERT(tr.first_up >= SHELL_FIRST_UP_MIN);
+    ASSERT(tr.hit);
+    {
+        float out = trace_dist(tr.hit_x, tr.hit_y, 1052, 4636);
+        ASSERT(out >= 60.0f && out <= 105.0f);
+        ASSERT(Terrain_SampleHeight(world, tr.hit_x, tr.hit_y) >= 195);
+        ASSERT(trace_dist(tr.hit_x, tr.hit_y, 1372, 4636) > 200.0f);
+    }
+done:
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* Flat ground: the low arc from the muzzle comes down on the aim point,
+ * inside the cannon's areaofeffect. */
+TEST(cannoneer_flat_shell_leaves_the_muzzle_and_lands_on_the_aim) {
+    if (setup_vfs() != 0) { printf("SKIP (no data dir) "); return; }
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    GameWorld *world = NULL;
+    ASSERT_EQ_INT(0, gates_setup_world(&platform, &world));
+    ASSERT_EQ_INT(200, Terrain_SampleHeight(world, 2544, 680));
+    ASSERT_EQ_INT(200, Terrain_SampleHeight(world, 2864, 680));
+    ShellTrace tr;
+    trace_cannoneer_ground_shot(&platform, 2544, 680, 2864, 680, &tr);
+    if (_tf_current_failed) goto done;
+    ASSERT(tr.seen);
+    ASSERT(tr.first_dist >= SHELL_FIRST_DIST_MIN);
+    ASSERT(tr.first_up >= SHELL_FIRST_UP_MIN);
+    ASSERT(tr.hit);
+    ASSERT(trace_dist(tr.hit_x, tr.hit_y, 2864, 680) <= 90.0f);
+done:
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
+/* Uphill: the arc rises from the muzzle and comes down on the aim point,
+ * not on the slope below it. */
+TEST(cannoneer_uphill_shell_leaves_the_muzzle_and_lands_on_the_aim) {
+    if (setup_vfs() != 0) { printf("SKIP (no data dir) "); return; }
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    GameWorld *world = NULL;
+    ASSERT_EQ_INT(0, gates_setup_world(&platform, &world));
+    ASSERT_EQ_INT(200, Terrain_SampleHeight(world, 840, 3368));
+    ASSERT(Terrain_SampleHeight(world, 1160, 3368) >= 240);
+    ShellTrace tr;
+    trace_cannoneer_ground_shot(&platform, 840, 3368, 1160, 3368, &tr);
+    if (_tf_current_failed) goto done;
+    ASSERT(tr.seen);
+    ASSERT(tr.first_dist >= SHELL_FIRST_DIST_MIN);
+    ASSERT(tr.first_up >= SHELL_FIRST_UP_MIN);
+    ASSERT(tr.hit);
+    ASSERT(trace_dist(tr.hit_x, tr.hit_y, 1160, 3368) <= 90.0f);
+done:
+    InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+}
+
 /* An AI raider that has reached the enemy start and sees nothing goes
  * for the nearest enemy unit wherever it stands (legacy:15365), so a
  * last lodestone out of sight cannot stall the battle. */
@@ -21029,6 +21216,9 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_C, tower_auto_engages_enemy);
     RUN_UI_TEST(UI_GROUP_D, hud_kill_count_follows_the_selected_units_kills);
     RUN_UI_TEST(UI_GROUP_C, trebuchet_waits_for_a_spotter);
+    RUN_UI_TEST(UI_GROUP_C, cannoneer_downhill_shell_lands_where_the_original_does);
+    RUN_UI_TEST(UI_GROUP_D, cannoneer_flat_shell_leaves_the_muzzle_and_lands_on_the_aim);
+    RUN_UI_TEST(UI_GROUP_B, cannoneer_uphill_shell_leaves_the_muzzle_and_lands_on_the_aim);
     RUN_UI_TEST(UI_GROUP_B, hud_rank_shield_follows_the_units_rank);
     RUN_UI_TEST(UI_GROUP_C, idle_units_of_a_closed_slot_see_their_foes);
     RUN_UI_TEST(UI_GROUP_A, an_unfinished_kill_earns_nothing);
