@@ -331,73 +331,6 @@ if(WIN32)
     add_dependencies(tak-re tak_sdl2_runtime)
 endif()
 
-# ── The simulation's own trigonometry ───────────────────────────────────────
-# Built for the browser too, and deliberately before the return below:
-# it needs no game data and no SDL, and the browser is one of the
-# platforms whose arithmetic has to agree. See src/core/trig.c.
-add_executable(test_trig
-    core/test_trig.c
-    core/trig.c
-)
-
-target_include_directories(test_trig PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-
-if(NOT MSVC AND NOT EMSCRIPTEN)
-    target_link_libraries(test_trig PRIVATE m)
-endif()
-
-# ── Tests + tools (native only) ─────────────────────────────────────────────
-# The browser build produces just the game, the trig gate above, and
-# nothing else; ctest targets and inspectors stay desktop-side.
-if(EMSCRIPTEN)
-    return()
-endif()
-
-# ── TDF parser tests ─────────────────────────────────────────────────────────
-# Uses the real tak_memory allocator. The historical tak_memory_stub.c is
-# kept around but no longer compiled into any target.
-add_executable(test_tdf_parser
-    core/parser/test_tdf_parser.c
-    core/parser/tdf_parser.c
-    core/hpi/hpi.c
-    core/hpi/hpi_vfs.c
-    core/hpi/hpi_decompress.c
-    core/memory.c
-    core/io.c
-    core/util.c
-    ${CMAKE_SOURCE_DIR}/third_party/miniz.c
-)
-
-target_include_directories(test_tdf_parser PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/third_party
-)
-
-# ── GUI loader tests ────────────────────────────────────────────────────────
-add_executable(test_gui_loader
-    ui/test_gui_loader.c
-    ui/gui_loader.c
-    core/hpi/hpi.c
-    core/hpi/hpi_vfs.c
-    core/hpi/hpi_decompress.c
-    core/memory.c
-    core/util.c
-    core/io.c
-    ${TAK_THIRD_PARTY_SOURCES}
-)
-target_include_directories(test_gui_loader PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/third_party
-)
-target_link_libraries(test_gui_loader PRIVATE SDL2::SDL2 SDL2::SDL2main)
-if(WIN32)
-    add_custom_command(TARGET test_gui_loader POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_gui_loader>)
-endif()
-# ── UI screens smoke tests ─────────────────────────────────────────────────
 # The screen and simulation sources shared by both screen-level test
 # binaries. test_movement and test_command_pipeline are the data free ones.
 set(TAK_SCREEN_TEST_SOURCES
@@ -490,6 +423,109 @@ set(TAK_SCREEN_TEST_SOURCES
     ${TAK_NET_SOURCES}
     ${TAK_THIRD_PARTY_SOURCES}
 )
+
+# ── The simulation's own trigonometry ───────────────────────────────────────
+# Built for the browser too, and deliberately before the return below:
+# it needs no game data and no SDL, and the browser is one of the
+# platforms whose arithmetic has to agree. See src/core/trig.c.
+add_executable(test_trig
+    core/test_trig.c
+    core/trig.c
+)
+
+target_include_directories(test_trig PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+if(NOT MSVC AND NOT EMSCRIPTEN)
+    target_link_libraries(test_trig PRIVATE m)
+endif()
+
+# ── Tests + tools (native only) ─────────────────────────────────────────────
+# The browser build produces just the game, the trig gate above, and
+# nothing else; ctest targets and inspectors stay desktop-side.
+
+# ── The cross-platform simulation gate ──────────────────────────────
+# Also built for the browser, and for the same reason as test_trig
+# above: it needs no game data, and the browser is one of the platforms
+# whose simulation has to agree. It runs a synthetic battle through the
+# real mover and the real combat path and pins TAK_SimHash over it. See
+# src/game/sim_probe.c.
+add_executable(test_sim_probe
+    game/sim_probe.c
+    ${TAK_SCREEN_TEST_SOURCES}
+)
+target_include_directories(test_sim_probe PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_compile_definitions(test_sim_probe PRIVATE
+    SDL_MAIN_HANDLED
+    TAK_DATA_DIR="${TAK_DATA_DIR}"
+    TAK_GAME_DIR="${TAK_GAME_DIR}"
+)
+target_link_libraries(test_sim_probe PRIVATE SDL2::SDL2)
+if(AVCODEC_LIBRARY)
+    target_include_directories(test_sim_probe PRIVATE ${AVCODEC_INCLUDE_DIR})
+    target_link_libraries(test_sim_probe PRIVATE ${TAK_FFMPEG_LIBS})
+endif()
+if(WIN32)
+    target_link_libraries(test_sim_probe PRIVATE user32 gdi32 winmm ws2_32 advapi32)
+    add_custom_command(TARGET test_sim_probe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_sim_probe>)
+endif()
+if(NOT MSVC AND NOT EMSCRIPTEN)
+    target_link_libraries(test_sim_probe PRIVATE m)
+endif()
+
+if(EMSCRIPTEN)
+    return()
+endif()
+
+# ── TDF parser tests ─────────────────────────────────────────────────────────
+# Uses the real tak_memory allocator. The historical tak_memory_stub.c is
+# kept around but no longer compiled into any target.
+add_executable(test_tdf_parser
+    core/parser/test_tdf_parser.c
+    core/parser/tdf_parser.c
+    core/hpi/hpi.c
+    core/hpi/hpi_vfs.c
+    core/hpi/hpi_decompress.c
+    core/memory.c
+    core/io.c
+    core/util.c
+    ${CMAKE_SOURCE_DIR}/third_party/miniz.c
+)
+
+target_include_directories(test_tdf_parser PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+
+# ── GUI loader tests ────────────────────────────────────────────────────────
+add_executable(test_gui_loader
+    ui/test_gui_loader.c
+    ui/gui_loader.c
+    core/hpi/hpi.c
+    core/hpi/hpi_vfs.c
+    core/hpi/hpi_decompress.c
+    core/memory.c
+    core/util.c
+    core/io.c
+    ${TAK_THIRD_PARTY_SOURCES}
+)
+target_include_directories(test_gui_loader PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_link_libraries(test_gui_loader PRIVATE SDL2::SDL2 SDL2::SDL2main)
+if(WIN32)
+    add_custom_command(TARGET test_gui_loader POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_gui_loader>)
+endif()
+# ── UI screens smoke tests ─────────────────────────────────────────────────
 
 add_executable(test_ui_screens
     ui/test_ui_screens.c
@@ -2047,6 +2083,7 @@ if(BUILD_TESTING)
     add_test(NAME test_unit_stall  COMMAND test_unit_stall)
     add_test(NAME test_render_cache COMMAND test_render_cache)
     add_test(NAME test_movement    COMMAND test_movement)
+    add_test(NAME test_sim_probe   COMMAND test_sim_probe)
     add_test(NAME test_float_guard COMMAND ${CMAKE_COMMAND}
              -DFILES=${TAK_INTEGER_ONLY_ARG}
              -P ${CMAKE_SOURCE_DIR}/cmake/float_guard.cmake)

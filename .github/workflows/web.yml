@@ -68,7 +68,7 @@ jobs:
           done
 
       - name: Build
-        run: cmake --build build-wasm --parallel --target tak-re test_trig
+        run: cmake --build build-wasm --parallel --target tak-re test_trig test_sim_probe
 
       # The browser is one of the platforms a room holds together, so
       # it has to reach the same bits from the same arithmetic. The
@@ -76,6 +76,19 @@ jobs:
       # platform asserts the same one.
       - name: The browser agrees on the simulation's trigonometry
         run: node build-wasm/src/test_trig.js
+
+      # And the whole simulation, not only the arithmetic under it: a
+      # synthetic battle through the real mover and the real combat
+      # path, hashed and pinned. This is what lets a browser player and
+      # a desktop player sit in the same room.
+      - name: The browser agrees on the simulation
+        run: node build-wasm/src/test_sim_probe.js
+
+      # ctest does not run here, so the guard that keeps libm out of the
+      # simulation runs on its own.
+      - name: The simulation carries its own trigonometry
+        run: |
+          cmake -DFILES="src/render/units.c|include/tak_math.h" -P cmake/libm_guard.cmake
 
       # A map fingerprint has to come out the same in the browser as it
       # does natively, or matched players would be told their maps differ.
