@@ -15,7 +15,8 @@
 #   --source DIR   An unpacked source tree to use instead of fetching.
 #
 # Needs emcc on PATH (scripts/build-wasm.sh puts it there), GNU make,
-# curl and tar. Does nothing when the prefix already holds this version:
+# curl and tar. JOBS caps the parallel compile (default: every core).
+# Does nothing when the prefix already holds this version:
 # <prefix>/ffmpeg-wasm.stamp names the FFmpeg and Emscripten versions
 # that built it, and CI caches the prefix on the same pair.
 
@@ -69,7 +70,7 @@ echo "==> Configuring FFmpeg $VERSION for wasm in $SRC"
 cd "$SRC"
 ./configure --prefix="$PREFIX" \
     --target-os=none --arch=x86_32 --enable-cross-compile \
-    --cc=emcc --cxx=em++ --ar=emar --ranlib=emranlib --nm=llvm-nm "${HOSTCC[@]}" \
+    --cc=emcc --cxx=em++ --ar=emar --ranlib=emranlib --nm=emnm "${HOSTCC[@]}" \
     --disable-asm --disable-inline-asm --disable-x86asm --disable-runtime-cpudetect \
     --disable-pthreads --disable-w32threads --disable-os2threads --disable-stripping \
     --disable-everything --disable-programs --disable-doc \
@@ -79,7 +80,7 @@ cd "$SRC"
     --enable-decoder=bink --enable-demuxer=bink --enable-protocol=file
 
 echo "==> Building"
-make -j"$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+make -j"${JOBS:-$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 make install
 printf '%s\n' "$WANT" > "$STAMP"
 echo "==> FFmpeg for the browser installed at $PREFIX ($WANT)"
