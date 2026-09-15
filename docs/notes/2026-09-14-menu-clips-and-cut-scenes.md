@@ -99,10 +99,13 @@ The names are lower cased when mounted. An install spells them
 LOGO.BIK and CREDITS.BIK, the engine asks for logo.bik and
 Credits.bik, and the lookup's third try is the lower case name.
 
-Measured with scripts/web-smoke.js against the GOG install on this
-machine, in headless Edge on the software renderer: the logo opened in
-24 ms and its frames a second apart differed in 50 percent of the
-pixels, the sixteen door clips opened in 2 to 9 ms each, a hovered
-machine door changed 12 to 18 percent of its pixels every 250 ms and
-the door at rest changed none, and the credits reel opened from a
-click on its door and moved.
+Measured by step 7 of scripts/web-smoke.js against the GOG install on
+this machine, in headless Edge on the software renderer, booting from
+the copy in browser storage: the logo opened in 17 to 24 ms and its
+frames a second apart differed in half their pixels, the sixteen door
+clips opened in 2 to 9 ms each, a hovered machine door changed 14 to
+21 percent of its pixels every 250 ms and the door at rest changed
+none, the credits reel opened in 16 ms from a click on its door and
+turned its first page 5 s in, and Escape ended it. The smoke holds
+the mouse down across a tick, since the menu polls the button between
+ticks and a click that lands inside one is never seen.

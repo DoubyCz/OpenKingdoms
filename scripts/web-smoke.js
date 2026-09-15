@@ -12,6 +12,11 @@
  *      "In Game", and the frame is not black (needs python + Pillow for
  *      the pixel check, otherwise it only screenshots)
  *   5. forget: game cache cleared, picker returns, settings kept
+ *   6. whole folder: the Music/ tracks and the Maps/ packs come along
+ *   7. clips: the folder's Movies/ clips are mounted in place, the logo
+ *      reel plays at startup, a hovered door's pixels change over time
+ *      and the Credits door plays the credits reel (pixel checks need
+ *      python + Pillow, otherwise they only screenshot)
  * Screenshots and the console log land in the output directory.
  *
  *   node scripts/web-smoke.js [url] [gameDir]
@@ -82,6 +87,63 @@ function litFraction(png) {
     } catch (e) { /* try the next interpreter */ }
   }
   return -1;
+}
+
+/* Fraction of pixels that differ between two screenshots by more than
+ * a little, via Pillow. -1 when python or Pillow is unavailable. */
+function diffFraction(a, b) {
+  const script = [
+    'import sys',
+    'from PIL import Image, ImageChops',
+    'a = Image.open(sys.argv[1]).convert("RGB")',
+    'b = Image.open(sys.argv[2]).convert("RGB")',
+    'd = ImageChops.difference(a, b).convert("L").point(lambda v: 255 if v > 16 else 0)',
+    'h = d.histogram()',
+    'print(h[255] / float(sum(h)))',
+  ].join('\n');
+  for (const py of ['python', 'python3', 'py']) {
+    try {
+      const out = execFileSync(py, ['-c', script, a, b], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      return parseFloat(out.trim());
+    } catch (e) { /* try the next interpreter */ }
+  }
+  return -1;
+}
+
+/* A point on the 640x480 menu canvas in page coordinates. The canvas is
+ * stretched over the whole window, so each axis has its own scale. */
+function menuToPage(mx, my) {
+  return page.evaluate(([mx, my]) => {
+    const r = window.Module.canvas.getBoundingClientRect();
+    return { x: r.left + mx * r.width / 640, y: r.top + my * r.height / 480, kx: r.width / 640, ky: r.height / 480 };
+  }, [mx, my]);
+}
+
+/* The menu reads the mouse between ticks, so a move lands with a nudge
+ * behind it and a press outlasts a tick. */
+async function hoverMenu(mx, my) {
+  const p = await menuToPage(mx, my);
+  await page.mouse.move(p.x, p.y);
+  await page.waitForTimeout(100);
+  await page.mouse.move(p.x + 1, p.y + 1);
+}
+async function pressMouse() {
+  await page.mouse.down();
+  await page.waitForTimeout(150);
+  await page.mouse.up();
+}
+async function pressKey(key) {
+  await page.keyboard.down(key);
+  await page.waitForTimeout(150);
+  await page.keyboard.up(key);
+}
+async function waitLog(since, re, ms) {
+  const t0 = Date.now();
+  for (;;) {
+    const hit = log.slice(since).find(l => re.test(l));
+    if (hit || Date.now() - t0 > ms) return hit || null;
+    await page.waitForTimeout(200);
+  }
 }
 
 (async () => {
@@ -257,6 +319,104 @@ function litFraction(png) {
     if (!audio.includes('running')) return fail('a music track started but the audio context is ' + (audio.join(',') || 'missing'), 'music');
     console.log('   ' + playing.trim() + ', audio context running');
   }
+
+  /* 7. clips: the folder pick brought the Movies clips, mounted in
+     place rather than copied, and a plain reload brings them back the
+     same way from browser storage. The logo reel plays before the
+     menu, a hovered door plays its clip, and the Credits door plays
+     the reel. The step before booted with --skirmish, which skips the
+     logo, so this one boots the menu. */
+  console.log('7. clips (logo, doors, credits)');
+  const picked = log.slice(mark).find(t => /(\d+) clip\(s\) ready/.test(t));
+  const npicked = picked ? parseInt(picked.match(/(\d+) clip\(s\)/)[1], 10) : 0;
+  const moviesDir = path.join(gameDir, 'Movies');
+  if (fs.existsSync(moviesDir)) {
+    if (!npicked) return fail('the folder pick brought no clips, the install has a Movies folder', 'clips');
+    console.log('   clips mounted from the folder: ' + npicked);
+    mark = log.length;
+    await page.goto(url, { waitUntil: 'load' });
+    await pressStart();
+    await booted();
+    const cached = log.slice(mark).find(t => /(\d+) clip\(s\) read in place from browser storage/.test(t));
+    const nclips = cached ? parseInt(cached.match(/(\d+) clip\(s\)/)[1], 10) : 0;
+    if (nclips !== npicked) return fail('browser storage gave back ' + nclips + ' clips of the ' + npicked + ' picked', 'clips');
+    console.log('   clips read in place from browser storage: ' + nclips);
+    const logo = await waitLog(mark, /Credits: playing Movies\/logo\.bik/, 30000);
+    if (!logo) return fail('the logo reel did not play at startup', 'clips');
+    const opened = log.slice(mark).find(t => /BinkPlayer: opened .*logo\.bik/.test(t)) || '';
+    console.log('   ' + logo.trim() + (opened ? ' (' + opened.replace(/.* in /, 'opened in ') + ')' : ''));
+    const menuUp = await waitLog(mark, /MainMenu: Bink videos available for machine/, 90000);
+    if (!menuUp) return fail('the menu did not open its door clips after the logo', 'clips');
+    await page.waitForTimeout(2000);
+
+    /* The machine door's clip is drawn at the .gui rect 40,192 at its
+       own 160x195. At rest the door is a still, hovered it moves. */
+    const tl = await menuToPage(40, 192);
+    const clip = { x: tl.x, y: tl.y, width: 160 * tl.kx, height: 195 * tl.ky };
+    const shot = async (name) => {
+      const p = path.join(outDir, name + '.png');
+      await page.screenshot({ path: p, clip });
+      return p;
+    };
+    const rest = [await shot('7-door-rest-0')];
+    await page.waitForTimeout(300);
+    rest.push(await shot('7-door-rest-1'));
+    await hoverMenu(120, 300);
+    const hov = [];
+    for (let i = 0; i < 6; i++) {
+      hov.push(await shot('7-door-hover-' + i));
+      await page.waitForTimeout(250);
+    }
+    const restDiff = diffFraction(rest[0], rest[1]);
+    if (restDiff < 0) {
+      console.log('   (no python+Pillow: skipped the door pixel check, see 7-door-*.png)');
+    } else {
+      const diffs = [];
+      for (let i = 1; i < hov.length; i++) diffs.push(diffFraction(hov[i - 1], hov[i]));
+      const moving = diffs.filter(d => d > 0.02).length;
+      const vsRest = diffFraction(rest[0], hov[hov.length - 1]);
+      console.log('   door pixels changed: at rest ' + restDiff.toFixed(3) + ', hovered ' +
+                  diffs.map(d => d.toFixed(3)).join(' ') + ', last hovered frame vs rest ' + vsRest.toFixed(3));
+      if (restDiff > 0.01) return fail('the door changes at rest, so the check cannot tell a clip from noise', 'clips');
+      if (moving < 3 || vsRest < 0.05) return fail('hovering the door did not play its clip', 'clips');
+    }
+
+    /* The Credits door, then a key ends the reel. */
+    await hoverMenu(160, 100);
+    await page.waitForTimeout(1500);
+    const before = log.length;
+    await pressMouse();
+    const credits = await waitLog(before, /Credits: playing Movies\/Credits\.bik/i, 20000);
+    if (!credits) return fail('clicking the Credits door did not play the credits reel', 'clips');
+    console.log('   ' + credits.trim());
+    /* The reel is pages that hold for seconds, so it is sampled until a
+       page turns. */
+    await page.waitForTimeout(2000);
+    let prev = path.join(outDir, '7-credits-0.png');
+    await page.screenshot({ path: prev });
+    let reel = -1;
+    for (let i = 1; i <= 20; i++) {
+      await page.waitForTimeout(500);
+      const cur = path.join(outDir, '7-credits-' + i + '.png');
+      await page.screenshot({ path: cur });
+      reel = diffFraction(prev, cur);
+      if (reel < 0) break;
+      if (reel > 0.02) { console.log('   credits page turned after ' + (2 + i * 0.5) + ' s, ' + reel.toFixed(3) + ' of the pixels changed'); break; }
+      fs.unlinkSync(prev);
+      prev = cur;
+    }
+    if (reel >= 0 && reel <= 0.02) return fail('the credits reel did not turn a page in 12 s', 'clips');
+    const beforeKey = log.length;
+    await pressKey('Escape');
+    if (!await waitLog(beforeKey, /MainMenu: Bink videos available for machine/, 30000))
+      return fail('a key did not end the credits reel', 'clips');
+    console.log('   a key ended the reel and the menu is back');
+    bad = fatalLines(mark);
+    if (bad.length) return fail('engine reported a failure around the clips: ' + bad[0], 'clips');
+  } else {
+    console.log('   (no Movies folder in the install: skipped)');
+  }
+
   await page.click('#forget-link');
   await page.waitForSelector('#picker:not([hidden])', { timeout: 60000 });
 
