@@ -2697,6 +2697,219 @@ TEST(select_game_scrolls_by_its_arrows) {
  * the art draws at the cell less the frame hotspot, at the art's own
  * size, so the pointer can be on the arrow and inside no widget. Every
  * dialog the port loads that authors a pair is checked here. */
+/* Reported from play: Taros fire demons do not attack. Hand placed
+ * fire demons fire, so this runs the reported game itself: a Taros
+ * computer player on a real map against a human seat, for minutes,
+ * and asks whether any of its ranged units ever takes a shot. */
+TEST(a_taros_computer_players_ranged_units_fire) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, "adamantine gate", sizeof(cfg.map_name) - 1);
+    cfg.players[1].kind = TAK_SLOT_AI;
+    cfg.players[1].ai_difficulty = 2;
+    cfg.players[1].side = TAK_SIDE_TAROS;
+    ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg,
+                                     "adamantine gate", "aramon"));
+    ASSERT_EQ_INT(0, Loading_Init(&platform));
+    int next = GAMESTATE_GAME_LOADING;
+    for (int i = 0; i < 600 && next == GAMESTATE_GAME_LOADING; i++)
+        next = Loading_Tick(&platform, 1.0f / 60.0f);
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, next);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+    ASSERT_EQ_INT(0, InGame_Init(&platform));
+
+    /* The human seat stands still and passive, so every shot in the
+     * record is the computer player's own decision. */
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    for (int i = 0; i < unit_count; i++)
+        if (units[i].alive == UNIT_ALIVE_ACTIVE && units[i].player_id == 1)
+            Units_DebugSetAggro(i, UNIT_AGGRO_PASSIVE);
+
+    Timer timer;
+    Timer_Init(&timer);
+    timer.max_ticks_per_frame = 30;
+    int ranged_built = 0, ranged_fired = 0, ranged_targeting = 0;
+    int last_ranged = 0;
+    char first_silent[32] = { 0 };
+    int stuck_samples = 0;
+    /* Twenty minutes of battle, thirty ticks a frame: long enough for
+     * a second factory kind to finish and train. */
+    for (int f = 0; f < 2400 && next == GAMESTATE_IN_GAME; f++) {
+        timer.accumulator = timer.sim_dt * 30.0;
+        next = InGame_Tick(&platform, &timer);
+        units = Units_GetActive(&unit_count);
+        int ranged = 0, fired = 0, targeting = 0;
+        for (int i = 0; i < unit_count; i++) {
+            const Unit *u = &units[i];
+            if (u->alive != UNIT_ALIVE_ACTIVE || u->player_id != 2) continue;
+            if (u->under_construction) continue;
+            const UnitDef *ud = Units_GetDef(u->def_idx);
+            if (!ud || ud->max_velocity <= 0.0f || ud->num_weapons <= 0) continue;
+            if (ud->weapons[0].range <= 60) continue;   /* melee and near melee */
+            ranged++;
+            if (u->target >= 0) targeting++;
+            if (u->weapon_state[0].cooldown_ticks > 0) fired++;
+            else if (u->target >= 0) {
+                if (!first_silent[0])
+                    strncpy(first_silent, ud->unitname, sizeof first_silent - 1);
+                /* A few samples of the stuck state, from the moment
+                 * it holds a target and could shoot but does not. */
+                if (stuck_samples < 12 && (f % 25) == 0) {
+                    int64_t dx = units[u->target].world_x - u->world_x;
+                    int64_t dy = units[u->target].world_y - u->world_y;
+                    stuck_samples++;
+                    printf("[stuck f=%d %s cmd=%d anim=%d aimthr=%d aimticks=%d flying=%d range=%d dist=%d tgt=%s tflying=%d] ",
+                           f, ud->unitname, (int)u->cmd_kind,
+                           (int)u->anim_state,
+                           (int)u->weapon_state[0].aim_thread_slot,
+                           (int)u->weapon_state[0].aim_ticks,
+                           (int)u->flying, ud->weapons[0].range,
+                           (int)sqrt((double)(dx * dx + dy * dy)),
+                           Units_GetDef(units[u->target].def_idx)
+                               ? Units_GetDef(units[u->target].def_idx)->unitname : "?",
+                           (int)units[u->target].flying);
+                }
+            }
+        }
+        if (ranged > last_ranged) last_ranged = ranged;
+        if (fired > ranged_fired) ranged_fired = fired;
+        if (targeting > ranged_targeting) ranged_targeting = targeting;
+    }
+    ranged_built = last_ranged;
+    int dungeons = 0, fire_demons = 0;
+    units = Units_GetActive(&unit_count);
+    for (int i = 0; i < unit_count; i++) {
+        const Unit *u = &units[i];
+        if (u->alive != UNIT_ALIVE_ACTIVE || u->player_id != 2) continue;
+        const UnitDef *ud = Units_GetDef(u->def_idx);
+        if (!ud) continue;
+        /* A frame going up counts: the report was that it was never
+         * ordered at all. */
+        if (tak_stricmp(ud->unitname, "TARDUNG") == 0) dungeons++;
+        if (!u->under_construction && tak_stricmp(ud->unitname, "TARFIRE") == 0)
+            fire_demons++;
+    }
+    printf("[taros ai: ranged built=%d targeting=%d fired=%d dungeons=%d fire demons=%d] ",
+           ranged_built, ranged_targeting, ranged_fired, dungeons, fire_demons);
+
+    InGame_Shutdown();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+    ASSERT(ranged_built > 0);
+    ASSERT(ranged_fired > 0);
+    ASSERT(dungeons > 0);
+}
+
+/* Case blind substring for the probe. */
+static int probe_has_ci(const char *hay, const char *needle) {
+    size_t n = strlen(needle);
+    for (; *hay; hay++)
+        if (tak_strnicmp(hay, needle, n) == 0) return 1;
+    return 0;
+}
+
+/* Reported from play: Taros fire demons do not attack. Their weapon
+ * is type Guided, a class shared by every dragon, every mage and the
+ * priests, so this asks the whole class the same question. */
+TEST(every_guided_weapon_unit_fires_at_an_enemy_in_range) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+
+    BattleConfig cfg;
+    BattleConfig_SetDefaults(&cfg);
+    strncpy(cfg.map_name, "takmission01_mt", sizeof(cfg.map_name) - 1);
+    ASSERT_EQ_INT(0, World_BeginLoad(&platform, &cfg,
+                                     "takmission01_mt", "aramon"));
+    ASSERT_EQ_INT(0, Loading_Init(&platform));
+    int next = GAMESTATE_GAME_LOADING;
+    for (int i = 0; i < 600 && next == GAMESTATE_GAME_LOADING; i++)
+        next = Loading_Tick(&platform, 1.0f / 60.0f);
+    ASSERT_EQ_INT(GAMESTATE_IN_GAME, next);
+    GameWorld *world = World_Get();
+    ASSERT_NOT_NULL(world);
+
+    /* Nothing else on the map takes part. */
+    int unit_count = 0;
+    const Unit *units = Units_GetActive(&unit_count);
+    for (int i = 0; i < unit_count; i++)
+        if (units[i].alive == UNIT_ALIVE_ACTIVE)
+            Units_DebugSetAggro(i, UNIT_AGGRO_PASSIVE);
+
+    int32_t ax = 0, ay = 0;
+    for (int i = 0; i < unit_count; i++) {
+        if (units[i].alive == UNIT_ALIVE_ACTIVE && units[i].player_id == 1) {
+            ax = units[i].world_x; ay = units[i].world_y; break;
+        }
+    }
+    ASSERT(ax > 0 || ay > 0);
+
+    int tried = 0, silent = 0;
+    int ndefs = Units_GetDefCount();
+    for (int d = 0; d < ndefs; d++) {
+        const UnitDef *ud = Units_GetDef(d);
+        if (!ud || ud->num_weapons <= 0) continue;
+        if (!probe_has_ci(ud->weapons[0].type, "guided")) continue;
+        if (ud->max_velocity <= 0.0f && !ud->can_fly) continue;
+        int32_t range = ud->weapons[0].range;
+        if (range <= 0) continue;
+        int32_t gap = range / 2;
+        if (gap < 48) gap = 48;
+
+        int shooter = Units_Spawn(d, 1, 0, ax, ay);
+        int foe = Units_DebugSpawnEnemy(ax + gap, ay);
+        if (shooter < 0 || foe < 0) {
+            if (shooter >= 0) Units_DebugKillHandle(shooter);
+            if (foe >= 0) Units_DebugKillHandle(foe);
+            continue;
+        }
+        Units_DebugSetAggro(shooter, UNIT_AGGRO_OFFENSIVE);
+        Units_DebugSetAggro(foe, UNIT_AGGRO_PASSIVE);
+        tried++;
+
+        /* A shot that crosses 70 px at 900 px a second is dead before
+         * the next tick, so a live projectile is the wrong thing to
+         * look for. The weapon's cooldown is charged only when a shot
+         * is taken, so a cooldown that was ever non zero is a launch. */
+        int fired = 0;
+        for (int t = 0; t < 900 && !fired; t++) {
+            Units_TickEngines();
+            units = Units_GetActive(&unit_count);
+            if (units[shooter].weapon_state[0].cooldown_ticks > 0) fired = 1;
+        }
+        if (!fired) {
+            silent++;
+            units = Units_GetActive(&unit_count);
+            printf("[%s never fires: target=%d anim=%d flying=%d cd=%d aimthr=%d aimticks=%d range=%d gap=%d] ",
+                   ud->unitname, units[shooter].target,
+                   (int)units[shooter].anim_state, (int)units[shooter].flying,
+                   (int)units[shooter].weapon_state[0].cooldown_ticks,
+                   (int)units[shooter].weapon_state[0].aim_thread_slot,
+                   (int)units[shooter].weapon_state[0].aim_ticks, range, gap);
+        }
+        Units_DebugKillHandle(shooter);
+        Units_DebugKillHandle(foe);
+        for (int t = 0; t < 4; t++) Units_TickEngines();
+    }
+    printf("[%d guided shooters, %d silent] ", tried, silent);
+
+    InGame_Shutdown();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+    ASSERT(tried > 0);
+    ASSERT_EQ_INT(0, silent);
+}
+
 TEST(a_click_on_a_scroll_arrow_reaches_the_arrow) {
     if (setup_vfs() != 0) SKIP("no data dir");
     TAK_Platform platform;
@@ -22074,6 +22287,8 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_A, mp_room_host_cycles_a_slot_by_its_name);
     RUN_UI_TEST(UI_GROUP_D, a_click_on_a_scroll_arrow_reaches_the_arrow);
     RUN_UI_TEST(UI_GROUP_D, select_game_scrolls_by_its_arrows);
+    RUN_UI_TEST(UI_GROUP_D, every_guided_weapon_unit_fires_at_an_enemy_in_range);
+    RUN_UI_TEST(UI_GROUP_D, a_taros_computer_players_ranged_units_fire);
     RUN_UI_TEST(UI_GROUP_D, mp_room_map_chooser_scrolls_by_its_bar);
     RUN_UI_TEST(UI_GROUP_D, mp_room_a_guest_cannot_change_the_rules);
     RUN_UI_TEST(UI_GROUP_A, mp_room_chat_goes_out_and_comes_in);

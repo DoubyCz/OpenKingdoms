@@ -443,6 +443,74 @@ static int test_ai_builds_economy_then_production_then_combat(void) {
     return 0;
 }
 
+/* Taros has three factories in its profile at equal weight, each
+ * limited to two. A seat at its castle limit has to start a dungeon
+ * or a hell next, because that is where eleven of its unit types come
+ * from. It stopped instead, having only ever considered the first
+ * factory in the builder's list. */
+static int test_ai_moves_to_the_next_factory_at_the_limit(void) {
+    GameWorld w;
+    setup_ai_progression_fixture(&w);
+    g_mock_mana = 5000;
+    g_mock_max_mana = 5000;
+    g_mock_income = 50;
+
+    /* A second factory kind after the castle in the builder's list. */
+    strcpy(g_defs[4].unitname, "TARDUNG");
+    strcpy(g_defs[4].category, "TAR FACTORY");
+    g_defs[4].cap_flags = UNIT_CAP_BUILDER;
+    g_defs[4].worker_time = 10.0f;
+    strcpy(g_defs[5].unitname, "TARFIRE");
+    strcpy(g_defs[5].category, "TAR ATTACK BALLISTIC");
+    g_defs[5].max_velocity = 1.0f;
+    g_defs[5].num_weapons = 1;
+    g_defs[5].sight_distance = 156;
+    g_defs[5].weapons[0].range = 900;
+    g_buildable_counts[0] = 3;
+    g_buildables[0][0] = 1;
+    g_buildables[0][1] = 2;
+    g_buildables[0][2] = 4;
+    g_buildable_counts[4] = 1;
+    g_buildables[4][0] = 5;
+    TAK_AI_DebugSetLimit(2, 2);
+    TAK_AI_DebugSetLimit(4, 2);
+    TAK_AI_DebugSetWeight(2, 10.0f);
+    TAK_AI_DebugSetWeight(4, 10.0f);
+
+    /* Two castles owned and complete, a lodestone, and the monarch
+     * free. The castle is at its limit. */
+    g_units[1].alive = UNIT_ALIVE_ACTIVE;
+    g_units[1].player_id = 2;
+    g_units[1].def_idx = 1;
+    g_units[2].alive = UNIT_ALIVE_ACTIVE;
+    g_units[2].player_id = 2;
+    g_units[2].def_idx = 2;
+    g_units[2].build_target = -1;
+    g_units[2].cmd_kind = UNIT_CMD_BUILD;   /* busy, so it is not the picker */
+    g_units[3].alive = UNIT_ALIVE_ACTIVE;
+    g_units[3].player_id = 2;
+    g_units[3].def_idx = 2;
+    g_units[3].build_target = -1;
+    g_units[3].cmd_kind = UNIT_CMD_BUILD;
+    g_unit_count = 4;
+    g_begin_calls = 0;
+    g_last_build_def = -1;
+    w.skirmish_elapsed_ticks = 600;
+
+    /* Only a start inside this loop counts. */
+    g_begin_calls = 0;
+    g_last_build_def = -1;
+    int started = -1;
+    for (int k = 0; k < 20 && started < 0; k++) {
+        w.skirmish_elapsed_ticks += 60;
+        TAK_AI_TickSkirmish(&w);
+        if (g_begin_calls > 0) started = g_last_build_def;
+    }
+    printf("[started def %d] ", started);
+    ASSERT_EQ_INT(4, started);
+    return 0;
+}
+
 /* The AI aims a yardmap-'S' building at the pad itself, never beside
  * it (legacy:21427 dispatch, :20483 nearest passing pad). */
 static int test_ai_builds_lodestone_on_sacred_pad(void) {
@@ -1724,6 +1792,7 @@ int main(void) {
     ASSERT_EQ_INT(600, TAK_AI_PursuitRadius(100, 300, 3));
     ASSERT_EQ_INT(0, TAK_AI_PursuitRadius(0, 0, 3));
     if (test_ai_builds_economy_then_production_then_combat() != 0) return 1;
+    if (test_ai_moves_to_the_next_factory_at_the_limit() != 0) return 1;
     if (test_ai_builds_lodestone_on_sacred_pad() != 0) return 1;
     if (test_ai_wave_targets_follow_the_teams() != 0) return 1;
     if (test_ai_wave_target_moves_on_when_it_dies() != 0) return 1;
