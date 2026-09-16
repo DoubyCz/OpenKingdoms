@@ -12,13 +12,19 @@ The earlier draft of this page said three things that do not hold, and they
 are worth naming rather than quietly deleting.
 
 - It said positions are 16.16 fixed point and angles use the 65536 per turn
-  convention. They do not yet. The simulation still keeps heading, sub pixel
-  position, speed, mana and several accumulators as floats, and it calls
-  `sqrtf`, `atan2f`, `sinf`, `cosf` and `floorf` on movement, facing,
-  projectile and animation host paths. The fixed point conversion is real
-  planned work, roughly 60 to 80 sites, and it is scheduled late on purpose.
-  Until it lands, two native machines can disagree with each other, because
-  the C runtime picks fused multiply add variants per processor.
+  convention. They do not, and the reason that mattered has moved again.
+  The simulation still keeps heading, sub pixel position, speed, mana and
+  several accumulators as floats. What changed in 0.1.3 is that every
+  transcendental on a simulation path goes through the simulation's own
+  trigonometry in `src/core/trig.c`, a guard fails the build if a named
+  file reaches for the platform's, and float contraction is off on every
+  compiler, so the remaining arithmetic is the correctly rounded kind that
+  IEEE 754 pins. The proof is `test_sim_probe`, a synthetic battle whose
+  hash is pinned and which runs on Windows, Linux, macOS on arm64 and the
+  browser in every pull request. All four report the same number. The
+  fixed point conversion is therefore no longer required for two machines
+  to agree. It stays on the list as the answer if a platform ever
+  disagrees, and for no other reason.
 - It said every player action is already a command. That was not true when
   this page was written and it is true now. The command pipeline landed and
   the user interface no longer applies an order in the middle of a frame.
@@ -101,9 +107,11 @@ samples them every 60 ticks through the older names `Units_DebugStateHash`
 and `TAK_AI_DebugStateHash`, which are thin wrappers so that there is one
 hash rather than two that can drift. The hash also takes the bit patterns of
 the mover's heading, speed and subpixel remainder, which are still floats.
-That makes the value answer "did these two runs of this build diverge" and
-not yet "do these two machines agree". Making it answer the second question
-needs the fixed-point mover, which is the work this section asks for above.
+Since 0.1.3 those floats come from correctly rounded arithmetic and the
+simulation's own trigonometry on every platform, so the value answers both
+questions, "did these two runs of this build diverge" and "do these two
+machines agree". `test_sim_probe` is what holds that true: one pinned hash,
+checked on all four platforms in CI.
 
 ---
 
