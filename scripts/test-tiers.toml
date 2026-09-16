@@ -219,13 +219,14 @@ ctest = "^(test_command_pipeline|test_gui_loader|test_gui_loader_no_data|test_mo
 ui = [
   ["battle_", 19],
   ["mp_room", 21],
-  ["select_game", 9],
+  ["select_game", 10],
   ["hud_static_art_fits_its_cell", 1],
   ["hud_magic_buttons_select_their_weapon_anywhere_on_the_art", 1],
   ["loading_backdrop_is_the_arch_and_its_glass", 1],
   ["a_skirmish_still_starts_the_moment_its_world_is_built", 1],
   ["end_screen_shows_defeat_dialog_and_proceeds_to_the_lobby", 1],
   ["zhon_ai_fields_an_army", 1],
+  ["a_click_on_a_scroll_arrow_reaches_the_arrow", 1],
 ]
 
 [[tier1]]

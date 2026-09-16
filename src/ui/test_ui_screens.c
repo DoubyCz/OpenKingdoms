@@ -2650,6 +2650,107 @@ TEST(mp_room_shows_why_the_server_said_no) {
 /* The host changes a rule and the unit limit and the map, and each is
  * one edit to the server, which owns the room. A guest pressing the
  * same box sends nothing and is told whose it is. */
+/* Select Game cached its arrow indices and never read them, so its
+ * list moved by the ball alone. Its arrows step the list a row. */
+TEST(select_game_scrolls_by_its_arrows) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, SelectGame_Init(&platform));
+    NetSession_BeginWithoutLink("Player");
+    uint8_t msg[TAK_NET_FRAME_MAX];
+    size_t n = sg_encode_welcome(msg, sizeof msg, 7);
+    sg_feed(msg, n);
+    ASSERT_EQ_INT(GAMESTATE_SELECT_GAME, SelectGame_Tick(&platform, 1.0f / 60.0f));
+    int vis = SelectGame_RowsVisible();
+    int count = vis + 2;
+    n = sg_encode_room_list(msg, sizeof msg, count, 0);
+    ASSERT(n > 0);
+    sg_feed(msg, n);
+    ASSERT_EQ_INT(GAMESTATE_SELECT_GAME, SelectGame_Tick(&platform, 1.0f / 60.0f));
+    int rows = SelectGame_RowCount();
+    int s0 = SelectGame_Scroll();
+    SelectGame_Press("decbutton");
+    int s1 = SelectGame_Scroll();
+    SelectGame_Press("decbutton");
+    SelectGame_Press("decbutton");
+    int s2 = SelectGame_Scroll();
+    SelectGame_Press("incbutton");
+    int s3 = SelectGame_Scroll();
+    printf("[vis=%d rows=%d scroll %d %d %d %d] ", vis, rows, s0, s1, s2, s3);
+
+    SelectGame_Shutdown();
+    NetSession_Disconnect();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+    ASSERT_EQ_INT(count, rows);
+    ASSERT_EQ_INT(0, s0);
+    ASSERT_EQ_INT(1, s1);
+    ASSERT_EQ_INT(2, s2);      /* clamped at the last page */
+    ASSERT_EQ_INT(1, s3);
+}
+
+/* Reported from play: a scrollbar moves by dragging the ball but not
+ * by its arrows. The arrows are hit tested against the .gui cell while
+ * the art draws at the cell less the frame hotspot, at the art's own
+ * size, so the pointer can be on the arrow and inside no widget. Every
+ * dialog the port loads that authors a pair is checked here. */
+TEST(a_click_on_a_scroll_arrow_reaches_the_arrow) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+
+    static const char *files[] = {
+        "data/guis/loadgame.gui",     "data/guis/savegame.gui",
+        "data/guis/selectgame.gui",   "data/guis/choosemap.gui",
+        "data/guis/soundoptions.gui", "data/guis/musicoptions.gui",
+        "data/guis/visualoptions.gui", "data/guis/interfaceoptions.gui",
+        "data/guis/battlemenusingle.gui", "data/guis/battlemenumulti.gui",
+        "data/guis/playerdialogue.gui", "data/guis/viewmap.gui",
+    };
+    int checked = 0, missed = 0;
+    for (size_t f = 0; f < sizeof files / sizeof files[0]; f++) {
+        GUIDialog dlg;
+        if (GUIDialog_Load(&dlg, files[f]) != 0) continue;
+        GUIRuntime *rt = GUIRuntime_Create(&dlg);
+        if (!rt) { GUIDialog_Free(&dlg); continue; }
+        GUIRuntime_Render(rt);
+        for (int i = 0; i < GUIRuntime_NumWidgets(rt); i++) {
+            const GUIWidget *w = GUIRuntime_WidgetAt(rt, i);
+            if (!w) continue;
+            if (tak_stricmp(w->name, "incbutton") != 0 &&
+                tak_stricmp(w->name, "decbutton") != 0) continue;
+            SDL_Rect d;
+            if (GUIRuntime_WidgetDrawRect(rt, i, &d) != 0) continue;
+            if (d.w <= 0 || d.h <= 0) continue;
+            int cx = d.x + d.w / 2;
+            int cy = d.y + d.h / 2;
+            char name[64];
+            int idx = -1;
+            (void)GUIRuntime_UpdateEx(rt, cx, cy, 1, name, sizeof name, &idx);
+            int got = GUIRuntime_UpdateEx(rt, cx, cy, 0, name, sizeof name, &idx);
+            checked++;
+            if (!got || idx != i) {
+                missed++;
+                printf("[%s %s click (%d,%d) reached %s] ",
+                       files[f], w->name, cx, cy, got ? name : "nothing");
+            }
+        }
+        GUIRuntime_Destroy(rt);
+        GUIDialog_Free(&dlg);
+    }
+    printf("[%d arrows, %d unreachable] ", checked, missed);
+
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+    ASSERT(checked > 0);
+    ASSERT_EQ_INT(0, missed);
+}
+
 /* The map chooser's own scrollbar. Reported from play: the bar could
  * not be used, and the first row drew two names on top of each other.
  * The chooser only ever answered its two arrow buttons, and the
@@ -21971,6 +22072,8 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_B, mp_room_shows_why_the_server_said_no);
     RUN_UI_TEST(UI_GROUP_C, mp_room_host_sets_the_rules_the_cap_and_the_map);
     RUN_UI_TEST(UI_GROUP_A, mp_room_host_cycles_a_slot_by_its_name);
+    RUN_UI_TEST(UI_GROUP_D, a_click_on_a_scroll_arrow_reaches_the_arrow);
+    RUN_UI_TEST(UI_GROUP_D, select_game_scrolls_by_its_arrows);
     RUN_UI_TEST(UI_GROUP_D, mp_room_map_chooser_scrolls_by_its_bar);
     RUN_UI_TEST(UI_GROUP_D, mp_room_a_guest_cannot_change_the_rules);
     RUN_UI_TEST(UI_GROUP_A, mp_room_chat_goes_out_and_comes_in);
