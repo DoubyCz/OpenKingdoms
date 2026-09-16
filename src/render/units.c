@@ -11430,26 +11430,8 @@ static const uint32_t *proj_sprite_palette(const ProjSpriteArt *ps,
     return world ? world->features_rgba : NULL;
 }
 
-static int proj_sprite_ensure(SDL_Renderer *r, int sprite_idx) {
-    if (sprite_idx < 0 || sprite_idx >= g_proj_sprite_count) return -1;
-    ProjSpriteArt *ps = &g_proj_sprites[sprite_idx];
-    /* A texture belongs to the renderer that made it and dies with it,
-     * so on a renderer swap drop the handle and re-upload from the
-     * decoded strip we keep. */
-    /* No generation means nobody claimed one, and a handle that cannot
-     * be matched to its renderer is one we will not keep or use. A new
-     * renderer site that forgets the call loses its sprites, which the
-     * shadow cases say out loud, rather than leaking a texture a frame
-     * or handing a dead one to SDL. */
-    if (g_live_renderer_gen == 0) return -1;
-    if (ps->strip && (ps->owner != r || ps->epoch != g_proj_art_epoch ||
-                      ps->owner_gen != g_live_renderer_gen)) {
-        ps->strip = NULL;
-        ps->owner = NULL;
-        ps->owner_gen = 0;
-    }
-    if (ps->strip) return 0;
-
+/* Decodes the art once into its strip; 0 with the strip ready. */
+static int proj_sprite_decode(ProjSpriteArt *ps) {
     if (!ps->tried) {
         ps->tried = 1;
         GAFFile *gaf = NULL;
@@ -11513,6 +11495,30 @@ static int proj_sprite_ensure(SDL_Renderer *r, int sprite_idx) {
                 ps->file, ps->seq, nf, cw, chh);
     }
     if (!ps->pixels || ps->num_frames <= 0) return -1;
+    return 0;
+}
+
+static int proj_sprite_ensure(SDL_Renderer *r, int sprite_idx) {
+    if (sprite_idx < 0 || sprite_idx >= g_proj_sprite_count) return -1;
+    ProjSpriteArt *ps = &g_proj_sprites[sprite_idx];
+    /* A texture belongs to the renderer that made it and dies with it,
+     * so on a renderer swap drop the handle and re-upload from the
+     * decoded strip we keep. */
+    /* No generation means nobody claimed one, and a handle that cannot
+     * be matched to its renderer is one we will not keep or use. A new
+     * renderer site that forgets the call loses its sprites, which the
+     * shadow cases say out loud, rather than leaking a texture a frame
+     * or handing a dead one to SDL. */
+    if (g_live_renderer_gen == 0) return -1;
+    if (ps->strip && (ps->owner != r || ps->epoch != g_proj_art_epoch ||
+                      ps->owner_gen != g_live_renderer_gen)) {
+        ps->strip = NULL;
+        ps->owner = NULL;
+        ps->owner_gen = 0;
+    }
+    if (ps->strip) return 0;
+
+    if (proj_sprite_decode(ps) != 0) return -1;
 
     SDL_Texture *strip = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA32,
                                            SDL_TEXTUREACCESS_STATIC,
@@ -12429,6 +12435,27 @@ int Units_FeatureSpriteFrame(const struct FeatureDef *fd,
     if (out_off_x)  *out_off_x = fs->frame_off_x[frame];
     if (out_off_y)  *out_off_y = fs->frame_off_y[frame];
     return fs->num_frames;
+}
+
+int Units_ProjectileVisible(const struct GameWorld *world, const Projectile *p) {
+    return projectile_visible_to_local_player(world, p);
+}
+
+const char *Units_ProjectileModelName(int art_idx) {
+    if (art_idx < 0 || art_idx >= g_proj_model_count) return NULL;
+    return g_proj_models[art_idx].name;
+}
+
+int Units_ProjectileSpriteStrip(int sprite_idx, ProjSpriteStrip *out) {
+    if (!out || sprite_idx < 0 || sprite_idx >= g_proj_sprite_count) return 0;
+    ProjSpriteArt *ps = &g_proj_sprites[sprite_idx];
+    if (proj_sprite_decode(ps) != 0) return 0;
+    out->pixels = ps->pixels;
+    out->num_frames = ps->num_frames;
+    out->cell_w = ps->cell_w;
+    out->cell_h = ps->cell_h;
+    out->fw = ps->fw; out->fh = ps->fh; out->ox = ps->ox; out->oy = ps->oy;
+    return ps->num_frames;
 }
 
 int Units_DebugRemove(int handle) {
