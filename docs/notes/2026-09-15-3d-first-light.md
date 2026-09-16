@@ -177,12 +177,18 @@ piece gets a zero transform and collapses to a point.
 
 ## Frame rate
 
-Measured on the owner's machine (RTX 3070, Windows 10) at 1600 by
-900 with vsync off, the 3D view's own render call costs about a
-quarter of a millisecond of CPU per frame on Ladron's Tarn, and the
-game runs at the rate printed by the View3D line in its log, which is
-recorded in the pull request for this note. With vsync on it holds
-the display's rate.
+Measured on the owner's machine (RTX 3070, Windows 10) at 1600 by 900
+with vsync off, playing the build8 scenario on Ladron's Tarn with eight
+seats: the 3D view's own render call costs about half a millisecond of
+CPU per frame and the game runs between 240 and 450 frames per second,
+against a simulation that keeps its 60 Hz with no capped frames. With
+vsync on it holds the display's rate. The first press of V decodes the
+chunk images for the terrain, under a second on this map.
+
+Two things load this machine and show up as choppy movement without
+being the 3D view's cost: several game instances running at once (each
+spins a core with vsync off), and the browser build in a tab beside
+the desktop build.
 
 ## Command line switches for captures
 

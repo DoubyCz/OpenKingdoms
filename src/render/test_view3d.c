@@ -49,10 +49,33 @@
 #define WIN_W 800
 #define WIN_H 600
 
-/* The feature sprite frame counter steps once per classic render and
- * picks a frame every four, so two classic frames this far apart draw
- * the same picture of a frozen world. */
-#define CLASSIC_PHASE 4
+/* The classic renderer's frame counter steps once per render and picks
+ * frame counter/4 of every animated feature sprite (and counter/2 of a
+ * flyer's shadow strip), so two classic frames of a frozen world draw
+ * the same picture only when they are a whole number of every one of
+ * those cycles apart. This works that number out for the map. */
+static int gcd_int(int a, int b) {
+    while (b) { int t = a % b; a = b; b = t; }
+    return a;
+}
+
+static int classic_phase(const GameWorld *world) {
+    int phase = 4;
+    for (int i = 0; i < world->feature_count; i++) {
+        const FeatureDef *fd = Features_GetByIndex(world->features[i].global_idx);
+        if (!fd || fd->object[0] || !fd->filename[0]) continue;
+        const uint32_t *px = NULL;
+        int w = 0, h = 0, ox = 0, oy = 0;
+        int frames = Units_FeatureSpriteFrame(fd, world->features_rgba, 0,
+                                              &px, &w, &h, &ox, &oy);
+        if (frames <= 1) continue;
+        int cycle = 4 * frames;
+        phase = phase / gcd_int(phase, cycle) * cycle;
+    }
+    /* A flyer's shadow strip runs its frames every two renders. */
+    phase = phase / gcd_int(phase, 20) * 20;
+    return phase;
+}
 
 static int setup_platform(TAK_Platform *p) {
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -144,9 +167,28 @@ static int capture(TAK_Platform *plat, uint32_t *out) {
                                 out, WIN_W * 4) == 0;
 }
 
+/* Counts the pixels that differ, and on a mismatch says where they are
+ * and writes both frames beside the binary for a look. */
 static int differing_pixels(const uint32_t *a, const uint32_t *b) {
-    int n = 0;
-    for (int i = 0; i < WIN_W * WIN_H; i++) if (a[i] != b[i]) n++;
+    int n = 0, x0 = WIN_W, y0 = WIN_H, x1 = -1, y1 = -1;
+    for (int i = 0; i < WIN_W * WIN_H; i++) {
+        if (a[i] == b[i]) continue;
+        n++;
+        int x = i % WIN_W, y = i / WIN_W;
+        if (x < x0) x0 = x;
+        if (y < y0) y0 = y;
+        if (x > x1) x1 = x;
+        if (y > y1) y1 = y;
+    }
+    if (n > 0) {
+        printf("(%d pixels differ in x %d..%d y %d..%d) ", n, x0, x1, y0, y1);
+        SDL_Surface *s = SDL_CreateRGBSurfaceWithFormatFrom((void *)a, WIN_W, WIN_H, 32,
+                                                           WIN_W * 4, SDL_PIXELFORMAT_RGBA32);
+        if (s) { SDL_SaveBMP(s, "view3d-diff-a.bmp"); SDL_FreeSurface(s); }
+        s = SDL_CreateRGBSurfaceWithFormatFrom((void *)b, WIN_W, WIN_H, 32,
+                                               WIN_W * 4, SDL_PIXELFORMAT_RGBA32);
+        if (s) { SDL_SaveBMP(s, "view3d-diff-b.bmp"); SDL_FreeSurface(s); }
+    }
     return n;
 }
 
@@ -196,9 +238,11 @@ TEST(toggling_3d_on_and_off_leaves_the_classic_frame_byte_identical) {
     /* The control: with the world frozen, two classic frames a phase
      * apart draw the same bytes. This is what makes the comparison
      * below mean something. */
-    for (int i = 0; i < CLASSIC_PHASE; i++) ASSERT(frame(&platform, &timer));
+    const int phase = classic_phase(world);
+    printf("(phase %d) ", phase);
+    for (int i = 0; i < phase; i++) ASSERT(frame(&platform, &timer));
     ASSERT(capture(&platform, a));
-    for (int i = 0; i < CLASSIC_PHASE; i++) ASSERT(frame(&platform, &timer));
+    for (int i = 0; i < phase; i++) ASSERT(frame(&platform, &timer));
     ASSERT(capture(&platform, b));
     ASSERT_EQ_INT(0, differing_pixels(a, b));
     int lit = 0, bins = 0;
@@ -213,7 +257,7 @@ TEST(toggling_3d_on_and_off_leaves_the_classic_frame_byte_identical) {
     ASSERT(capture(&platform, c));
     ASSERT_EQ_INT(1, InGame_SetView3D(0));
     ASSERT_EQ_INT(0, InGame_IsView3D());
-    for (int i = 0; i < CLASSIC_PHASE; i++) ASSERT(frame(&platform, &timer));
+    for (int i = 0; i < phase; i++) ASSERT(frame(&platform, &timer));
     ASSERT(capture(&platform, b));
     ASSERT_EQ_INT(0, differing_pixels(a, b));
 
@@ -314,8 +358,10 @@ TEST(the_accessors_hand_out_the_baked_model_and_its_pose) {
         int p = m->nodes[i].parent;
         ASSERT(p >= 0 && p < i);
         for (int k = 0; k < 3; k++) {
+            /* Offsets run to a million model units, so a float sum is
+             * only good to a fraction of a unit. */
             float want = xf[p].trans[k] + m->nodes[i].offset[k];
-            ASSERT(xf[i].trans[k] > want - 0.01f && xf[i].trans[k] < want + 0.01f);
+            ASSERT(xf[i].trans[k] > want - 1.0f && xf[i].trans[k] < want + 1.0f);
         }
     }
     /* A missing model is a NULL, not a crash. */
@@ -379,7 +425,7 @@ TEST(a_walking_units_pieces_move_in_the_3d_pose) {
     ASSERT_EQ_INT(0, nodes_that_moved(m, a, b));
 
     /* Marching, the legs and arms swing. */
-    ASSERT_EQ_INT(0, Units_OrderMove(0, units[0].world_x + 600, units[0].world_y));
+    ASSERT_EQ_INT(1, Units_OrderMove(0, units[0].world_x + 600, units[0].world_y));
     InGame_DebugRunSimTicks(90);
     Units_ComposeNodeXforms(m, units[0].cob->pieces, a, 1);
     InGame_DebugRunSimTicks(7);
@@ -389,15 +435,19 @@ TEST(a_walking_units_pieces_move_in_the_3d_pose) {
     shutdown_all(&platform);
 }
 
+/* An argument runs only the cases whose name contains it. */
+#define RUN_NAMED(name) do { \
+        if (argc < 2 || strstr(#name, argv[1])) RUN(name); \
+    } while (0)
+
 int main(int argc, char **argv) {
-    (void)argc; (void)argv;
     TAK_Crash_Install();
     printf("test_view3d\n");
     TEST_ALLOW_SKIPS("no game data or no opengl renderer on this machine");
-    RUN(toggling_3d_on_and_off_leaves_the_classic_frame_byte_identical);
-    RUN(the_3d_pointer_lands_where_the_camera_looks);
-    RUN(a_scroll_in_3d_moves_the_classic_camera_with_it);
-    RUN(the_accessors_hand_out_the_baked_model_and_its_pose);
-    RUN(a_walking_units_pieces_move_in_the_3d_pose);
+    RUN_NAMED(toggling_3d_on_and_off_leaves_the_classic_frame_byte_identical);
+    RUN_NAMED(the_3d_pointer_lands_where_the_camera_looks);
+    RUN_NAMED(a_scroll_in_3d_moves_the_classic_camera_with_it);
+    RUN_NAMED(the_accessors_hand_out_the_baked_model_and_its_pose);
+    RUN_NAMED(a_walking_units_pieces_move_in_the_3d_pose);
     TEST_REPORT();
 }

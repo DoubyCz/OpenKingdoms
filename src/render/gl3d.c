@@ -35,6 +35,7 @@
     X(GLboolean, IsEnabled,     (GLenum)) \
     X(void,   GetIntegerv,      (GLenum, GLint *)) \
     X(void,   GetBooleanv,      (GLenum, GLboolean *)) \
+    X(void,   GetFloatv,        (GLenum, GLfloat *)) \
     X(GLenum, GetError,         (void)) \
     X(const GLubyte *, GetString, (GLenum)) \
     X(void,   Viewport,         (GLint, GLint, GLsizei, GLsizei)) \
@@ -99,6 +100,7 @@ static struct {
     /* Desktop only, for putting SDL's fixed function arrays back. */
     void (APIENTRY *EnableClientState)(GLenum);
     void (APIENTRY *DisableClientState)(GLenum);
+    void (APIENTRY *Color4f)(GLfloat, GLfloat, GLfloat, GLfloat);
 } gl;
 #ifndef GL_VERTEX_ARRAY
 #define GL_VERTEX_ARRAY 0x8074
@@ -138,6 +140,7 @@ static struct {
         GLboolean blend, scissor_on, depth_test, cull, depth_mask, color_mask[4];
         GLboolean tex2d_on, va_vertex, va_color, va_texcoord;
         GLint attrib_on[8];
+        GLfloat clear_color[4], color[4];
     } saved;
     SDL_Texture *bound_sdl_tex;   /* the atlas bound through SDL this frame */
     int frame_open;
@@ -336,6 +339,7 @@ int GL3D_Init(SDL_Window *window, SDL_Renderer *renderer) {
     gl.GenerateMipmap = (void (APIENTRY *)(GLenum))SDL_GL_GetProcAddress("glGenerateMipmap");
     gl.EnableClientState = (void (APIENTRY *)(GLenum))SDL_GL_GetProcAddress("glEnableClientState");
     gl.DisableClientState = (void (APIENTRY *)(GLenum))SDL_GL_GetProcAddress("glDisableClientState");
+    gl.Color4f = (void (APIENTRY *)(GLfloat, GLfloat, GLfloat, GLfloat))SDL_GL_GetProcAddress("glColor4f");
 #endif
     g.window = window;
     g.renderer = renderer;
@@ -407,6 +411,12 @@ static void save_state(void) {
     g.saved.cull       = GLF(IsEnabled)(GL_CULL_FACE);
     GLF(GetBooleanv)(GL_DEPTH_WRITEMASK, &g.saved.depth_mask);
     GLF(GetBooleanv)(GL_COLOR_WRITEMASK, g.saved.color_mask);
+    /* SDL sets its clear colour and its draw colour only when they
+     * change, so both have to come back exactly as they were. */
+    GLF(GetFloatv)(GL_COLOR_CLEAR_VALUE, g.saved.clear_color);
+#ifndef __EMSCRIPTEN__
+    GLF(GetFloatv)(GL_CURRENT_COLOR, g.saved.color);
+#endif
     for (int i = 0; i < 8; i++) {
         g.saved.attrib_on[i] = 0;
         GLF(GetVertexAttribiv)((GLuint)i, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &g.saved.attrib_on[i]);
@@ -460,7 +470,12 @@ static void restore_state(void) {
     set_enabled(GL_CULL_FACE, g.saved.cull);
     GLF(CullFace)((GLenum)g.saved.cull_mode);
     GLF(FrontFace)((GLenum)g.saved.front_face);
+    GLF(ClearColor)(g.saved.clear_color[0], g.saved.clear_color[1],
+                    g.saved.clear_color[2], g.saved.clear_color[3]);
 #ifndef __EMSCRIPTEN__
+    if (gl.Color4f) {
+        gl.Color4f(g.saved.color[0], g.saved.color[1], g.saved.color[2], g.saved.color[3]);
+    }
     if (gl.EnableClientState && gl.DisableClientState) {
         (g.saved.va_vertex ? gl.EnableClientState : gl.DisableClientState)(GL_VERTEX_ARRAY);
         (g.saved.va_color ? gl.EnableClientState : gl.DisableClientState)(GL_COLOR_ARRAY);

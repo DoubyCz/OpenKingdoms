@@ -751,6 +751,9 @@ static int v3_pointer_to_world(const GameWorld *world, const TAK_Platform *plat,
                                int wx, int wy, int32_t *out_x, int32_t *out_y) {
     (void)plat;
     if (!v.ready || !world || !world->loaded) return 0;
+    if (wx < v.viewport.x || wy < v.viewport.y ||
+        wx >= v.viewport.x + v.viewport.w || wy >= v.viewport.y + v.viewport.h)
+        return 0;
     float o[3], d[3], gx = 0.0f, gz = 0.0f;
     Camera3D_PointerRay(&v.cam, v.viewport.w, v.viewport.h,
                         (float)(wx - v.viewport.x), (float)(wy - v.viewport.y), o, d);
