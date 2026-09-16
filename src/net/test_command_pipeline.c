@@ -505,13 +505,17 @@ TEST(a_click_reaches_the_unit_on_the_next_tick) {
     ASSERT(mine >= 0 && theirs >= 0);
 
     Units_SelectSingle(mine);
+    /* The order carries the ground under the pointer, not the flat
+     * reading, so the expectation is asked of the same mapping. */
+    int32_t want_x = 0, want_y = 0;
+    Units_GroundUnderPoint(1200, 1000, &want_x, &want_y);
     InGame_WorldClick(1200, 1000, 0);
     ASSERT_EQ_INT(UNIT_CMD_NONE, (int)cp_unit(mine)->cmd_kind);
     ASSERT_EQ_INT(1, TAK_CmdQueue_Pending());
     TAK_CmdQueue_Run();
     ASSERT_EQ_INT(UNIT_CMD_MOVE, (int)cp_unit(mine)->cmd_kind);
-    ASSERT_EQ_INT(1200, cp_unit(mine)->cmd_x);
-    ASSERT_EQ_INT(1000, cp_unit(mine)->cmd_y);
+    ASSERT_EQ_INT(want_x, cp_unit(mine)->cmd_x);
+    ASSERT_EQ_INT(want_y, cp_unit(mine)->cmd_y);
 
     /* The command carried the local seat, and nobody else's unit moved. */
     ASSERT_EQ_INT(1, (int)TAK_CmdQueue_LastApplied()->seat);
