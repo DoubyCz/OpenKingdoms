@@ -20,6 +20,12 @@ const TAK_View *View_3D(void);
 /* Whether init succeeded on this platform. */
 int  View3D_IsReady(void);
 
+/* What the last 3D frame drew, for tests. */
+typedef struct View3DDrawCounts {
+    int units, features, projectiles, effects, beams;
+} View3DDrawCounts;
+View3DDrawCounts View3D_DebugDrawCounts(void);
+
 /* Entering from the classic view: put the free camera at the classic
  * angle over the middle of the classic viewport. Leaving: put the
  * classic camera over the same spot. */

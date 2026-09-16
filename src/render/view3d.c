@@ -115,6 +115,8 @@ static struct {
     uint8_t node_hidden[UNIT_MESH_MAX_NODES];
 } v;
 
+static View3DDrawCounts s_counts;
+
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
 static float ground_height(void *ctx, float x, float z) {
@@ -473,6 +475,7 @@ static void draw_units(const GameWorld *world, const float planes[6][4]) {
         draw_model_at(m, u->cob ? u->cob->pieces : NULL, 0,
                       (float)u->world_x, h, (float)u->world_y,
                       u->heading, u->pitch, u->roll, alpha);
+        s_counts.units++;
     }
 }
 
@@ -496,6 +499,7 @@ typedef struct Billboard {
     GL3D_Texture *tex;
     float x, z, top, bottom, off_x, w, shade;
     int flat;   /* a pad lies on the ground rather than standing up */
+    float u0, u1, v1;   /* the strip cell this frame lies in */
 } Billboard;
 
 static int billboard_cmp(const void *a, const void *b) {
@@ -523,17 +527,17 @@ static void draw_billboards(const Billboard *bb, int n) {
                 float z0 = b->z - (b->top - b->bottom) * 0.5f;
                 float z1 = b->z + (b->top - b->bottom) * 0.5f;
                 float y = b->bottom;
-                put_vert(o + 0,  x0, y, z0, 0.0f, 0.0f, s, s, s, 1.0f);
-                put_vert(o + 9,  x1, y, z0, 1.0f, 0.0f, s, s, s, 1.0f);
-                put_vert(o + 18, x1, y, z1, 1.0f, 1.0f, s, s, s, 1.0f);
-                put_vert(o + 27, x0, y, z1, 0.0f, 1.0f, s, s, s, 1.0f);
+                put_vert(o + 0,  x0, y, z0, b->u0, 0.0f, s, s, s, 1.0f);
+                put_vert(o + 9,  x1, y, z0, b->u1, 0.0f, s, s, s, 1.0f);
+                put_vert(o + 18, x1, y, z1, b->u1, b->v1, s, s, s, 1.0f);
+                put_vert(o + 27, x0, y, z1, b->u0, b->v1, s, s, s, 1.0f);
             } else {
                 float lx = b->x - rx * b->off_x, lz = b->z - rz * b->off_x;
                 float hx = b->x + rx * (b->w - b->off_x), hz = b->z + rz * (b->w - b->off_x);
-                put_vert(o + 0,  lx, b->top, lz,    0.0f, 0.0f, s, s, s, 1.0f);
-                put_vert(o + 9,  hx, b->top, hz,    1.0f, 0.0f, s, s, s, 1.0f);
-                put_vert(o + 18, hx, b->bottom, hz, 1.0f, 1.0f, s, s, s, 1.0f);
-                put_vert(o + 27, lx, b->bottom, lz, 0.0f, 1.0f, s, s, s, 1.0f);
+                put_vert(o + 0,  lx, b->top, lz,    b->u0, 0.0f, s, s, s, 1.0f);
+                put_vert(o + 9,  hx, b->top, hz,    b->u1, 0.0f, s, s, s, 1.0f);
+                put_vert(o + 18, hx, b->bottom, hz, b->u1, b->v1, s, s, s, 1.0f);
+                put_vert(o + 27, lx, b->bottom, lz, b->u0, b->v1, s, s, s, 1.0f);
             }
             uint16_t *q = v.stream_i + ni;
             q[0] = (uint16_t)nv; q[1] = (uint16_t)(nv + 1); q[2] = (uint16_t)(nv + 2);
@@ -591,10 +595,12 @@ static void draw_features(const GameWorld *world, const float planes[6][4]) {
         }
         b->off_x = (float)s->off_x;
         b->w = (float)s->w;
+        b->u0 = 0.0f; b->u1 = 1.0f; b->v1 = 1.0f;
         b->shade = Fog_ShowsAt(world, wx, wy) ? 1.0f : 0.5f;
         float centre[3] = { b->x, (b->top + b->bottom) * 0.5f, b->z };
         if (!Camera3D_SphereInFrustum(planes, centre, (float)(s->w + s->h))) continue;
         nb++;
+        s_counts.features++;
     }
     if (nb > 1) qsort(bb, (size_t)nb, sizeof(Billboard), billboard_cmp);
     draw_billboards(bb, nb);
@@ -659,6 +665,189 @@ static void draw_water(const GameWorld *world) {
 
 /* ── The view ─────────────────────────────────────────────────────── */
 
+/* A weapon's sprite strip on the GPU, one per art slot. */
+typedef struct EffectTex {
+    int             sprite_idx;
+    GL3D_Texture   *tex;
+    ProjSpriteStrip strip;
+} EffectTex;
+static EffectTex s_effect_tex[128];
+static int       s_effect_tex_count;
+
+static void free_effect_tex(void) {
+    for (int i = 0; i < s_effect_tex_count; i++) {
+        if (s_effect_tex[i].tex) GL3D_FreeTexture(s_effect_tex[i].tex);
+    }
+    memset(s_effect_tex, 0, sizeof(s_effect_tex));
+    s_effect_tex_count = 0;
+}
+
+static EffectTex *effect_tex_for(int sprite_idx) {
+    for (int i = 0; i < s_effect_tex_count; i++) {
+        if (s_effect_tex[i].sprite_idx == sprite_idx)
+            return s_effect_tex[i].tex ? &s_effect_tex[i] : NULL;
+    }
+    if (s_effect_tex_count >= (int)(sizeof(s_effect_tex) / sizeof(s_effect_tex[0]))) return NULL;
+    EffectTex *e = &s_effect_tex[s_effect_tex_count++];
+    memset(e, 0, sizeof(*e));
+    e->sprite_idx = sprite_idx;
+    if (Units_ProjectileSpriteStrip(sprite_idx, &e->strip) <= 0) return NULL;
+    e->tex = GL3D_UploadTextureRGBA(e->strip.pixels, e->strip.cell_w * e->strip.num_frames,
+                                    e->strip.cell_h, 0, 1);
+    return e->tex ? e : NULL;
+}
+
+/* A frame of a strip stood up at a point, anchored the way the classic
+ * blit anchors it: the frame's top left sits (ox, oy) from the point. */
+static void put_billboard(Billboard *b, const EffectTex *e, int frame,
+                          float x, float y, float z) {
+    const ProjSpriteStrip *st = &e->strip;
+    float sw = (float)(st->cell_w * st->num_frames);
+    b->tex = e->tex;
+    b->flat = 0;
+    b->shade = 1.0f;
+    b->x = x;
+    b->z = z;
+    b->off_x = (float)st->ox[frame];
+    b->w = (float)st->fw[frame];
+    b->top = y + (float)st->oy[frame];
+    b->bottom = b->top - (float)st->fh[frame];
+    b->u0 = (float)(frame * st->cell_w) / sw;
+    b->u1 = (float)(frame * st->cell_w + st->fw[frame]) / sw;
+    b->v1 = (float)st->fh[frame] / (float)st->cell_h;
+}
+
+/* Projectiles in flight and the impact sprites where they landed.
+ * Frame choice matches the classic passes. */
+static void draw_effects(const GameWorld *world, const float planes[6][4]) {
+    int pn = 0, en = 0;
+    const Projectile *ps = Units_GetProjectiles(&pn);
+    const ProjectileEffect *es = Units_GetProjectileEffects(&en);
+    if (pn + en <= 0) return;
+    Billboard *bb = (Billboard *)tak_malloc(sizeof(Billboard) * (size_t)(pn + en));
+    if (!bb) return;
+    int nb = 0;
+    for (int i = 0; i < pn; i++) {
+        const Projectile *p = &ps[i];
+        if (!p->alive || p->is_beam) continue;
+        if (!Units_ProjectileVisible(world, p)) continue;
+        float c[3] = { (float)p->world_x, p->height, (float)p->world_y };
+        if (p->art_kind == UNIT_WEAPON_ART_MODEL && p->art_idx >= 0) {
+            const char *name = Units_ProjectileModelName(p->art_idx);
+            int colour = p->color_idx > 11 ? 0 : p->color_idx;
+            const GpuModel *m = name ? ModelStore_Get(name, colour) : NULL;
+            if (!m) continue;
+            if (!Camera3D_SphereInFrustum(planes, c, m->radius_px)) continue;
+            draw_model_at(m, NULL, 1, c[0], c[1], c[2], p->heading, p->pitch, p->roll, 1.0f);
+            s_counts.projectiles++;
+            continue;
+        }
+        if (p->art_kind == UNIT_WEAPON_ART_SPRITE && p->art_idx >= 0) {
+            EffectTex *e = effect_tex_for(p->art_idx);
+            if (!e) continue;
+            int nf = e->strip.num_frames;
+            int frame = nf > 1 ? (int)((p->age_ticks / 2) % (uint16_t)nf) : 0;
+            if (e->strip.fw[frame] <= 0 || e->strip.fh[frame] <= 0) continue;
+            if (!Camera3D_SphereInFrustum(planes, c, (float)(e->strip.cell_w + e->strip.cell_h))) continue;
+            put_billboard(&bb[nb++], e, frame, c[0], c[1], c[2]);
+            s_counts.projectiles++;
+            continue;
+        }
+        /* No art of its own: the bright dot the classic view draws. */
+        if (!Camera3D_SphereInFrustum(planes, c, 8.0f)) continue;
+        Billboard *b = &bb[nb++];
+        b->tex = NULL; b->flat = 0; b->shade = 1.0f;
+        b->x = c[0]; b->z = c[2];
+        b->off_x = 3.0f; b->w = 6.0f;
+        b->top = c[1] + 3.0f; b->bottom = c[1] - 3.0f;
+        b->u0 = 0.0f; b->u1 = 1.0f; b->v1 = 1.0f;
+        s_counts.projectiles++;
+    }
+    for (int i = 0; i < en; i++) {
+        const ProjectileEffect *e = &es[i];
+        if (!e->alive) continue;
+        if (!Fog_ShowsAt(world, e->world_x, e->world_y)) continue;
+        EffectTex *et = effect_tex_for(e->sprite_idx);
+        if (!et) continue;
+        int nf = et->strip.num_frames;
+        int frame = e->age_ticks / (e->ticks_per_frame ? e->ticks_per_frame : 2);
+        if (frame >= nf) {
+            if (!e->loops || nf <= 0) continue;
+            frame %= nf;
+        }
+        if (et->strip.fw[frame] <= 0 || et->strip.fh[frame] <= 0) continue;
+        float c[3] = { (float)e->world_x, (float)e->height, (float)e->world_y };
+        if (!Camera3D_SphereInFrustum(planes, c, (float)(et->strip.cell_w + et->strip.cell_h))) continue;
+        put_billboard(&bb[nb++], et, frame, c[0], c[1], c[2]);
+        s_counts.effects++;
+    }
+    if (nb > 1) qsort(bb, (size_t)nb, sizeof(Billboard), billboard_cmp);
+    draw_billboards(bb, nb);
+    tak_free(bb);
+}
+
+/* Beams: a jagged ribbon from muzzle to target in three widths, the
+ * outer ones fainter, jittered afresh each frame the way the classic
+ * rays flicker. */
+#define V3_BEAM_SEGS 8
+static void draw_beams(const GameWorld *world) {
+    int pn = 0;
+    const Projectile *ps = Units_GetProjectiles(&pn);
+    int beams = 0;
+    for (int i = 0; i < pn; i++) if (ps[i].alive && ps[i].is_beam) beams++;
+    if (beams <= 0) return;
+    const int per_pass_v = (V3_BEAM_SEGS + 1) * 2, per_pass_i = V3_BEAM_SEGS * 6;
+    if (ensure_stream(beams * 3 * per_pass_v, beams * 3 * per_pass_i) != 0) return;
+    int ucount = 0;
+    const Unit *units = Units_GetActive(&ucount);
+    static unsigned flicker;
+    flicker++;
+    float rx = cosf(v.cam.yaw), rz = -sinf(v.cam.yaw);
+    static const float half_w[3] = { 3.0f, 2.0f, 1.0f };
+    static const float alpha[3] = { 0.35f, 0.65f, 1.0f };
+    int nv = 0, ni = 0;
+    for (int i = 0; i < pn; i++) {
+        const Projectile *p = &ps[i];
+        if (!p->alive || !p->is_beam) continue;
+        if (!Units_ProjectileVisible(world, p)) continue;
+        float ax = (float)p->src_x, az = (float)p->src_y;
+        float ay = (float)p->src_height + 12.0f;
+        float bx = (float)p->world_x, bz = (float)p->world_y;
+        float by = (float)Terrain_SampleHeight(world, p->world_x, p->world_y) + 8.0f;
+        if (p->target >= 0 && p->target < ucount) by += units[p->target].flight_alt;
+        float jitter[V3_BEAM_SEGS + 1];
+        for (int s = 0; s <= V3_BEAM_SEGS; s++) {
+            unsigned h = (flicker * 2654435761u) ^ ((unsigned)i * 40503u) ^ ((unsigned)s * 97u);
+            h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+            jitter[s] = (s == 0 || s == V3_BEAM_SEGS) ? 0.0f : ((float)(h % 1000u) / 1000.0f - 0.5f) * 10.0f;
+        }
+        for (int pass = 0; pass < 3; pass++) {
+            int ci = 2 - pass;   /* outer, middle, inner */
+            float r = p->beam_rgb[ci][0] / 255.0f, gg = p->beam_rgb[ci][1] / 255.0f,
+                  b = p->beam_rgb[ci][2] / 255.0f, a = alpha[pass], hw = half_w[pass];
+            int base = nv;
+            for (int s = 0; s <= V3_BEAM_SEGS; s++) {
+                float t = (float)s / (float)V3_BEAM_SEGS;
+                float x = ax + (bx - ax) * t + rx * jitter[s];
+                float y = ay + (by - ay) * t;
+                float z = az + (bz - az) * t + rz * jitter[s];
+                put_vert(v.stream_v + (size_t)(nv + 2 * s) * 9, x - rx * hw, y, z - rz * hw, 0, 0, r, gg, b, a);
+                put_vert(v.stream_v + (size_t)(nv + 2 * s + 1) * 9, x + rx * hw, y, z + rz * hw, 0, 0, r, gg, b, a);
+            }
+            for (int s = 0; s < V3_BEAM_SEGS; s++) {
+                int q0 = base + 2 * s;
+                uint16_t *q = v.stream_i + ni;
+                q[0] = (uint16_t)q0; q[1] = (uint16_t)(q0 + 1); q[2] = (uint16_t)(q0 + 2);
+                q[3] = (uint16_t)(q0 + 1); q[4] = (uint16_t)(q0 + 3); q[5] = (uint16_t)(q0 + 2);
+                ni += 6;
+            }
+            nv += per_pass_v;
+        }
+        s_counts.beams++;
+    }
+    if (nv > 0) GL3D_DrawSprites(v.stream_v, nv, v.stream_i, ni, NULL, 0, 1);
+}
+
 static int v3_init(TAK_Platform *plat) {
     if (v.ready) return 0;
     if (!plat || !plat->window || !plat->renderer) return -1;
@@ -681,6 +870,7 @@ static void v3_shutdown(TAK_Platform *plat) {
     if (!v.inited_gl) return;
     free_terrain();
     ModelStore_Clear();
+    free_effect_tex();
     if (v.stream_v) tak_free(v.stream_v);
     if (v.stream_i) tak_free(v.stream_i);
     GL3D_Shutdown();
@@ -690,10 +880,12 @@ static void v3_shutdown(TAK_Platform *plat) {
 static void v3_render(const GameWorld *world, TAK_Platform *plat,
                       const SDL_Rect *viewport) {
     if (!v.ready || !world || !world->loaded || !plat) return;
+    memset(&s_counts, 0, sizeof(s_counts));
     double t0 = (double)SDL_GetPerformanceCounter();
     if (v.built_for != world || v.built_grid != world->grid) {
         free_terrain();
         ModelStore_Clear();
+        free_effect_tex();
         if (build_terrain(world) != 0) return;
         retarget_from_classic(world);
     }
@@ -727,6 +919,8 @@ static void v3_render(const GameWorld *world, TAK_Platform *plat,
     draw_features(world, planes);
     draw_selection_rings(world);
     draw_units(world, planes);
+    draw_effects(world, planes);
+    draw_beams(world);
     draw_water(world);
     GL3D_EndFrame();
 
@@ -797,6 +991,10 @@ static const TAK_View k_view3d = {
 };
 
 const TAK_View *View_3D(void) { return &k_view3d; }
+View3DDrawCounts View3D_DebugDrawCounts(void) {
+    return s_counts;
+}
+
 int View3D_IsReady(void) { return v.ready; }
 Camera3D *View3D_Camera(void) { return &v.cam; }
 

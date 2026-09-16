@@ -28,6 +28,7 @@
 #include "tak_terrain.h"
 #include "tak_ui.h"
 #include "tak_unit.h"
+#include "tak_fog.h"
 #include "tak_view.h"
 #include "tak_view3d.h"
 #include "tak_world.h"
@@ -438,6 +439,98 @@ TEST(a_walking_units_pieces_move_in_the_3d_pose) {
 /* Reported from play: in the 3D view a lodestone's placement ghost
  * was always red. The ghost was judged at the classic camera's flat
  * reading of the pointer, a point the 3D camera is not looking at. */
+/* The monarch fires at the ground; the frame after the shot leaves the
+ * muzzle has to show it. */
+TEST(a_projectile_in_flight_is_drawn_in_the_3d_view) {
+    TAK_Platform platform;
+    GameWorld *world = NULL;
+    int rc = boot(&platform, &world);
+    if (rc == 1) return;
+    ASSERT_EQ_INT(0, rc);
+    Timer timer;
+    Timer_Init(&timer);
+    int n = 0;
+    const Unit *units = Units_GetActive(&n);
+    ASSERT(n > 0);
+    world->cam_x = units[0].world_x - world->viewport_w / 2;
+    world->cam_y = units[0].world_y - world->viewport_h / 2;
+    if (world->cam_x < 0) world->cam_x = 0;
+    if (world->cam_y < 0) world->cam_y = 0;
+    ASSERT_EQ_INT(1, InGame_SetView3D(1));
+    ASSERT(frame(&platform, &timer));
+    ASSERT_EQ_INT(1, Units_OrderAttackGround(0, units[0].world_x + 300, units[0].world_y));
+    int in_flight = 0;
+    for (int i = 0; i < 600 && !in_flight; i++) {
+        InGame_DebugRunSimTicks(1);
+        int pn = 0;
+        const Projectile *ps = Units_GetProjectiles(&pn);
+        for (int k = 0; k < pn; k++) if (ps[k].alive) { in_flight = 1; break; }
+    }
+    ASSERT(in_flight);
+    ASSERT(frame(&platform, &timer));
+    View3DDrawCounts c = View3D_DebugDrawCounts();
+    printf("(units %d projectiles %d beams %d) ", c.units, c.projectiles, c.beams);
+    ASSERT(c.projectiles + c.beams >= 1);
+    shutdown_all(&platform);
+}
+
+/* When the shot lands, the impact sprite plays where it hit. The
+ * computer player's own build sparkles under fog come first and do
+ * not count. */
+TEST(an_impact_effect_is_drawn_in_the_3d_view) {
+    TAK_Platform platform;
+    GameWorld *world = NULL;
+    int rc = boot(&platform, &world);
+    if (rc == 1) return;
+    ASSERT_EQ_INT(0, rc);
+    Timer timer;
+    Timer_Init(&timer);
+    int n = 0;
+    const Unit *units = Units_GetActive(&n);
+    ASSERT(n > 0);
+    world->cam_x = units[0].world_x - world->viewport_w / 2;
+    world->cam_y = units[0].world_y - world->viewport_h / 2;
+    if (world->cam_x < 0) world->cam_x = 0;
+    if (world->cam_y < 0) world->cam_y = 0;
+    ASSERT_EQ_INT(1, InGame_SetView3D(1));
+    ASSERT(frame(&platform, &timer));
+    /* A shooter whose weapon has an explosion class and a projectile;
+     * the monarch's beam has neither. */
+    int shooter_def = -1;
+    int32_t range = 0;
+    for (int i = 0; i < Units_GetDefCount() && shooter_def < 0; i++) {
+        const UnitDef *d = Units_GetDef(i);
+        if (!d || d->num_weapons <= 0) continue;
+        const UnitWeapon *w = &d->weapons[0];
+        if (!w->explosion_class[0] || !(w->model[0] || w->weapon_art[0])) continue;
+        if (w->range < 200) continue;
+        shooter_def = i;
+        range = w->range;
+    }
+    ASSERT(shooter_def >= 0);
+    int shooter = Units_Spawn(shooter_def, units[0].player_id, units[0].team_color_idx,
+                              units[0].world_x + 96, units[0].world_y);
+    ASSERT(shooter >= 0);
+    printf("(%s) ", Units_GetDef(shooter_def)->weapons[0].name);
+    ASSERT_EQ_INT(1, Units_OrderAttackGround(shooter, units[0].world_x + 96 + range / 2,
+                                             units[0].world_y));
+    int playing = 0;
+    for (int i = 0; i < 900 && !playing; i++) {
+        InGame_DebugRunSimTicks(1);
+        int en = 0;
+        const ProjectileEffect *es = Units_GetProjectileEffects(&en);
+        for (int k = 0; k < en; k++) {
+            if (es[k].alive && Fog_ShowsAt(world, es[k].world_x, es[k].world_y)) { playing = 1; break; }
+        }
+    }
+    ASSERT(playing);
+    ASSERT(frame(&platform, &timer));
+    View3DDrawCounts c = View3D_DebugDrawCounts();
+    printf("(effects %d) ", c.effects);
+    ASSERT(c.effects >= 1);
+    shutdown_all(&platform);
+}
+
 TEST(the_build_ghost_in_3d_is_judged_where_the_pointer_lands) {
     TAK_Platform platform;
     GameWorld *world = NULL;
@@ -505,5 +598,7 @@ int main(int argc, char **argv) {
     RUN_NAMED(the_accessors_hand_out_the_baked_model_and_its_pose);
     RUN_NAMED(a_walking_units_pieces_move_in_the_3d_pose);
     RUN_NAMED(the_build_ghost_in_3d_is_judged_where_the_pointer_lands);
+    RUN_NAMED(a_projectile_in_flight_is_drawn_in_the_3d_view);
+    RUN_NAMED(an_impact_effect_is_drawn_in_the_3d_view);
     TEST_REPORT();
 }

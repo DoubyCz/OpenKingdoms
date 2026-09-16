@@ -1070,6 +1070,17 @@ const Projectile *Units_GetProjectiles(int *out_count);
 
 /* Read-only slice of live impact effects (explosionclass sprites). */
 const ProjectileEffect *Units_GetProjectileEffects(int *out_count);
+
+/* A weapon's sprite art decoded once: frames side by side in one
+ * strip, each cell_w apart, with the per frame size and anchor. */
+typedef struct ProjSpriteStrip {
+    const uint32_t *pixels;
+    int             num_frames, cell_w, cell_h;
+    const int      *fw, *fh, *ox, *oy;
+} ProjSpriteStrip;
+int         Units_ProjectileSpriteStrip(int sprite_idx, ProjSpriteStrip *out);
+int         Units_ProjectileVisible(const struct GameWorld *world, const Projectile *p);
+const char *Units_ProjectileModelName(int art_idx);
 /* Art and current frame of live effect i. 0 when i is not live. */
 int               Units_GetEffectInfo(int i, const char **out_file,
                                       const char **out_seq, int *out_frame);
