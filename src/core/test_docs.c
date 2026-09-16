@@ -99,9 +99,15 @@ static void check_prose(const char *rel) {
 TEST(multiplayer_doc_drops_the_fixed_point_claim) {
     const char *doc = doc_read("docs/MULTIPLAYER.md");
     ASSERT_NOT_NULL(doc);
-    /* The old text stated 16.16 positions as a fact about today's tree. */
+    /* The old text stated 16.16 positions as a fact about today's tree.
+     * The correction that replaced it said the migration was owed before
+     * two machines could agree, and 0.1.3 overtook that in turn, so what
+     * is pinned is the page saying which way the fact moved and what
+     * holds it true. */
     ASSERT(!has(doc, "Positions are 16.16 fixed point"));
-    ASSERT(has(doc, "They do not yet"));
+    ASSERT(has(doc, "the reason that mattered has moved again"));
+    ASSERT(has(doc, "no longer required for two machines"));
+    ASSERT(has(doc, "test_sim_probe"));
 }
 
 TEST(multiplayer_doc_drops_the_command_layer_claim) {
