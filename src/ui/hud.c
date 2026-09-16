@@ -819,6 +819,8 @@ void HUD_DrawMessageLine(TAK_Platform *plat, const char *text) {
     HUDText_DrawString(plat, g_text, vp.x + 8, vp.y + 8, text, white);
 }
 
+Font *HUD_Font(void) { return g_font; }
+
 int HUD_GetViewportCanvasRect(SDL_Rect *out) {
     if (!out || !g_rt) return 0;
     *out = g_viewport_dlg;
@@ -1618,7 +1620,17 @@ int HUD_TriggerCommand(int mode) {
     }
 }
 
-void HUD_DrawCommandCursor(TAK_Platform *plat, int win_x, int win_y) {
+/* Where the ghost was last judged, and its verdict, for the tests. */
+static int32_t g_ghost_x, g_ghost_y;
+static int     g_ghost_valid = -1;
+int HUD_DebugGhost(int32_t *x, int32_t *y) {
+    if (x) *x = g_ghost_x;
+    if (y) *y = g_ghost_y;
+    return g_ghost_valid;
+}
+
+void HUD_DrawCommandCursor(TAK_Platform *plat, int win_x, int win_y,
+                           int32_t world_x, int32_t world_y) {
     if (!plat || !plat->renderer) return;
     if (g_cmd_mode <= 0) return;
 
@@ -1629,12 +1641,14 @@ void HUD_DrawCommandCursor(TAK_Platform *plat, int win_x, int win_y) {
     if (g_cmd_mode == HUD_CMD_PLACE_BUILD && g_build_def_idx >= 0) {
         const GameWorld *wd = World_Get();
         if (wd) {
-            /* The ground under the pointer, where the placing click
-             * lands, so the ghost stands where the building will. */
-            int32_t world_x = wd->cam_x + win_x;
-            int32_t world_y = wd->cam_y + win_y;
+            /* The view already mapped the pointer to the world, in
+             * whichever projection it draws, so the ghost stands where
+             * the placing click will land. */
             Units_GroundUnderPoint(world_x, world_y, &world_x, &world_y);
             int valid = Units_IsBuildSiteClear(g_build_def_idx, world_x, world_y);
+            g_ghost_x = world_x;
+            g_ghost_y = world_y;
+            g_ghost_valid = valid;
             /* Match the player's current team colour so the ghost reads
              * as theirs. Pull from the first selected unit (the builder)
              * if any; default 0 otherwise. */

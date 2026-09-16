@@ -2,6 +2,7 @@
 #define TAK_HUD_H
 
 #include "tak_platform.h"
+#include "tak_font.h"
 #include "tak_world.h"
 
 /* ── In-game HUD ──────────────────────────────────────────────────
@@ -115,7 +116,10 @@ void HUD_SetCommandMode(int mode);
 /* Render the active-command's cursor at (win_x, win_y) in place of
  * the OS cursor. Called every frame from ingame.c when the mouse
  * is in the world viewport AND a command mode is active. */
-void HUD_DrawCommandCursor(TAK_Platform *plat, int win_x, int win_y);
+/* win_x, win_y place the cursor art. world_x, world_y are the view's
+ * own reading of the pointer, where a placing click lands. */
+void HUD_DrawCommandCursor(TAK_Platform *plat, int win_x, int win_y,
+                           int32_t world_x, int32_t world_y);
 
 /* Draw a specific cursor sprite (HUD_CMD_* targeting id or HUD_CUR_*
  * context id) at the window position, honoring the GAF hotspot.
@@ -144,6 +148,8 @@ int  HUD_GetMinimapRect(const TAK_Platform *plat, SDL_Rect *out);
 /* The same play area in 640x480 canvas units, for text drawn into the
  * UI canvas. Return 0 when the HUD has no dialog. */
 int  HUD_GetViewportCanvasRect(SDL_Rect *out);
+/* The HUD's own small font, for text drawn over the play area. */
+Font *HUD_Font(void);
 
 /* Draw one transient message line over the top left of the play area,
  * where the original's message ring draws (legacy:205785-205828). Does
@@ -161,6 +167,9 @@ int  HUD_WidgetFrame(const char *name);
 struct GUIRuntime *HUD_DebugRuntime(void);
 /* The renderer generation the cursor textures were made for. */
 uint32_t HUD_DebugCursorGen(void);
+/* The ground the build ghost was last judged at, and 1 if it may
+ * stand there, 0 if not, -1 if no ghost has been drawn. */
+int HUD_DebugGhost(int32_t *x, int32_t *y);
 
 /* The sidebar .gui the HUD holds, "" before the first game. */
 const char *HUD_DialogPath(void);

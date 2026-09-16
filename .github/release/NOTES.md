@@ -2,6 +2,25 @@ OpenKingdoms VERSION_HERE, an engine for Total Annihilation: Kingdoms.
 
 Play in a browser at [openkingdoms.net](https://openkingdoms.net), or download below and play on the desktop.
 
+## Changed in 0.1.4
+
+There is a 3D view. Press V in any battle and the same world is drawn
+in 3D under a camera you can orbit, tilt and zoom, with the terrain
+built from the map's own heights and textures, water at the water line,
+and every unit and building as its own model moving as the classic view
+moves it. Press V again and the classic view is back with nothing lost.
+It is experimental and it says so when it opens. Shots, explosions and
+spell effects are not drawn in it yet. Nothing in the simulation changed
+for this, and a player in the 3D view can play a match against a player
+in the classic one.
+
+Scrollbars scroll by their arrows. Every scrollbar in the game moved by
+dragging its ball and not by the arrows at its ends, because the arrows
+sat inside the list they scrolled and the list took every click.
+
+The saved games bar in the browser sits on a dark plate, so it reads
+over the Book of Deeds rather than vanishing into its gold.
+
 ## Changed in 0.1.3
 
 Every build can now play every other build. Until this release a Windows

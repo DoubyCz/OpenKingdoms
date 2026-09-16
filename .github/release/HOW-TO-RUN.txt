@@ -57,6 +57,30 @@ The SDL library it needs ships beside the binary, so nothing has to be
 installed.
 
 
+The 3D view, experimental
+-------------------------
+
+In any battle press V. The same battle is drawn in 3D under a camera
+you can move. Press V again for the classic view. Nothing about the
+game changes, only how it is drawn, and a player in the 3D view can
+play a match against a player in the classic one.
+
+  Q and E          orbit the camera
+  R and F          tilt it
+  Z and X, wheel   zoom
+  Middle drag      orbit and tilt
+  Home             back to the classic angle over the same spot
+  WASD, arrows, screen edges   scroll, as always
+
+Units, buildings, terrain, water, trees and the fog are drawn. Shots,
+explosions, spell effects, shadows and health bars are not yet. If V
+does nothing, the game says why over the play area: the 3D view needs
+OpenGL and this machine could not provide it.
+
+This is the first look at a much larger piece of work. What you think
+of it is worth an issue, at the address at the end of this file.
+
+
 Multiplayer
 -----------
 

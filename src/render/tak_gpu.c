@@ -58,6 +58,10 @@ int GPU_TextureSize(const GPU_Texture *tex, int *out_w, int *out_h) {
 }
 
 
+SDL_Texture *GPU_TextureSDL(const GPU_Texture *tex) {
+    return tex ? tex->tex : NULL;
+}
+
 void GPU_DrawToWindow(TAK_Platform *plat, const GPU_Texture *tex, const SDL_Rect *src, const SDL_Rect *dst) {
     if (!plat || !plat->renderer || !tex || !tex->tex) return;
     SDL_RenderCopy(plat->renderer, tex->tex, src, dst);

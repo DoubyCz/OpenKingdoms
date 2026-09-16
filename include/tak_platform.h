@@ -22,6 +22,10 @@ typedef struct TAK_DisplayConfig {
     int pixel_perfect;     /* 1 = integer scale when it fits,
                             * 0 = bilinear at any size              */
     int use_sw_renderer;   /* 1 = force SDL_RENDERER_SOFTWARE       */
+    /* The SDL render driver to ask for, "opengl" by default on the
+     * desktop so the 3D view can share the context. NULL leaves the
+     * choice to SDL. Ignored when use_sw_renderer is set. */
+    const char *renderer_name;
 } TAK_DisplayConfig;
 
 /* Sensible defaults — modern resolution, bilinear when not integer-fit. */
@@ -47,6 +51,8 @@ typedef struct TAK_Platform {
      * is in here and nowhere else. */
     uint8_t  pressed_mouse_left;
     int      press_x, press_y;
+    /* Mouse wheel clicks since the last pump, up positive. */
+    int      wheel_dy;
     SDL_Texture   *canvas_tex;    /* streaming, canvas_w × canvas_h, RGBA  */
 
     int            window_w;      /* current window size (updates on resize) */
