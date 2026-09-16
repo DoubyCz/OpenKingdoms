@@ -28,10 +28,15 @@ TAK_DisplayConfig TAK_DisplayConfig_Default(void) {
      * 720px height). Pass --pixel-perfect to opt in. */
     c.pixel_perfect   = 0;
     c.use_sw_renderer = 0;
-    /* NULL leaves SDL its own pick: Direct3D on Windows, Metal on
-     * macOS, GL on Linux. The 3D view needs "opengl" and asks for it
-     * through the Renderer setting or --renderer. */
+    /* The 3D view needs the GL driver and only GL ES 2.0 level of it,
+     * so GL is the default on Windows and Linux and V works without a
+     * flag. macOS keeps SDL's pick, Metal, because GL is deprecated
+     * there. --renderer overrides either way. */
+#if defined(__EMSCRIPTEN__) || defined(__APPLE__)
     c.renderer_name   = NULL;
+#else
+    c.renderer_name   = "opengl";
+#endif
     return c;
 }
 

@@ -101,7 +101,7 @@ static const char *g_view3d_notice_text;
 static const char k_view3d_entered[] =
     "3D view, experimental. Press V for the classic view.";
 static const char k_view3d_refused[] =
-    "The 3D view needs the OpenGL renderer. Start with --renderer opengl.";
+    "The 3D view needs OpenGL, which this machine could not provide.";
 
 /* Switch views in place. The world, the selection and every order in
  * flight are untouched: only what draws it and what the pointer maps
