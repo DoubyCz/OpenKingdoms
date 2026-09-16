@@ -22227,6 +22227,7 @@ int main(int argc, char **argv) {
         }
     }
     TEST_SUITE("A unit with nowhere to go");
+    RUN_UI_TEST(UI_GROUP_A, a_taros_computer_players_ranged_units_fire);
     RUN_UI_TEST(UI_GROUP_A, castle_has_no_ground_a_unit_can_stand_on_but_not_plan_from);
     RUN_UI_TEST(UI_GROUP_A, a_monarch_on_castles_own_pinched_ground_gets_off_it);
     RUN_UI_TEST(UI_GROUP_A, a_monarch_on_a_wide_band_walks_around_the_bay);
@@ -22288,7 +22289,6 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_D, a_click_on_a_scroll_arrow_reaches_the_arrow);
     RUN_UI_TEST(UI_GROUP_D, select_game_scrolls_by_its_arrows);
     RUN_UI_TEST(UI_GROUP_D, every_guided_weapon_unit_fires_at_an_enemy_in_range);
-    RUN_UI_TEST(UI_GROUP_D, a_taros_computer_players_ranged_units_fire);
     RUN_UI_TEST(UI_GROUP_D, mp_room_map_chooser_scrolls_by_its_bar);
     RUN_UI_TEST(UI_GROUP_D, mp_room_a_guest_cannot_change_the_rules);
     RUN_UI_TEST(UI_GROUP_A, mp_room_chat_goes_out_and_comes_in);
