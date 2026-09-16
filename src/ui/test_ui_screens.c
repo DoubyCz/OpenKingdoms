@@ -11919,12 +11919,15 @@ TEST(group_selection_and_control_groups) {
     }
 
     /* Marquee over a+b: enemy e sits inside the rect and must be
-     * excluded; c sits outside. */
-    int n = Units_SelectInRect(bx + 280, by + 280, bx + 360, by + 340, 0);
+     * excluded; c sits outside. The box is on the screen, where the
+     * units are drawn lifted by the ground's height. */
+    int32_t sy = by - (int32_t)((float)Terrain_SampleHeight(World_Get(), bx + 320, by + 300)
+                                * Units_GetTanTilt());
+    int n = Units_SelectInRect(bx + 280, sy + 280, bx + 360, sy + 340, 0);
     ASSERT_EQ_INT(2, n);
 
     /* Corner order must not matter. */
-    n = Units_SelectInRect(bx + 360, by + 340, bx + 280, by + 280, 0);
+    n = Units_SelectInRect(bx + 360, sy + 340, bx + 280, sy + 280, 0);
     ASSERT_EQ_INT(2, n);
 
     /* Shift-click toggle: add c, remove b, re-add b. */
@@ -11940,9 +11943,11 @@ TEST(group_selection_and_control_groups) {
 
     /* Additive marquee keeps the existing selection. */
     Units_SelectSingle(-1);
-    n = Units_SelectInRect(bx + 480, by + 480, bx + 520, by + 520, 0);
+    int32_t sy_c = by - (int32_t)((float)Terrain_SampleHeight(World_Get(), bx + 500, by + 500)
+                                  * Units_GetTanTilt());
+    n = Units_SelectInRect(bx + 480, sy_c + 480, bx + 520, sy_c + 520, 0);
     ASSERT_EQ_INT(1, n);                       /* just c */
-    n = Units_SelectInRect(bx + 280, by + 280, bx + 360, by + 340, 1);
+    n = Units_SelectInRect(bx + 280, sy + 280, bx + 360, sy + 340, 1);
     ASSERT_EQ_INT(3, n);                       /* + a and b */
 
     /* Control group round-trip. */
@@ -17117,8 +17122,12 @@ TEST(patrol_from_the_sidebar_loops_until_a_new_order) {
     }
     ASSERT(bx != ax || by != ay);
 
-    /* The world click issues the order and drops the pending mode. */
-    InGame_WorldClick(bx, by, 0);
+    /* The world click issues the order and drops the pending mode. The
+     * pointer sits where the ground is drawn, lifted by its height, and
+     * the order carries the ground itself. */
+    int32_t by_drawn = by - (int32_t)((float)Terrain_SampleHeight(world, bx, by)
+                                      * Units_GetTanTilt());
+    InGame_WorldClick(bx, by_drawn, 0);
     TAK_CmdQueue_Run();
     ASSERT_EQ_INT(HUD_CMD_NONE, HUD_GetCommandMode());
     units = Units_GetActive(&unit_count);
@@ -17190,7 +17199,11 @@ TEST(patrol_from_the_sidebar_loops_until_a_new_order) {
     ASSERT_EQ_INT(1, HUD_HandleSidebarClick(btn.x + btn.w / 2,
                                             btn.y + btn.h / 2, &platform));
     ASSERT_EQ_INT(HUD_CMD_PATROL, HUD_GetCommandMode());
-    InGame_WorldClick(cx, cy, 0);
+    /* The pointer sits where the ground is drawn, the order carries
+     * the ground itself. */
+    int32_t cy_drawn = cy - (int32_t)((float)Terrain_SampleHeight(world, cx, cy)
+                                      * Units_GetTanTilt());
+    InGame_WorldClick(cx, cy_drawn, 0);
     TAK_CmdQueue_Run();
     ASSERT_EQ_INT(HUD_CMD_NONE, HUD_GetCommandMode());
     units = Units_GetActive(&unit_count);
@@ -19298,11 +19311,16 @@ TEST(sound_interface_cues) {
     }
     ASSERT(site_ok);
 
-    /* The monarch places it on top of itself: refused. */
+    /* The monarch places it on top of itself: refused. The click is
+     * where the ground is drawn, lifted by its height. */
+    int32_t cy_drawn = cy - (int32_t)((float)Terrain_SampleHeight(world, cx, cy)
+                                      * Units_GetTanTilt());
+    int32_t site_y_drawn = site_y - (int32_t)((float)Terrain_SampleHeight(
+                                        world, site_x, site_y) * Units_GetTanTilt());
     Units_SelectSingle(0);
     HUD_BeginBuildPlacement(tower_def);
     GameSound_DebugClear();
-    InGame_WorldClick(cx, cy, 0);
+    InGame_WorldClick(cx, cy_drawn, 0);
     if (GameSound_DebugCountPrefix("notoktobuild") != 1) sfx_dump_events("refused placement");
     ASSERT_EQ_INT(1, GameSound_DebugCountPrefix("notoktobuild"));
     ASSERT_EQ_INT(0, GameSound_DebugCountPrefix("oktobuild"));
@@ -19311,7 +19329,7 @@ TEST(sound_interface_cues) {
     Units_SelectSingle(0);
     HUD_BeginBuildPlacement(tower_def);
     GameSound_DebugClear();
-    InGame_WorldClick(site_x, site_y, 0);
+    InGame_WorldClick(site_x, site_y_drawn, 0);
     if (GameSound_DebugCountPrefix("oktobuild") != 1) sfx_dump_events("placement");
     ASSERT_EQ_INT(1, GameSound_DebugCountPrefix("oktobuild"));
     ASSERT_EQ_INT(0, GameSound_DebugCountPrefix("notoktobuild"));

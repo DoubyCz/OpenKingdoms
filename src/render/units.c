@@ -45,6 +45,7 @@
 #include "tak_battle_config.h"  /* TAK_MAX_PLAYERS */
 #include "tak_ai.h"
 #include "tak_terrain.h"
+#include "tak_click_map.h"
 #include "tak_fog.h"
 #include "tak_pathing.h"
 #include "tak_moveinfo.h"
@@ -1741,20 +1742,26 @@ int g_units_get_def_idx(int handle) {
     return (int)g_units[handle].def_idx;
 }
 
+static int ground_height_at(void *ctx, int32_t x, int32_t y) {
+    return Terrain_SampleHeight((const GameWorld *)ctx, x, y);
+}
+
+/* Where a unit is drawn: lifted by the ground under it and its own
+ * altitude (legacy:197689). Clicks and boxes read it here. */
+static int32_t unit_drawn_y(const GameWorld *world, const Unit *u) {
+    return ClickMap_DrawnY(u->world_y,
+                           (float)Terrain_SampleHeight(world, u->world_x, u->world_y)
+                               + u->flight_alt, g_tan_tilt);
+}
+
 void Units_GroundUnderPoint(int32_t flat_x, int32_t flat_y,
                             int32_t *out_x, int32_t *out_y) {
     const GameWorld *world = World_Get();
     if (out_x) *out_x = flat_x;
     if (out_y) *out_y = flat_y;
     if (!world || !out_y) return;
-    /* Walk from the nearest candidate back: the first point that
-     * projects onto the pointer is the face in front. */
-    int32_t span = (int32_t)(255.0f * g_tan_tilt) + 2;
-    for (int32_t wy = flat_y + span; wy > flat_y; wy -= 2) {
-        int32_t sy = wy - (int32_t)((float)Terrain_SampleHeight(
-                              world, flat_x, wy) * g_tan_tilt);
-        if (sy <= flat_y) { *out_y = wy; return; }
-    }
+    ClickMap_GroundUnderPoint(flat_x, flat_y, g_tan_tilt, ground_height_at,
+                              (void *)world, out_x, out_y);
 }
 
 int Units_PickAt(int32_t world_x, int32_t world_y, int radius) {
@@ -1769,11 +1776,9 @@ int Units_PickAt(int32_t world_x, int32_t world_y, int radius) {
         const Unit *u = &g_units[i];
         if (u->alive != 1) continue;
         if (!unit_visible_to_local_player(world, u)) continue;
-        /* Units are DRAWN lifted by terrain height (sy = z - y/2,
-         * legacy :197689), so hit-test against where the unit actually
-         * appears — otherwise clicks miss by the elevation offset. */
-        int32_t uy = u->world_y - (int32_t)(((float)Terrain_SampleHeight(
-                         world, u->world_x, u->world_y) + u->flight_alt) * g_tan_tilt);
+        /* Hit-test against where the unit is drawn, or clicks miss by
+         * the lift. */
+        int32_t uy = unit_drawn_y(world, u);
         const UnitDef *d = Units_GetDef(u->def_idx);
         int hw = (d && d->footprint_x > 0) ? d->footprint_x * 8 : 16;
         int hh = (d && d->footprint_z > 0) ? d->footprint_z * 8 : 16;
@@ -1791,8 +1796,7 @@ int Units_PickAt(int32_t world_x, int32_t world_y, int radius) {
         const Unit *u = &g_units[i];
         if (u->alive != 1) continue;
         if (!unit_visible_to_local_player(world, u)) continue;
-        int32_t uy2 = u->world_y - (int32_t)(((float)Terrain_SampleHeight(
-                          world, u->world_x, u->world_y) + u->flight_alt) * g_tan_tilt);
+        int32_t uy2 = unit_drawn_y(world, u);
         int64_t dx = (int64_t)(u->world_x - world_x);
         int64_t dy = (int64_t)(uy2 - world_y);
         int64_t d2 = dx*dx + dy*dy;
@@ -1875,12 +1879,16 @@ int Units_SelectInRect(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
     if (x1 < x0) { int32_t t = x0; x0 = x1; x1 = t; }
     if (y1 < y0) { int32_t t = y0; y0 = y1; y1 = t; }
     if (!additive) g_selection_count = 0;
+    const GameWorld *world = World_Get();
     for (int i = 0; i < g_unit_count; i++) {
         const Unit *u = &g_units[i];
         if (u->alive != 1) continue;
         if (u->player_id != g_local_player) continue;
+        /* The box is on the screen, so a unit counts where it is
+         * drawn, as Units_PickAt reads it. */
+        int32_t uy = unit_drawn_y(world, u);
         if (u->world_x < x0 || u->world_x > x1) continue;
-        if (u->world_y < y0 || u->world_y > y1) continue;
+        if (uy < y0 || uy > y1) continue;
         Units_SelectAdd(i);
     }
     return g_selection_count;
