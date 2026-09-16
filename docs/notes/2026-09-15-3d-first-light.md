@@ -26,6 +26,20 @@ tak-re --skip-logo --perf-probe build8 --reveal --view3d
 That plays a human seat and seven computer players on Ladron's Tarn
 with the map revealed and opens the battle in the 3D view.
 
+## Saying what it is
+
+Entering the 3D view puts one line over the top left of the play area
+for six seconds: "3D view, experimental. Press V for the classic view."
+It goes through HUD_DrawMessageLine, the same path the speed change
+message uses, so it sits where the game already puts a message. The six
+seconds are wall time rather than frames, because the frame rate here
+runs from 240 to 450 and a frame count would have made the notice last
+under a second.
+
+The key is still undocumented anywhere a player would look. The options
+screen is where a mode like this belongs, with the word experimental
+beside it, and that is its own change rather than part of this one.
+
 ## Keys
 
 The classic bindings all still work: WASD and the arrows scroll, edge

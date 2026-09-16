@@ -2,6 +2,7 @@
 #define TAK_HUD_H
 
 #include "tak_platform.h"
+#include "tak_font.h"
 #include "tak_world.h"
 
 /* ── In-game HUD ──────────────────────────────────────────────────
@@ -144,6 +145,8 @@ int  HUD_GetMinimapRect(const TAK_Platform *plat, SDL_Rect *out);
 /* The same play area in 640x480 canvas units, for text drawn into the
  * UI canvas. Return 0 when the HUD has no dialog. */
 int  HUD_GetViewportCanvasRect(SDL_Rect *out);
+/* The HUD's own small font, for text drawn over the play area. */
+Font *HUD_Font(void);
 
 /* Draw one transient message line over the top left of the play area,
  * where the original's message ring draws (legacy:205785-205828). Does

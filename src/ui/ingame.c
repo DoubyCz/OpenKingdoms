@@ -78,6 +78,10 @@ static struct {
      * renderer, or the 3D view while it is toggled on. */
     const TAK_View *view;
     uint8_t view3d;
+    /* When the notice shown on entering the 3D view expires,
+     * in SDL ticks. Wall time, so the frame rate cannot change
+     * how long it is readable. */
+    uint32_t view3d_notice_until;
     TAK_Platform *platform;
 } ig;
 
@@ -88,6 +92,9 @@ static const TAK_View *ig_view(void) {
     if (!ig.view) ig.view = View_Classic();
     return ig.view;
 }
+
+/* Long enough to read twice, in milliseconds. */
+#define IG_VIEW3D_NOTICE_MS 6000u
 
 /* Switch views in place. The world, the selection and every order in
  * flight are untouched: only what draws it and what the pointer maps
@@ -102,10 +109,12 @@ int InGame_SetView3D(int on) {
         View3D_EnterFrom(world);
         ig.view = v3;
         ig.view3d = 1;
+        ig.view3d_notice_until = SDL_GetTicks() + IG_VIEW3D_NOTICE_MS;
     } else {
         View3D_LeaveTo(world);
         ig.view = View_Classic();
         ig.view3d = 0;
+        ig.view3d_notice_until = 0;
     }
     fprintf(stderr, "View: %s\n", ig.view->name);
     return 1;
@@ -611,6 +620,20 @@ static void InGame_DrawSkirmishBanner(const GameWorld *world) {
     Font_DrawString(ig.banner_font, off,
                     play.x + (play.w - tw) / 2,
                     play.y + (play.h - (bottom - top)) / 2 - top, text);
+}
+
+/* The 3D view is not finished, so it says so on the way in and says
+ * which key brings the classic view back. Six seconds, then it goes. */
+static void InGame_DrawView3DNotice(TAK_Platform *platform) {
+    if (!ig.view3d || !ig.view3d_notice_until) return;
+    if (SDL_GetTicks() >= ig.view3d_notice_until) {
+        ig.view3d_notice_until = 0;
+        return;
+    }
+    /* Through the renderer, like the speed line: the 3D world is drawn
+     * by GL over the offscreen surface, so text put there is lost. */
+    HUD_DrawMessageLine(platform,
+                        "3D view, experimental. Press V for the classic view.");
 }
 
 /* A released drag box: with Load armed and one transport selected, a
@@ -1160,6 +1183,7 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
     /* The speed change line, over the play area, for as long as the
      * message option keeps it (legacy:131758-131789). */
     HUD_DrawMessageLine(platform, GameSpeed_Message());
+    InGame_DrawView3DNotice(platform);
     InGame_DrawSkirmishBanner(world);
 
     /* Chat. The block sits in the top left of the whole screen and the
