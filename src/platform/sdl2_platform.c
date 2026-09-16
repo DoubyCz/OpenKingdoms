@@ -96,6 +96,12 @@ int TAK_Platform_Init(TAK_Platform *plat, const TAK_DisplayConfig *cfg) {
         SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
         win_flags |= SDL_WINDOW_OPENGL;
     }
+#ifdef __EMSCRIPTEN__
+    /* The browser's renderer is WebGL whatever it is called, and the
+     * 3D view depth tests, so the context is asked for a depth buffer
+     * here where no driver name reaches the branch above. */
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+#endif
 
     plat->window = SDL_CreateWindow("Total Annihilation: Kingdoms",
                                      SDL_WINDOWPOS_CENTERED,
@@ -124,6 +130,11 @@ int TAK_Platform_Init(TAK_Platform *plat, const TAK_DisplayConfig *cfg) {
         ? SDL_RENDERER_SOFTWARE
         : SDL_RENDERER_ACCELERATED;
     if (cfg->vsync) rend_flags |= SDL_RENDERER_PRESENTVSYNC;
+#ifdef __EMSCRIPTEN__
+    /* The 3D view draws inside a render target SDL owns, and SDL only
+     * allows one on a renderer created able to take it. */
+    rend_flags |= SDL_RENDERER_TARGETTEXTURE;
+#endif
 
     /* Naming a driver turns SDL's draw batching off unless it is asked
      * for by name too. The 3D view flushes the queue before its own
