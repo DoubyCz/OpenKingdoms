@@ -738,6 +738,7 @@ static ProjectileEffect *proj_effect_slot(void) {
     }
     memset(e, 0, sizeof(*e));
     e->owner = -1;
+    e->land_explosion = -1;
     return e;
 }
 
@@ -767,6 +768,10 @@ static ProjectileEffect *spawn_unit_fx_moving(int sprite, int32_t x, int32_t y,
 static void spawn_unit_fx(int sprite, int32_t x, int32_t y, int32_t height) {
     spawn_unit_fx_moving(sprite, x, y, height, 0);
 }
+
+static void flame_particle(const Projectile *p, int idx);
+static void spell_effects_at(const UnitWeapon *wp, int shot, int32_t x, int32_t y,
+                             uint32_t seed);
 
 /* Queue the weapon's explosionclass sprite at the impact point. */
 static void spawn_impact_effect(int explosion_idx, int32_t x, int32_t y,
@@ -1378,10 +1383,21 @@ static void tick_projectiles(void) {
     for (int i = 0; i < g_proj_effect_count; i++) {
         ProjectileEffect *e = &g_proj_effects[i];
         if (!e->alive) continue;
+        if (e->delay_ticks) { e->delay_ticks--; continue; }
+        if (e->vx_fp || e->vy_fp) {
+            e->x_acc += e->vx_fp; e->world_x += e->x_acc >> 16; e->x_acc &= 0xffff;
+            e->y_acc += e->vy_fp; e->world_y += e->y_acc >> 16; e->y_acc &= 0xffff;
+        }
         if (e->rise) {
             int done = e->rise < 0 ? e->height_fp <= e->stop_fp
                                    : e->height_fp > e->stop_fp;
-            if (done && !e->life_ticks) { e->alive = 0; continue; }
+            if (done && !e->life_ticks) {
+                if (e->land_explosion >= 0)
+                    spawn_impact_effect(e->land_explosion, e->world_x, e->world_y,
+                                        e->stop_fp >> 16, (uint32_t)i);
+                e->alive = 0;
+                continue;
+            }
             e->height_fp += e->rise;
             e->height = e->height_fp >> 16;
         }
@@ -1398,7 +1414,10 @@ static void tick_projectiles(void) {
         if (!p->alive) continue;
         if (--p->ttl_ticks <= 0) { p->alive = 0; continue; }
         /* Beams already dealt their damage at fire — hold, don't move. */
-        if (p->is_beam) continue;
+        if (p->is_beam) {
+            if (p->visual_kind == UNIT_PROJECTILE_VIS_FLAME) flame_particle(p, i);
+            continue;
+        }
         p->age_ticks++;
         int32_t old_x = p->world_x;
         int32_t old_y = p->world_y;
@@ -3980,6 +3999,33 @@ static int parse_fbi(const char *vfs_path, UnitDef *out) {
         }
         /* Bind explosionclass to its effect entry once (legacy:250135). */
         w->explosion_idx = (int16_t)explosion_class_index(w->explosion_class);
+        /* A Remote Effect spell draws itself from its own keys. */
+        w->remote_kind = 0;
+        w->rain_sprite = -1;
+        for (int k = 0; k < 3; k++) w->radius_sprite[k] = -1;
+        if (ascii_contains_ci(w->type, "remote")) {
+            static const char *ra[3] = { "radiusart0", "radiusart1", "radiusart2" };
+            for (int k = 0; k < 3; k++) {
+                copy_bounded(w->radius_art[k], sizeof(w->radius_art[k]),
+                             TDF_ReadString(tdf, ra[k], ""));
+                if (w->radius_art[k][0])
+                    w->radius_sprite[k] = (int16_t)proj_sprite_index(w->radius_art[k], w->radius_art[k]);
+            }
+            w->ring_count          = TDF_ReadInt(tdf, "ringcount", 1);
+            w->ring_delay_ticks    = (int32_t)(TDF_ReadFloat(tdf, "ringdelay", 0.45f) * 60.0f);
+            w->ring_duration_ticks = (int32_t)(TDF_ReadFloat(tdf, "ringduration", 1.2f) * 60.0f);
+            w->sprite_count        = TDF_ReadInt(tdf, "spritecount", 16);
+            w->buildup_ticks       = (int32_t)(TDF_ReadFloat(tdf, "builduptime", 0.0f) * 60.0f);
+            w->decay_ticks         = (int32_t)(TDF_ReadFloat(tdf, "decaytime", 0.0f) * 60.0f);
+            w->rain_per_second     = TDF_ReadInt(tdf, "particlespersecond", 0);
+            w->rain_ticks          = (int32_t)(TDF_ReadFloat(tdf, "duration", 0.0f) * 60.0f);
+            if (ascii_contains_ci(w->subtype, "hailstorm") && w->weapon_art[0]) {
+                w->remote_kind = 2;
+                w->rain_sprite = (int16_t)proj_sprite_index(w->weapon_art, w->weapon_art);
+            } else if (w->radius_sprite[0] >= 0) {
+                w->remote_kind = 1;
+            }
+        }
         w->water_weapon   = TDF_ReadInt(tdf, "waterweapon", 0);
         w->to_air_weapon  = TDF_ReadInt(tdf, "toairweapon", 0);
         w->no_air_weapon  = TDF_ReadInt(tdf, "noairweapon", 0);
@@ -7806,6 +7852,7 @@ static void fire_weapon_shot(Unit *u, int shooter_idx, int slot,
         }
         Projectile *b = &g_projectiles[bslot];
         b->is_beam   = 1;
+        if (wp->los_kind == 2) b->visual_kind = UNIT_PROJECTILE_VIS_FLAME;
         b->src_x     = u->world_x;
         b->src_y     = u->world_y;
         b->world_x   = t->world_x;
@@ -7867,7 +7914,7 @@ static void fire_weapon_shot(Unit *u, int shooter_idx, int slot,
         }
     }
 
-    spawn_projectile(u->world_x, u->world_y,
+    int shot = spawn_projectile(u->world_x, u->world_y,
                       tx, ty,
                       speed,
                       wp->damage,
@@ -7878,10 +7925,88 @@ static void fire_weapon_shot(Unit *u, int shooter_idx, int slot,
                       target_handle,
                       shooter_idx,
                       u->player_id, u->team_color_idx);
+    spell_effects_at(wp, shot, tx, ty, u->stable_id);
 }
 
 /* Ground shot: projectile flies to (cmd_x, cmd_y) with no unit target
  * — splash there damages everything (friendly fire, legacy). */
+/* A spell's own picture, laid where it lands: rings of the weapon's
+ * radiusart sprites spreading to areaofeffect over ringduration, one
+ * ring every ringdelay after builduptime; or a rain of its weaponart
+ * for duration at particlespersecond, each drop bursting with the
+ * explosionclass. The sim's shot still flies and lands, unseen. */
+static void spell_effects_at(const UnitWeapon *wp, int shot, int32_t x, int32_t y,
+                             uint32_t seed) {
+    if (!wp || !wp->remote_kind) return;
+    if (shot >= 0 && shot < g_projectile_count) g_projectiles[shot].hidden = 1;
+    const GameWorld *w = World_Get();
+    int32_t ground = w ? Terrain_SampleHeight(w, x, y) : 0;
+    if (wp->remote_kind == 1) {
+        int dur = wp->ring_duration_ticks > 0 ? wp->ring_duration_ticks : 1;
+        for (int k = 0; k < wp->ring_count; k++) {
+            int sprite = wp->radius_sprite[k < 3 ? k : 2];
+            if (sprite < 0) sprite = wp->radius_sprite[0];
+            for (int i = 0; i < wp->sprite_count; i++) {
+                float a = 6.2831853f * (float)i / (float)wp->sprite_count;
+                ProjectileEffect *e = spawn_unit_fx_moving(sprite, x, y, ground, 0);
+                if (!e) return;
+                float step = (float)wp->area_of_effect / (float)dur;
+                e->vx_fp = (int32_t)(tak_cosf(a) * step * 65536.0f);
+                e->vy_fp = (int32_t)(tak_sinf(a) * step * 65536.0f);
+                e->delay_ticks = (uint16_t)(wp->buildup_ticks + k * wp->ring_delay_ticks);
+                e->life_ticks = (uint16_t)dur;
+                e->ticks_per_frame = 2;
+                e->loops = 1;
+            }
+        }
+        return;
+    }
+    if (wp->rain_sprite < 0) return;
+    int n = wp->rain_per_second * wp->rain_ticks / 60;
+    if (n <= 0) n = 1;
+    const int32_t fall_px = 400, fall_ticks = 36;
+    for (int j = 0; j < n; j++) {
+        uint32_t na = unit_deterministic_noise((uint32_t)x, (uint32_t)y, seed * 31u + (uint32_t)j);
+        uint32_t nr = unit_deterministic_noise((uint32_t)y, (uint32_t)x, seed * 17u + (uint32_t)j);
+        float a = 6.2831853f * (float)(na & 0xffffu) / 65536.0f;
+        float r = (float)wp->area_of_effect * sqrtf((float)(nr & 0xffffu) / 65536.0f);
+        int32_t dx = x + (int32_t)(tak_cosf(a) * r), dy = y + (int32_t)(tak_sinf(a) * r);
+        int32_t g = w ? Terrain_SampleHeight(w, dx, dy) : ground;
+        ProjectileEffect *e = spawn_unit_fx_moving(wp->rain_sprite, dx, dy, g + fall_px,
+                                                   -(fall_px * 65536) / fall_ticks);
+        if (!e) return;
+        e->stop_fp = g * 65536;
+        e->life_ticks = 0;
+        e->delay_ticks = (uint16_t)(wp->buildup_ticks + j * wp->rain_ticks / n);
+        e->ticks_per_frame = 2;
+        e->loops = 1;
+        e->land_explosion = wp->explosion_idx;
+    }
+}
+
+/* One flame particle a tick from the muzzle toward the strike point,
+ * its velocity jittered a tenth either way (legacy:247444). */
+static void flame_particle(const Projectile *p, int idx) {
+    static int s_flame = -2;
+    if (s_flame == -2) s_flame = proj_sprite_index("flame", "flame");
+    if (s_flame < 0) return;
+    float dx = (float)(p->world_x - p->src_x), dy = (float)(p->world_y - p->src_y);
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 1.0f) return;
+    const float speed = 8.0f;
+    uint32_t n = unit_deterministic_noise((uint32_t)idx, (uint32_t)p->ttl_ticks, 7u);
+    float jx = 1.0f + ((float)(n & 0xffu) / 255.0f - 0.5f) * 0.2f;
+    float jy = 1.0f + ((float)((n >> 8) & 0xffu) / 255.0f - 0.5f) * 0.2f;
+    ProjectileEffect *e = spawn_unit_fx_moving(s_flame, p->src_x, p->src_y,
+                                               p->src_height + 12, 0);
+    if (!e) return;
+    e->vx_fp = (int32_t)(dx / len * speed * jx * 65536.0f);
+    e->vy_fp = (int32_t)(dy / len * speed * jy * 65536.0f);
+    e->life_ticks = (uint16_t)(len / speed + 1.0f);
+    e->ticks_per_frame = 2;
+    e->loops = 1;
+}
+
 static void fire_ground_shot(Unit *u, int shooter_idx, int slot,
                              const UnitWeapon *wp) {
     if (!u || !wp) return;
@@ -7897,10 +8022,12 @@ static void fire_ground_shot(Unit *u, int shooter_idx, int slot,
                                     wp->edge_effectiveness, wp,
                                     weapon_visual_kind(wp), -1, shooter_idx,
                                     u->player_id, u->team_color_idx);
+    spell_effects_at(wp, slot_idx, u->cmd_x, u->cmd_y, u->stable_id);
     if (slot_idx < 0 || (wp->los_kind != 1 && wp->los_kind != 2)) return;
     /* LOS ground shot: detonate at the aim point immediately, hold beam. */
     Projectile *b = &g_projectiles[slot_idx];
     b->is_beam   = 1;
+    if (wp->los_kind == 2) b->visual_kind = UNIT_PROJECTILE_VIS_FLAME;
     b->src_x     = u->world_x;
     b->src_y     = u->world_y;
     b->world_x   = u->cmd_x;
@@ -11186,7 +11313,7 @@ static void submit_projectile_models(TAK_Platform *plat,
     int n = 0;
     for (int i = 0; i < g_projectile_count; i++) {
         const Projectile *p = &g_projectiles[i];
-        if (!p->alive || p->is_beam) continue;
+        if (!p->alive || p->is_beam || p->hidden) continue;
         if (p->art_kind != UNIT_WEAPON_ART_MODEL || p->art_idx < 0) continue;
         if (!projectile_visible_to_local_player(world, p)) continue;
         if (p->world_x < left || p->world_x > right) continue;
@@ -11574,7 +11701,7 @@ static void render_projectile_sprites(const struct GameWorld *world,
     SDL_Renderer *r = plat->renderer;
     for (int i = 0; i < g_projectile_count; i++) {
         const Projectile *p = &g_projectiles[i];
-        if (!p->alive || p->is_beam) continue;
+        if (!p->alive || p->is_beam || p->hidden) continue;
         if (p->art_kind != UNIT_WEAPON_ART_SPRITE || p->art_idx < 0) continue;
         if (!projectile_visible_to_local_player(world, p)) continue;
         if (proj_sprite_ensure(r, p->art_idx) != 0) continue;
@@ -11594,7 +11721,7 @@ static void render_projectile_effects(const struct GameWorld *world,
     SDL_Renderer *r = plat->renderer;
     for (int i = 0; i < g_proj_effect_count; i++) {
         const ProjectileEffect *e = &g_proj_effects[i];
-        if (!e->alive) continue;
+        if (!e->alive || e->delay_ticks) continue;
         /* The same gate again (legacy:215736-215749). */
         if (!Fog_ShowsAt(world, e->world_x, e->world_y)) continue;
         if (proj_sprite_ensure(r, e->sprite_idx) != 0) continue;
@@ -11625,7 +11752,9 @@ static void render_projectiles(const struct GameWorld *world,
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     for (int i = 0; i < g_projectile_count; i++) {
         const Projectile *p = &g_projectiles[i];
-        if (!p->alive) continue;
+        if (!p->alive || p->hidden) continue;
+        if (p->is_beam && p->visual_kind == UNIT_PROJECTILE_VIS_FLAME) continue;
+        if (!p->is_beam && p->visual_kind == UNIT_PROJECTILE_VIS_REMOTE) continue;
         /* Model and sprite projectiles are drawn by their own passes. */
         if (!p->is_beam && (p->art_kind == UNIT_WEAPON_ART_MODEL ||
                             p->art_kind == UNIT_WEAPON_ART_SPRITE)) continue;
@@ -12456,6 +12585,25 @@ int Units_ProjectileSpriteStrip(int sprite_idx, ProjSpriteStrip *out) {
     out->cell_h = ps->cell_h;
     out->fw = ps->fw; out->fh = ps->fh; out->ox = ps->ox; out->oy = ps->oy;
     return ps->num_frames;
+}
+
+int Units_FindSpriteArt(const char *name) {
+    if (!name || !*name) return -1;
+    for (int i = 0; i < g_proj_sprite_count; i++) {
+        if (tak_stricmp(g_proj_sprites[i].file, name) == 0) return i;
+    }
+    return -1;
+}
+
+int Units_DebugFireGround(int handle, int slot, int32_t x, int32_t y) {
+    if (handle < 0 || handle >= g_unit_count) return 0;
+    Unit *u = &g_units[handle];
+    const UnitDef *d = Units_GetDef(u->def_idx);
+    if (u->alive != UNIT_ALIVE_ACTIVE || !d || slot < 0 || slot >= d->num_weapons) return 0;
+    u->cmd_x = x;
+    u->cmd_y = y;
+    fire_ground_shot(u, handle, slot, &d->weapons[slot]);
+    return 1;
 }
 
 int Units_DebugRemove(int handle) {
