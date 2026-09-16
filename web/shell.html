@@ -250,9 +250,18 @@
     #btn-start .sr-only { position: static; width: auto; height: auto; margin: 0; clip-path: none; white-space: nowrap; overflow: visible; }
   }
 
-  #forget { position: fixed; right: 12px; bottom: 10px; font-size: 13px; z-index: 5; }
+  /* Plated like the toast, because it sits over whatever the game
+     draws in that corner and the book's gold art is its own colour. */
+  #forget {
+    position: fixed; right: 12px; bottom: 10px; z-index: 5;
+    padding: 6px 12px;
+    background: #14110c; color: #e7dcc0;
+    border: 1px solid #6b5a33; border-radius: 4px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.6);
+    font: 13px/1.4 Georgia, serif;
+  }
   #forget[hidden] { display: none; }
-  #forget a { color: #9a8149; text-decoration: none; }
+  #forget a { color: #d9bd78; text-decoration: none; }
   #forget a:hover { color: var(--gold); text-decoration: underline; }
 
   #forget .sep { color: #6b5a33; margin: 0 6px; }
