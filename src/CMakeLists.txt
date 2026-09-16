@@ -473,9 +473,7 @@ if(AVCODEC_LIBRARY)
 endif()
 if(WIN32)
     target_link_libraries(test_sim_probe PRIVATE user32 gdi32 winmm ws2_32 advapi32)
-    add_custom_command(TARGET test_sim_probe POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_sim_probe>)
+    add_dependencies(test_sim_probe tak_sdl2_runtime)
 endif()
 if(NOT MSVC AND NOT EMSCRIPTEN)
     target_link_libraries(test_sim_probe PRIVATE m)
@@ -535,9 +533,7 @@ target_include_directories(test_gui_loader PRIVATE
 )
 target_link_libraries(test_gui_loader PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(WIN32)
-    add_custom_command(TARGET test_gui_loader POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_gui_loader>)
+    add_dependencies(test_gui_loader tak_sdl2_runtime)
 endif()
 # ── UI screens smoke tests ─────────────────────────────────────────────────
 
@@ -557,9 +553,7 @@ if(AVCODEC_LIBRARY)
 endif()
 if(WIN32)
     target_link_libraries(test_ui_screens PRIVATE user32 gdi32 winmm ws2_32 advapi32)
-    add_custom_command(TARGET test_ui_screens POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_ui_screens>)
+    add_dependencies(test_ui_screens tak_sdl2_runtime)
 endif()
 target_compile_definitions(test_ui_screens PRIVATE
     TAK_DATA_DIR="${TAK_DATA_DIR}"
@@ -685,9 +679,7 @@ if(AVCODEC_LIBRARY)
 endif()
 if(WIN32)
     target_link_libraries(test_unit_stall PRIVATE user32 gdi32 winmm ws2_32 advapi32)
-    add_custom_command(TARGET test_unit_stall POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_unit_stall>)
+    add_dependencies(test_unit_stall tak_sdl2_runtime)
 endif()
 target_compile_definitions(test_unit_stall PRIVATE
     TAK_DATA_DIR="${TAK_DATA_DIR}"
@@ -717,9 +709,7 @@ if(AVCODEC_LIBRARY)
 endif()
 if(WIN32)
     target_link_libraries(test_movement PRIVATE user32 gdi32 winmm ws2_32 advapi32)
-    add_custom_command(TARGET test_movement POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_movement>)
+    add_dependencies(test_movement tak_sdl2_runtime)
 endif()
 target_compile_definitions(test_movement PRIVATE
     TAK_DATA_DIR="${TAK_DATA_DIR}"
@@ -745,9 +735,7 @@ if(AVCODEC_LIBRARY)
 endif()
 if(WIN32)
     target_link_libraries(test_command_pipeline PRIVATE user32 gdi32 winmm ws2_32 advapi32)
-    add_custom_command(TARGET test_command_pipeline POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_command_pipeline>)
+    add_dependencies(test_command_pipeline tak_sdl2_runtime)
 endif()
 target_compile_definitions(test_command_pipeline PRIVATE
     TAK_DATA_DIR="${TAK_DATA_DIR}"
@@ -1425,9 +1413,7 @@ target_compile_definitions(probe_zhn_pixels PRIVATE
 )
 target_link_libraries(probe_zhn_pixels PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(WIN32)
-    add_custom_command(TARGET probe_zhn_pixels POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:probe_zhn_pixels>)
+    add_dependencies(probe_zhn_pixels tak_sdl2_runtime)
 endif()
 
 # ── Phase B2 recon tool (R1..R5) ───────────────────────────────────────
@@ -1454,9 +1440,7 @@ target_compile_definitions(recon_terrain PRIVATE
 )
 target_link_libraries(recon_terrain PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(WIN32)
-    add_custom_command(TARGET recon_terrain POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:recon_terrain>)
+    add_dependencies(recon_terrain tak_sdl2_runtime)
 endif()
 
 # ── Economy unit tests ──────────────────────────────────────────────
@@ -1487,9 +1471,7 @@ target_compile_definitions(map_inspect PRIVATE
 )
 target_link_libraries(map_inspect PRIVATE SDL2::SDL2 SDL2::SDL2main)
 if(WIN32)
-    add_custom_command(TARGET map_inspect POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:map_inspect>)
+    add_dependencies(map_inspect tak_sdl2_runtime)
 endif()
 
 add_executable(asset_validate
@@ -1673,9 +1655,7 @@ if(AVCODEC_LIBRARY)
 endif()
 if(WIN32)
     target_link_libraries(test_savestate PRIVATE user32 gdi32 winmm ws2_32 advapi32)
-    add_custom_command(TARGET test_savestate POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_savestate>)
+    add_dependencies(test_savestate tak_sdl2_runtime)
 endif()
 target_compile_definitions(test_savestate PRIVATE
     TAK_DATA_DIR="${TAK_DATA_DIR}"
@@ -1707,9 +1687,7 @@ if(AVCODEC_LIBRARY)
 endif()
 if(WIN32)
     target_link_libraries(test_render_cache PRIVATE user32 gdi32 winmm ws2_32 advapi32)
-    add_custom_command(TARGET test_render_cache POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_render_cache>)
+    add_dependencies(test_render_cache tak_sdl2_runtime)
 endif()
 target_compile_definitions(test_render_cache PRIVATE
     TAK_DATA_DIR="${TAK_DATA_DIR}"
