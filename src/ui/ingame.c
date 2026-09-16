@@ -1123,6 +1123,11 @@ static void ig_battle_keys(int has_focus, const GameWorld *world,
 }
 
 int InGame_Tick(TAK_Platform *platform, Timer *timer) {
+    {
+        static unsigned s_ticks;
+        if ((++s_ticks % 60u) == 0u)
+            fprintf(stderr, "InGame: tick entered %u times\n", s_ticks);
+    }
     if (!ig.initialized) return GAMESTATE_MENU;
     if (!timer) return GAMESTATE_MENU;
 
@@ -1185,6 +1190,12 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
     SDL_Rect world_clip;
     int have_clip = HUD_GetViewportRect(platform, &world_clip);
     if (have_clip) SDL_RenderSetClipRect(platform->renderer, &world_clip);
+    {
+        static unsigned s_reach;
+        if ((++s_reach % 60u) == 0u)
+            fprintf(stderr, "InGame: reached render %u times, view=%s\n",
+                    s_reach, ig_view()->name);
+    }
     ig_view()->render(world, platform, have_clip ? &world_clip : NULL);
     if (have_clip) SDL_RenderSetClipRect(platform->renderer, NULL);
 
@@ -1250,7 +1261,7 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
             if (cid != mode)
                 drew_cursor = HUD_DrawCursorById(platform, cid, mx, my);
             if (!drew_cursor) {
-                HUD_DrawCommandCursor(platform, mx, my);
+                HUD_DrawCommandCursor(platform, mx, my, hover_x, hover_y);
                 drew_cursor = 1;
             }
         } else if (over_world) {

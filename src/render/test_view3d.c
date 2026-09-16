@@ -435,6 +435,61 @@ TEST(a_walking_units_pieces_move_in_the_3d_pose) {
     shutdown_all(&platform);
 }
 
+/* Reported from play: in the 3D view a lodestone's placement ghost
+ * was always red. The ghost was judged at the classic camera's flat
+ * reading of the pointer, a point the 3D camera is not looking at. */
+TEST(the_build_ghost_in_3d_is_judged_where_the_pointer_lands) {
+    TAK_Platform platform;
+    GameWorld *world = NULL;
+    int rc = boot(&platform, &world);
+    if (rc == 1) return;
+    ASSERT_EQ_INT(0, rc);
+    Timer timer;
+    Timer_Init(&timer);
+    ASSERT(frame(&platform, &timer));
+    ASSERT_EQ_INT(1, InGame_SetView3D(1));
+    ASSERT(frame(&platform, &timer));
+
+    /* Something the local monarch can build. */
+    int n = 0;
+    const Unit *units = Units_GetActive(&n);
+    int builder = -1;
+    for (int i = 0; i < n && builder < 0; i++) {
+        const UnitDef *d = Units_GetDef(units[i].def_idx);
+        if (units[i].alive == UNIT_ALIVE_ACTIVE && units[i].player_id == 1 &&
+            d && (d->cap_flags & UNIT_CAP_BUILDER)) builder = i;
+    }
+    ASSERT(builder >= 0);
+    int buildables[32];
+    int bn = Units_GetBuildables((int)units[builder].def_idx, buildables, 32);
+    ASSERT(bn > 0);
+    Units_SelectSingle(builder);
+    HUD_SetCommandMode(HUD_CMD_PLACE_BUILD);
+    HUD_BeginBuildPlacement(buildables[0]);
+
+    /* The pointer at the play area's middle, and the ground the 3D
+     * view says is under it. */
+    SDL_Rect play = { 0, 0, WIN_W, WIN_H };
+    (void)HUD_GetViewportRect(&platform, &play);
+    int mx = play.x + play.w / 2, my = play.y + play.h / 2;
+    int32_t flat_x = 0, flat_y = 0;
+    ASSERT_EQ_INT(1, View_3D()->pointer_to_world(world, &platform, mx, my,
+                                                 &flat_x, &flat_y));
+    int32_t want_x = flat_x, want_y = flat_y;
+    Units_GroundUnderPoint(flat_x, flat_y, &want_x, &want_y);
+
+    HUD_DrawCommandCursor(&platform, mx, my, flat_x, flat_y);
+    int32_t got_x = 0, got_y = 0;
+    int verdict = HUD_DebugGhost(&got_x, &got_y);
+    printf("[ghost judged at %d,%d wanted %d,%d verdict %d] ",
+           got_x, got_y, want_x, want_y, verdict);
+    HUD_ClearCommandMode();
+    shutdown_all(&platform);
+    ASSERT(verdict >= 0);
+    ASSERT_EQ_INT(want_x, got_x);
+    ASSERT_EQ_INT(want_y, got_y);
+}
+
 /* An argument runs only the cases whose name contains it. */
 #define RUN_NAMED(name) do { \
         if (argc < 2 || strstr(#name, argv[1])) RUN(name); \
@@ -449,5 +504,6 @@ int main(int argc, char **argv) {
     RUN_NAMED(a_scroll_in_3d_moves_the_classic_camera_with_it);
     RUN_NAMED(the_accessors_hand_out_the_baked_model_and_its_pose);
     RUN_NAMED(a_walking_units_pieces_move_in_the_3d_pose);
+    RUN_NAMED(the_build_ghost_in_3d_is_judged_where_the_pointer_lands);
     TEST_REPORT();
 }
