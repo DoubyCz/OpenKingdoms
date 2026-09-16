@@ -28,6 +28,10 @@ int         SelectGame_Selected(void);
  * such label. */
 void        SelectGame_SelectRow(int row);
 int         SelectGame_LabelText(const char *name, char *out, size_t cap);
+/* The list's top row, how many rows fit, and a press by widget name. */
+int         SelectGame_Scroll(void);
+int         SelectGame_RowsVisible(void);
+void        SelectGame_Press(const char *name);
 const char *SelectGame_RowName(int index);
 
 /* Press a button by name, the way the runtime would on a click. A test

@@ -510,6 +510,10 @@ static void fill_info(void) {
     set_label("Creon",          r ? yes_no(r->flags & TAK_ROOMF_IRON_PLAGUE) : "");
 }
 
+int SelectGame_Scroll(void) { return sg.scroll; }
+int SelectGame_RowsVisible(void) { return rows_visible(); }
+void SelectGame_Press(const char *name) { sg_press(name); }
+
 void SelectGame_SelectRow(int row) {
     sg.selected = (row >= 0 && row < room_count()) ? row : -1;
     fill_info();
@@ -586,7 +590,13 @@ static void take_events(void) {
  * see the name box at all. */
 static void sg_press(const char *name) {
     if (!name || !name[0]) return;
-    if (tak_stricmp(name, "MainMenu") == 0) {
+    if (tak_stricmp(name, "incbutton") == 0) {
+        sg.scroll--;
+        clamp_scroll();
+    } else if (tak_stricmp(name, "decbutton") == 0) {
+        sg.scroll++;
+        clamp_scroll();
+    } else if (tak_stricmp(name, "MainMenu") == 0) {
         set_caret(0, 0);
         NetSession_Disconnect();
         sg.next_state = GAMESTATE_MENU;

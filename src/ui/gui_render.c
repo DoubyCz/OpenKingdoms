@@ -242,7 +242,11 @@ int GUIRuntime_UpdateEx(GUIRuntime *rt, int mx, int my, int mouse_down,
     if (out_index) *out_index = -1;
     if (!rt) return 0;
 
+    /* Of the widgets under the pointer the smallest wins, and a later
+     * one wins a tie, because a list box or a slider track authored
+     * before its arrows encloses them and would take every click. */
     rt->hovered = -1;
+    int hovered_area = 0;
     for (int i = 0; i < rt->dialog->num_children; i++) {
         const GUIWidget *w = &rt->dialog->children[i];
         if (!widget_is_interactive(w)) continue;
@@ -251,9 +255,11 @@ int GUIRuntime_UpdateEx(GUIRuntime *rt, int mx, int my, int mouse_down,
         r.x += rt->offset_x;
         r.y += rt->offset_y;
         SDL_Point pt = { mx, my };
-        if (SDL_PointInRect(&pt, &r)) {
+        if (!SDL_PointInRect(&pt, &r)) continue;
+        int area = r.w * r.h;
+        if (rt->hovered < 0 || area <= hovered_area) {
             rt->hovered = i;
-            break;
+            hovered_area = area;
         }
     }
 
