@@ -68,7 +68,7 @@ jobs:
           done
 
       - name: Build
-        run: cmake --build build-wasm --parallel --target tak-re test_trig test_sim_probe test_click_map
+        run: cmake --build build-wasm --parallel --target tak-re test_trig test_sim_probe test_click_map test_camera3d
 
       # The browser is one of the platforms a room holds together, so
       # it has to reach the same bits from the same arithmetic. The
@@ -76,6 +76,11 @@ jobs:
       # platform asserts the same one.
       - name: The browser agrees on the simulation's trigonometry
         run: node build-wasm/src/test_trig.js
+
+      # The 3D view's pointer has to land on the same ground in a
+      # browser tab as on the desktop. Pinned in numbers, no data.
+      - name: The browser agrees on the 3D camera
+        run: node build-wasm/src/test_camera3d.js
 
       # And the whole simulation, not only the arithmetic under it: a
       # synthetic battle through the real mover and the real combat

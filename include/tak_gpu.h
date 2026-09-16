@@ -21,6 +21,10 @@ void GPU_AbandonTexture(GPU_Texture *tex);
 /* Introspection. Returns 0 on success, -1 on null tex. */
 int GPU_TextureSize(const GPU_Texture *tex, int *out_w, int *out_h);
 
+/* The SDL texture underneath, for a renderer that binds it through
+ * SDL_GL_BindTexture. NULL for a null handle. */
+SDL_Texture *GPU_TextureSDL(const GPU_Texture *tex);
+
 /* Stamp a texture into the window render target. src == NULL means
  * "entire texture"; dst == NULL means "stretch to fill the window".
  * Must be called after TAK_Platform_FrameBegin and before

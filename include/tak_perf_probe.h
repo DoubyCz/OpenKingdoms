@@ -15,6 +15,9 @@ struct TAK_Platform;
 int  PerfProbe_Select(const char *scenario);
 /* Shorten a run (--perf-ticks). Call before the world is built. */
 void PerfProbe_SetTicks(int ticks);
+/* Play the scenario with the map revealed and no line of sight
+ * (--reveal), for captures. Call before the world is built. */
+void PerfProbe_SetRevealed(int on);
 int  PerfProbe_Active(void);
 int  PerfProbe_Finished(void);
 

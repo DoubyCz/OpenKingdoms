@@ -52,6 +52,16 @@ set(TAK_HPI_SOURCES
     core/hpi/hpi_decompress.c
 )
 
+# The view seam and the 3D view: the battle screen draws through one
+# active view, so every binary that compiles ui/ingame.c needs these.
+set(TAK_VIEW_SOURCES
+    ui/view_classic.c
+    render/camera3d.c
+    render/gl3d.c
+    render/model_store.c
+    render/view3d.c
+)
+
 set(TAK_RENDER_SOURCES
     render/palette.c
     render/pal_lookup.c
@@ -72,6 +82,7 @@ set(TAK_RENDER_SOURCES
     render/debug_panel.c
     render/cob.c
     render/cob_vm.c
+    ${TAK_VIEW_SOURCES}
 )
 
 set(TAK_GAME_SOURCES
@@ -422,6 +433,7 @@ set(TAK_SCREEN_TEST_SOURCES
     render/cob_vm.c
     render/debug_panel.c
     platform/sdl2_platform.c
+    ${TAK_VIEW_SOURCES}
     ${TAK_NET_SOURCES}
     ${TAK_THIRD_PARTY_SOURCES}
 )
@@ -441,6 +453,22 @@ target_include_directories(test_trig PRIVATE
 
 if(NOT MSVC AND NOT EMSCRIPTEN)
     target_link_libraries(test_trig PRIVATE m)
+endif()
+
+# ── The 3D view's camera, pinned in numbers ─────────────────────────
+# No SDL and no data, built for the browser too, so the pointer lands
+# on the same ground on every platform. See src/render/camera3d.c.
+add_executable(test_camera3d
+    render/test_camera3d.c
+    render/camera3d.c
+)
+
+target_include_directories(test_camera3d PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+if(NOT MSVC AND NOT EMSCRIPTEN)
+    target_link_libraries(test_camera3d PRIVATE m)
 endif()
 
 # ── Tests + tools (native only) ─────────────────────────────────────────────
@@ -665,6 +693,7 @@ add_executable(test_unit_stall
     render/cob_vm.c
     render/debug_panel.c
     platform/sdl2_platform.c
+    ${TAK_VIEW_SOURCES}
     ${TAK_THIRD_PARTY_SOURCES}
 )
 target_include_directories(test_unit_stall PRIVATE
@@ -1694,6 +1723,40 @@ target_compile_definitions(test_render_cache PRIVATE
     TAK_GAME_DIR="${TAK_GAME_DIR}"
 )
 
+# The 3D view leaves the classic view untouched: a toggle there and
+# back gives byte identical classic pixels, the camera and selection
+# survive, and the view's accessors hand out what it needs. Opens a
+# window with a GL context and needs the game data.
+add_executable(test_view3d
+    render/test_view3d.c
+    game/savegame.c
+    game/sim_hash.c
+    game/map_fingerprint.c
+    core/savefile.c
+    core/sha256.c
+    ${TAK_SCREEN_TEST_SOURCES}
+)
+target_include_directories(test_view3d PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_link_libraries(test_view3d PRIVATE SDL2::SDL2 SDL2::SDL2main)
+if(AVCODEC_LIBRARY)
+    target_include_directories(test_view3d PRIVATE ${AVCODEC_INCLUDE_DIR})
+    target_link_libraries(test_view3d PRIVATE
+        ${TAK_FFMPEG_LIBS})
+endif()
+if(WIN32)
+    target_link_libraries(test_view3d PRIVATE user32 gdi32 winmm ws2_32 advapi32)
+    add_custom_command(TARGET test_view3d POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:test_view3d>)
+endif()
+target_compile_definitions(test_view3d PRIVATE
+    TAK_DATA_DIR="${TAK_DATA_DIR}"
+    TAK_GAME_DIR="${TAK_GAME_DIR}"
+)
+
 # Game speed: the level, the range, the message, the timer that runs on
 # it, and the proof that the simulation comes out the same at every
 # speed for the same number of ticks. Data free, so CI runs it.
@@ -2033,6 +2096,7 @@ if(BUILD_TESTING)
     add_test(NAME test_util        COMMAND test_util)
     add_test(NAME test_trig        COMMAND test_trig)
     add_test(NAME test_click_map   COMMAND test_click_map)
+    add_test(NAME test_camera3d    COMMAND test_camera3d)
     add_test(NAME test_framework_self COMMAND test_framework_self)
     add_test(NAME test_hpi_vfs     COMMAND test_hpi_vfs)
     add_test(NAME test_dataset     COMMAND test_dataset)
@@ -2094,6 +2158,7 @@ if(BUILD_TESTING)
     add_test(NAME test_http_api    COMMAND test_http_api)
     add_test(NAME test_unit_stall  COMMAND test_unit_stall)
     add_test(NAME test_render_cache COMMAND test_render_cache)
+    add_test(NAME test_view3d COMMAND test_view3d)
     add_test(NAME test_movement    COMMAND test_movement)
     add_test(NAME test_sim_probe   COMMAND test_sim_probe)
     add_test(NAME test_float_guard COMMAND ${CMAKE_COMMAND}
@@ -2157,6 +2222,6 @@ if(BUILD_TESTING)
         test_campaign_index
         test_asset_validate_units test_asset_validate_mission_units
         test_mission test_moveinfo test_savegame test_savestate
-        test_unit_stall test_render_cache
+        test_unit_stall test_render_cache test_view3d
         PROPERTIES LABELS "needs-data")
 endif()
