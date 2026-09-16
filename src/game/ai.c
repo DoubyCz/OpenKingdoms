@@ -270,9 +270,16 @@ static int ai_find_clear_site(int build_def, int32_t cx, int32_t cy,
     return 0;
 }
 
+static int ai_trace(void);
+
 static int ai_try_start_build_def(int actor_idx, int build_def) {
     const Unit *units = Units_GetActive(NULL);
     if (!units) return 0;
+    if (ai_trace()) {
+        const UnitDef *tb = Units_GetDef(build_def);
+        fprintf(stderr, "AI: start build def %d %s by actor %d\n",
+                build_def, tb ? tb->unitname : "?", actor_idx);
+    }
     const Unit *actor = &units[actor_idx];
     if (build_def < 0) return 0;
     /* Factory production: a structure producing a mobile unit creates
@@ -1204,6 +1211,18 @@ int TAK_AI_DebugIsProductionStructure(int def_idx) {
     return ai_def_is_factory(def_idx);
 }
 
+/* The profile loads on the first tick and resets every entry, so a
+ * value set by a test marks the profile loaded to survive that. */
+void TAK_AI_DebugSetLimit(int def_idx, int limit) {
+    ai_profile_load();
+    if (def_idx >= 0 && def_idx < AI_MAX_DEFS) g_ai_limit[def_idx] = limit;
+}
+
+void TAK_AI_DebugSetWeight(int def_idx, float weight) {
+    ai_profile_load();
+    if (def_idx >= 0 && def_idx < AI_MAX_DEFS) g_ai_weight[def_idx] = weight;
+}
+
 /* A walking producer: Zhon summons its whole army from beast handlers
  * and their kin, and priests summon dragons. A monarch never counts,
  * as in ai_def_is_factory. */
@@ -1306,6 +1325,7 @@ static void ai_plan_read(const GameWorld *world, const Unit *units,
     }
     int lode_def = -1, factory_def = -1, tower_def = -1, train_def = -1;
     int mobile_factory_def = -1;
+    float factory_want = 0.0f, mobile_want = 0.0f;
     /* One pad def per builder, the one it would place there. */
     int pad_defs[4];
     int pad_def_count = 0, lode_off_pad = 0;
@@ -1342,11 +1362,28 @@ static void ai_plan_read(const GameWorld *world, const Unit *units,
                     }
                     if (tower_def < 0 && ai_def_is_tower(bd))
                         tower_def = buildables[b];
-                    else if (factory_def < 0 && ai_def_is_factory(buildables[b]))
-                        factory_def = buildables[b];
-                    else if (mobile_factory_def < 0 &&
-                             ai_def_is_mobile_producer(buildables[b]))
-                        mobile_factory_def = buildables[b];
+                    else if (ai_def_is_factory(buildables[b])) {
+                        /* The most wanted factory the limit still
+                         * allows, not the first in the list, so a seat
+                         * at its castle limit moves on to the next kind. */
+                        if (ai_limit_allows(units, unit_count, p, buildables[b])) {
+                            float want = ai_desirability(units, unit_count, p,
+                                                         buildables[b]);
+                            if (factory_def < 0 || want > factory_want) {
+                                factory_def = buildables[b];
+                                factory_want = want;
+                            }
+                        }
+                    } else if (ai_def_is_mobile_producer(buildables[b])) {
+                        if (ai_limit_allows(units, unit_count, p, buildables[b])) {
+                            float want = ai_desirability(units, unit_count, p,
+                                                         buildables[b]);
+                            if (mobile_factory_def < 0 || want > mobile_want) {
+                                mobile_factory_def = buildables[b];
+                                mobile_want = want;
+                            }
+                        }
+                    }
                 }
                 if (this_pad >= 0) {
                     int seen = 0;

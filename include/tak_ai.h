@@ -25,6 +25,9 @@ int  TAK_AI_DebugWaveTarget(int player_id);   /* unit handle, -1 none */
 /* Whether the AI counts this def as a production structure, so a
  * census reports what the AI itself sees. */
 int  TAK_AI_DebugIsProductionStructure(int def_idx);
+/* Test seam: a profile limit or weight for one definition. */
+void TAK_AI_DebugSetLimit(int def_idx, int limit);
+void TAK_AI_DebugSetWeight(int def_idx, float weight);
 
 /* A unit slot about to take a new unit: drop any wave target or threat
  * that still names it. Units_Spawn calls this. */
