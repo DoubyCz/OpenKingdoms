@@ -819,6 +819,8 @@ void HUD_DrawMessageLine(TAK_Platform *plat, const char *text) {
     HUDText_DrawString(plat, g_text, vp.x + 8, vp.y + 8, text, white);
 }
 
+Font *HUD_Font(void) { return g_font; }
+
 int HUD_GetViewportCanvasRect(SDL_Rect *out) {
     if (!out || !g_rt) return 0;
     *out = g_viewport_dlg;

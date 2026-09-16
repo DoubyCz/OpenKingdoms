@@ -38,6 +38,7 @@
 #include "tak_main_menu.h"
 #include "tak_battle_setup.h"
 #include "tak_ingame.h"
+#include "tak_view3d.h"
 #include "tak_ingame_menu.h"
 #include "tak_options.h"
 #include "tak_loading.h"
@@ -119,6 +120,15 @@ static void print_help(const char *prog) {
         "  --perf-ticks <n>    shorten that scenario to n sim ticks\n"
         "  -pretendnoexpansion play an Iron Plague install as the base game\n"
         "  --skip-logo         start on the menu without the logo clip\n"
+        "  --renderer <name>   the SDL render driver (default opengl on\n"
+        "                      the desktop, which the 3D view needs)\n"
+        "  --view3d            open every battle in the 3D view (V toggles)\n"
+        "  --cam3d <x,z,yaw,pitch,dist>  the 3D camera start, map pixels\n"
+        "                      and degrees, applied with --view3d\n"
+        "  --reveal            play a --perf-probe scenario with the map\n"
+        "                      revealed and line of sight off (captures)\n"
+        "  --screenshot <bmp>  save the battle frame at the simulation tick\n"
+        "                      --screenshot-tick names (default 300) and quit\n"
         "  --help, -h          print this help and exit\n",
         prog ? prog : "tak-re");
 }
@@ -140,6 +150,12 @@ static const char *g_game_dir_arg = NULL;
 static int g_start_multiplayer = 0;
 static const char *g_perf_scenario = NULL;   /* --perf-probe */
 static int g_perf_ticks = 0;                 /* --perf-ticks */
+/* --view3d, --cam3d, --screenshot: the demo and capture switches. */
+static int g_start_view3d = 0;
+static const char *g_cam3d_arg = NULL;
+static const char *g_screenshot_path = NULL;
+static int g_screenshot_tick = 300;
+static int g_ingame_frames = 0;
 
 /* Populate cfg from command-line flags. Returns 1 if main should
  * continue, 0 if we should exit early (e.g. --help printed). */
@@ -193,6 +209,18 @@ static int parse_cli(int argc, char **argv, TAK_DisplayConfig *cfg) {
             g_perf_scenario = argv[++i];
         } else if (strcmp(a, "--perf-ticks") == 0 && i + 1 < argc) {
             g_perf_ticks = atoi(argv[++i]);
+        } else if (strcmp(a, "--renderer") == 0 && i + 1 < argc) {
+            cfg->renderer_name = argv[++i];
+        } else if (strcmp(a, "--view3d") == 0) {
+            g_start_view3d = 1;
+        } else if (strcmp(a, "--reveal") == 0) {
+            PerfProbe_SetRevealed(1);
+        } else if (strcmp(a, "--cam3d") == 0 && i + 1 < argc) {
+            g_cam3d_arg = argv[++i];
+        } else if (strcmp(a, "--screenshot") == 0 && i + 1 < argc) {
+            g_screenshot_path = argv[++i];
+        } else if (strcmp(a, "--screenshot-tick") == 0 && i + 1 < argc) {
+            g_screenshot_tick = atoi(argv[++i]);
         } else if ((a[0] == '-' || a[0] == '/') &&
                    tak_stricmp(a + (a[1] == '-' ? 2 : 1),
                                "pretendnoexpansion") == 0) {
@@ -223,6 +251,26 @@ static int parse_cli(int argc, char **argv, TAK_DisplayConfig *cfg) {
 static double perf_now_ms(void) {
     return (double)SDL_GetPerformanceCounter() * 1000.0 /
            (double)SDL_GetPerformanceFrequency();
+}
+
+/* The frame as drawn so far, read back from the renderer before it is
+ * presented, for the demo captures. */
+static void save_screenshot(TAK_Platform *plat, const char *path) {
+    SDL_Surface *shot = SDL_CreateRGBSurfaceWithFormat(0, plat->window_w,
+        plat->window_h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!shot) return;
+    /* The HUD canvas goes on at present time, so lay it on first. */
+    if (plat->canvas_tex) SDL_RenderCopy(plat->renderer, plat->canvas_tex, NULL, NULL);
+    if (SDL_RenderReadPixels(plat->renderer, NULL, SDL_PIXELFORMAT_RGBA32,
+                             shot->pixels, shot->pitch) == 0) {
+        if (SDL_SaveBMP(shot, path) == 0)
+            fprintf(stderr, "Screenshot: %s\n", path);
+        else
+            fprintf(stderr, "Screenshot failed: %s\n", SDL_GetError());
+    } else {
+        fprintf(stderr, "Screenshot read failed: %s\n", SDL_GetError());
+    }
+    SDL_FreeSurface(shot);
 }
 
 static void app_frame(AppState *app) {
@@ -404,6 +452,27 @@ static void app_frame(AppState *app) {
                 app->ingame_initialized = 1;
             }
             int next_state = InGame_Tick(&app->platform, &app->timer);
+            g_ingame_frames++;
+            if (g_cam3d_arg && g_ingame_frames >= 2 && InGame_IsView3D()) {
+                /* Held every frame after the first 3D frame has drawn, so
+                 * a hand on the keys cannot move a capture. */
+                Camera3D *cam = View3D_Camera();
+                float x = 0, z = 0, yaw = 0, pitch = 60, dist = 1000;
+                if (sscanf(g_cam3d_arg, "%f,%f,%f,%f,%f", &x, &z, &yaw, &pitch, &dist) == 5) {
+                    /* A negative x keeps the target the battle chose. */
+                    if (x >= 0.0f) { cam->target_x = x; cam->target_z = z; }
+                    cam->yaw = yaw * 3.14159265f / 180.0f;
+                    cam->pitch = pitch * 3.14159265f / 180.0f;
+                    cam->dist = dist;
+                }
+            }
+            const GameWorld *shot_world = World_Get();
+            if (g_screenshot_path && shot_world &&
+                shot_world->skirmish_elapsed_ticks + shot_world->mission_elapsed_ticks
+                    >= g_screenshot_tick) {
+                save_screenshot(&app->platform, g_screenshot_path);
+                app->quit_requested = 1;
+            }
             if (next_state != GAMESTATE_IN_GAME) {
                 BattleConfig again;
                 char again_map[96], again_kingdom[32];
@@ -570,6 +639,8 @@ int main(int argc, char *argv[]) {
     if (Cursor_Init() != 0) {
         fprintf(stderr, "Warning: custom cursors unavailable, using OS default\n");
     }
+
+    InGame_RequestView3D(g_start_view3d);
 
     /* --perf-probe owns the battle: build it here and go straight
      * to loading, so every run plays the same scenario. */

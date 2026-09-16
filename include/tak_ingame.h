@@ -79,4 +79,11 @@ void InGame_DebugEscape(int down);
  * then, only when the console is shut, the battle hotkeys. */
 void InGame_DebugKeyFrame(int scancode, const char *text_in);
 
+/* The 3D view. SetView3D switches in place and returns 1 when the view
+ * asked for is up (the 3D view can refuse where there is no GL).
+ * RequestView3D asks the next battle to open in 3D. */
+int  InGame_SetView3D(int on);
+int  InGame_IsView3D(void);
+void InGame_RequestView3D(int on);
+
 #endif /* TAK_INGAME_H */

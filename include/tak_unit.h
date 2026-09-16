@@ -61,6 +61,17 @@ typedef struct UnitMeshNode {
     float   offset[3];          /* static offset from parent (TA units) */
 } UnitMeshNode;
 
+/* One piece's transform from its node's local space to the model's
+ * frame, composed down the parent chain from the piece state a COB
+ * script left: a row major 3x3 rotation and a translation. */
+typedef struct UnitNodeXform {
+    float rot[9];
+    float trans[3];
+    uint8_t hidden;       /* COB HIDE: draws nothing */
+    uint8_t shadow_off;   /* COB DONT-SHADOW */
+    uint8_t _pad[2];
+} UnitNodeXform;
+
 typedef struct UnitMesh {
     /* Vertex data is in NODE-LOCAL space (Phase D M3 change). To get
      * a vertex's unit-space position, transform by the owning node's
@@ -898,6 +909,40 @@ void              Units_RenderBuildGhost(struct TAK_Platform *plat,
                                           int def_idx, int color_idx,
                                           int32_t world_x, int32_t world_y,
                                           uint8_t alpha255, int valid);
+
+/* ── Read only accessors for a second view ───────────────────────────
+ *
+ * The 3D view draws the same baked models the classic view draws and
+ * poses them from the same COB piece state. These hand that data out
+ * without the view reaching into this file. None of it is simulation
+ * state and nothing here writes any. */
+
+/* Bake a model by object name (objects3d/<name>.3do) for a team colour,
+ * with the world's palette for its flat colours. The caller owns the
+ * result and frees it with Units_FreeBakedMesh. NULL when the model is
+ * missing. */
+UnitMesh         *Units_BakeObjectMesh(const char *object_name, int color_idx);
+void              Units_FreeBakedMesh(UnitMesh *m);
+
+/* Compose every node's transform for a mesh from a unit's piece state,
+ * or from rest when pieces is NULL. out holds m->node_count entries.
+ * hide_alt_pieces hides the *_off and *_dead alternates at rest the
+ * way a live unit's Create does, and a corpse passes 0. */
+void              Units_ComposeNodeXforms(const UnitMesh *m,
+                                          const CobPiece *pieces,
+                                          UnitNodeXform *out,
+                                          int hide_alt_pieces);
+
+/* A map feature's sprite, decoded once and cached: frame `frame` of
+ * the def's sequence in RGBA, its size, and the hotspot the classic
+ * view anchors on the feature's footprint centre. Returns the frame
+ * count, 0 when the def has no sprite or it failed to load. */
+struct FeatureDef;
+int               Units_FeatureSpriteFrame(const struct FeatureDef *fd,
+                                           const uint32_t *palette, int frame,
+                                           const uint32_t **out_pixels,
+                                           int *out_w, int *out_h,
+                                           int *out_off_x, int *out_off_y);
 
 /* Backface culling toggle. On by default; off draws both sides of
  * every triangle (useful for diagnosing whether TAK's models use

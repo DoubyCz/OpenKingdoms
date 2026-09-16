@@ -3601,13 +3601,7 @@ static int      g_scratch_tricap = 0;
  * Sized at submit time to the current mesh's node_count. Reusable
  * across chunks within one Submit pass since all units in a chunk
  * share the same UnitDef and (for M3) identical piece state. */
-typedef struct NodeXform {
-    float rot[9];     /* 3x3, row-major: [r00 r01 r02 | r10 r11 r12 | r20 r21 r22] */
-    float trans[3];   /* world translation in model frame */
-    uint8_t hidden;   /* COB HIDE-PIECE flag — skip rendering when set */
-    uint8_t shadow_off;  /* COB DONT-SHADOW: piece casts no shadow */
-    uint8_t _pad[2];
-} NodeXform;
+typedef UnitNodeXform NodeXform;
 static NodeXform *g_scratch_node_xform = NULL;
 static int        g_scratch_node_cap   = 0;
 
@@ -12391,6 +12385,50 @@ void Units_Render(const struct GameWorld *world, TAK_Platform *plat) {
     render_projectiles(world, plat);
     render_projectile_effects(world, plat);
     render_construction_effects(world, plat);
+}
+
+/* ── Accessors for a second view (tak_unit.h) ────────────────────── */
+
+UnitMesh *Units_BakeObjectMesh(const char *object_name, int color_idx) {
+    if (!object_name || !object_name[0]) return NULL;
+    if (color_idx < 0 || color_idx > 11) color_idx = 0;
+    char obj_lc[TAK_UNITDEF_OBJ_MAX];
+    lowercase_into(obj_lc, sizeof(obj_lc), object_name);
+    char path[TAK_UNITDEF_OBJ_MAX + 16];
+    snprintf(path, sizeof(path), "objects3d/%s.3do", obj_lc);
+    Obj3DFile *obj = NULL;
+    if (Obj3D_Load(&obj, path) != 0 || !obj) return NULL;
+    GameWorld *world = World_Get();
+    UnitMesh *m = Mesh_Bake(obj, world ? world->terrain_rgba : NULL, color_idx);
+    Obj3D_Close(obj);
+    return m;
+}
+
+void Units_FreeBakedMesh(UnitMesh *m) {
+    Mesh_Free(m);
+}
+
+void Units_ComposeNodeXforms(const UnitMesh *m, const CobPiece *pieces,
+                             UnitNodeXform *out, int hide_alt_pieces) {
+    if (!m || !out) return;
+    compose_node_xforms_ex(m, pieces, out, hide_alt_pieces);
+}
+
+int Units_FeatureSpriteFrame(const struct FeatureDef *fd,
+                             const uint32_t *palette, int frame,
+                             const uint32_t **out_pixels,
+                             int *out_w, int *out_h,
+                             int *out_off_x, int *out_off_y) {
+    if (!fd || !palette) return 0;
+    FeatureSprite *fs = load_feature_sprite(fd->filename, fd->seqname, palette);
+    if (!fs || fs->num_frames <= 0) return 0;
+    if (frame < 0 || frame >= fs->num_frames) frame = 0;
+    if (out_pixels) *out_pixels = fs->frame_pixels[frame];
+    if (out_w)      *out_w = fs->frame_w[frame];
+    if (out_h)      *out_h = fs->frame_h[frame];
+    if (out_off_x)  *out_off_x = fs->frame_off_x[frame];
+    if (out_off_y)  *out_off_y = fs->frame_off_y[frame];
+    return fs->num_frames;
 }
 
 int Units_DebugRemove(int handle) {

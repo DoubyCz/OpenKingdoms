@@ -39,6 +39,8 @@
 #include "tak_gui.h"
 #include "tak_blit.h"
 #include "tak_perf_probe.h"
+#include "tak_view.h"
+#include "tak_view3d.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,7 +74,69 @@ static struct {
     Font *banner_font;
     char  banner_victory[32];
     char  banner_defeat[32];
+    /* The view that draws the world and maps the pointer: the classic
+     * renderer, or the 3D view while it is toggled on. */
+    const TAK_View *view;
+    uint8_t view3d;
+    /* When the notice shown on entering the 3D view expires,
+     * in SDL ticks. Wall time, so the frame rate cannot change
+     * how long it is readable. */
+    uint32_t view3d_notice_until;
+    TAK_Platform *platform;
 } ig;
+
+/* A battle asked to open in the 3D view (the --view3d flag). */
+static int g_request_view3d;
+
+static const TAK_View *ig_view(void) {
+    if (!ig.view) ig.view = View_Classic();
+    return ig.view;
+}
+
+/* Long enough to read twice, in milliseconds. */
+#define IG_VIEW3D_NOTICE_MS 6000u
+
+/* What the play area says while the notice stands. */
+static const char *g_view3d_notice_text;
+static const char k_view3d_entered[] =
+    "3D view, experimental. Press V for the classic view.";
+static const char k_view3d_refused[] =
+    "The 3D view needs OpenGL, which this machine could not provide.";
+
+/* Switch views in place. The world, the selection and every order in
+ * flight are untouched: only what draws it and what the pointer maps
+ * through change. Returns 1 when the view asked for is the one up. */
+int InGame_SetView3D(int on) {
+    GameWorld *world = World_Get();
+    on = on ? 1 : 0;
+    if (on == ig.view3d) return 1;
+    if (on) {
+        const TAK_View *v3 = View_3D();
+        if (!View3D_IsReady() && v3->init(ig.platform) != 0) {
+            g_view3d_notice_text = k_view3d_refused;
+            ig.view3d_notice_until =
+                SDL_GetTicks() + IG_VIEW3D_NOTICE_MS;
+            return 0;
+        }
+        View3D_EnterFrom(world);
+        ig.view = v3;
+        ig.view3d = 1;
+        g_view3d_notice_text = k_view3d_entered;
+        ig.view3d_notice_until = SDL_GetTicks() + IG_VIEW3D_NOTICE_MS;
+    } else {
+        View3D_LeaveTo(world);
+        ig.view = View_Classic();
+        ig.view3d = 0;
+        g_view3d_notice_text = NULL;
+        ig.view3d_notice_until = 0;
+    }
+    fprintf(stderr, "View: %s\n", ig.view->name);
+    return 1;
+}
+
+int InGame_IsView3D(void) { return ig.view3d; }
+
+void InGame_RequestView3D(int on) { g_request_view3d = on ? 1 : 0; }
 
 /* Order-ack voice: legacy Unit_PlayOrderAck (legacy:221247-221281)
  * plays a sound class action on every player-issued order: attack,
@@ -420,8 +484,9 @@ void InGame_DebugRunSimTicks(int ticks) {
 }
 
 int InGame_Init(TAK_Platform *platform) {
-    (void)platform;
     memset(&ig, 0, sizeof(ig));
+    ig.platform = platform;
+    ig.view = View_Classic();
     Ambient_Reset();
     /* Visual Options: Show Damage (legacy:157728), off until set. */
     Units_SetHealthBarsOn(Settings_GetInt("DisplayDamageBars", 0));
@@ -523,6 +588,7 @@ int InGame_Init(TAK_Platform *platform) {
     }
 
     ig.initialized = 1;
+    if (g_request_view3d) (void)InGame_SetView3D(1);
     return 0;
 }
 
@@ -568,6 +634,17 @@ static void InGame_DrawSkirmishBanner(const GameWorld *world) {
     Font_DrawString(ig.banner_font, off,
                     play.x + (play.w - tw) / 2,
                     play.y + (play.h - (bottom - top)) / 2 - top, text);
+}
+
+/* The 3D view is not finished, so it says so on the way in and says
+ * which key brings the classic view back. Six seconds, then it goes. */
+static void InGame_DrawView3DNotice(TAK_Platform *platform) {
+    if (!ig.view3d_notice_until || !g_view3d_notice_text) return;
+    if (SDL_GetTicks() >= ig.view3d_notice_until) {
+        ig.view3d_notice_until = 0;
+        return;
+    }
+    HUD_DrawMessageLine(platform, g_view3d_notice_text);
 }
 
 /* A released drag box: with Load armed and one transport selected, a
@@ -675,17 +752,10 @@ static void ig_scroll_dir(const Uint8 *keys, int *out_dx, int *out_dy) {
     *out_dy = dy;
 }
 
-/* Move the camera and keep it on the map. */
+/* Move the camera through the active view, which keeps it on the map. */
 static void ig_move_camera(GameWorld *world, int32_t dx, int32_t dy) {
     if (!world || (!dx && !dy)) return;
-    int32_t new_x = world->cam_x + dx;
-    int32_t new_y = world->cam_y + dy;
-    int32_t max_x = world->map_pixels_w - world->viewport_w;
-    int32_t max_y = world->map_pixels_h - world->viewport_h;
-    if (new_x < 0) new_x = 0; else if (new_x > max_x) new_x = max_x;
-    if (new_y < 0) new_y = 0; else if (new_y > max_y) new_y = max_y;
-    world->cam_x = new_x;
-    world->cam_y = new_y;
+    ig_view()->scroll(world, dx, dy);
 }
 
 /* The chat console's claim on one frame of keyboard. Enter opens the
@@ -946,6 +1016,12 @@ static void ig_battle_keys(int has_focus, const GameWorld *world,
      * bindings live in ingame_keys.c so a test can press them. */
     InGame_ApplySpeedKeys(keys, ig.prev_keys);
 
+    /* V switches between the classic view and the 3D view. The
+     * original binds nothing to V (keys.tdf LOWER_V is empty). */
+    if (has_focus && !ig_alt && IG_PRESSED(SDL_SCANCODE_V)) {
+        (void)InGame_SetView3D(!ig.view3d);
+    }
+
     /* Toggle per-unit health bars on/off (keys.tdf SYMBOL_60 and
      * SYMBOL_7E, ToggleDamageBars, and manual section IV.2). */
     if (IG_PRESSED(SDL_SCANCODE_GRAVE)) {
@@ -1109,9 +1185,7 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
     SDL_Rect world_clip;
     int have_clip = HUD_GetViewportRect(platform, &world_clip);
     if (have_clip) SDL_RenderSetClipRect(platform->renderer, &world_clip);
-    Terrain_Render(world, platform);
-    Fog_RenderOverlay(world, platform);
-    Units_Render(world, platform);
+    ig_view()->render(world, platform, have_clip ? &world_clip : NULL);
     if (have_clip) SDL_RenderSetClipRect(platform->renderer, NULL);
 
     HUD_Draw(platform, world);
@@ -1120,6 +1194,7 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
     /* The speed change line, over the play area, for as long as the
      * message option keeps it (legacy:131758-131789). */
     HUD_DrawMessageLine(platform, GameSpeed_Message());
+    InGame_DrawView3DNotice(platform);
     InGame_DrawSkirmishBanner(world);
 
     /* Chat. The block sits in the top left of the whole screen and the
@@ -1163,13 +1238,15 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
     {
         int mx = 0, my = 0;
         if (platform->has_focus) SDL_GetMouseState(&mx, &my);
+        int32_t hover_x = 0, hover_y = 0;
         int over_world = platform->has_focus &&
-                         !HUD_HitTest(mx, my, platform);
+                         !HUD_HitTest(mx, my, platform) &&
+                         ig_view()->pointer_to_world(world, platform, mx, my,
+                                                     &hover_x, &hover_y);
         int drew_cursor = 0;
         if (over_world && HUD_GetCommandMode() != 0) {
             int mode = HUD_GetCommandMode();
-            int cid = InGame_CommandCursorAt(mode, world->cam_x + mx,
-                                             world->cam_y + my);
+            int cid = InGame_CommandCursorAt(mode, hover_x, hover_y);
             if (cid != mode)
                 drew_cursor = HUD_DrawCursorById(platform, cid, mx, my);
             if (!drew_cursor) {
@@ -1177,8 +1254,7 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
                 drew_cursor = 1;
             }
         } else if (over_world) {
-            int cur_id = InGame_HoverCursorAt(world->cam_x + mx,
-                                              world->cam_y + my);
+            int cur_id = InGame_HoverCursorAt(hover_x, hover_y);
             drew_cursor = HUD_DrawCursorById(platform, cur_id, mx, my);
         }
         SDL_ShowCursor(drew_cursor ? SDL_DISABLE : SDL_ENABLE);
@@ -1230,6 +1306,14 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
         }
     }
 
+    /* The free camera's own controls, only while the 3D view is up. */
+    if (ig.view3d && platform->has_focus && !console_keys) {
+        View3D_Input(world, platform, keys, ig.prev_keys,
+                     (float)Timer_GetFrameDT(timer), wx, wy,
+                     (buttons & SDL_BUTTON(SDL_BUTTON_MIDDLE)) != 0,
+                     platform->wheel_dy);
+    }
+
     /* Edge-detect mouse buttons so click handlers fire once per
      * press, not every frame the button is held. */
     int left_pressed  = (left  && !ig.prev_left);
@@ -1265,10 +1349,10 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
      *   - Otherwise: left-click on friendly = select, on enemy = attack,
      *     on terrain = move (legacy default-cursor behaviour).
      *   - Right-click: cancel command mode if active, else deselect. */
-    if (platform->has_focus && !dp_active && !HUD_HitTest(wx, wy, platform)) {
-        int32_t world_click_x = 0, world_click_y = 0;
-        ClickMap_WindowToWorld(world->cam_x, world->cam_y, wx, wy,
-                               &world_click_x, &world_click_y);
+    int32_t world_click_x = 0, world_click_y = 0;
+    if (platform->has_focus && !dp_active && !HUD_HitTest(wx, wy, platform) &&
+        ig_view()->pointer_to_world(world, platform, wx, wy,
+                                    &world_click_x, &world_click_y)) {
 
         /* Press arms drag-tracking; movement past a 4px threshold
          * upgrades it to a marquee; release resolves to either a
@@ -1362,6 +1446,9 @@ int InGame_Tick(TAK_Platform *platform, Timer *timer) {
 
 void InGame_Shutdown(void) {
     Ambient_Reset();
+    /* The 3D view's GPU resources go while the renderer is still up. */
+    if (View3D_IsReady()) View_3D()->shutdown(ig.platform);
+    g_request_view3d = 0;
     /* Nothing transient yet. GameWorld teardown is main.c's responsibility
      * via World_End() — that outlives this screen and Phase D's pause
      * menu will want to re-enter InGame without rebuilding the world. */

@@ -28,6 +28,15 @@ TAK_DisplayConfig TAK_DisplayConfig_Default(void) {
      * 720px height). Pass --pixel-perfect to opt in. */
     c.pixel_perfect   = 0;
     c.use_sw_renderer = 0;
+    /* The 3D view needs the GL driver and only GL ES 2.0 level of it,
+     * so GL is the default on Windows and Linux and V works without a
+     * flag. macOS keeps SDL's pick, Metal, because GL is deprecated
+     * there. --renderer overrides either way. */
+#if defined(__EMSCRIPTEN__) || defined(__APPLE__)
+    c.renderer_name   = NULL;
+#else
+    c.renderer_name   = "opengl";
+#endif
     return c;
 }
 
@@ -79,12 +88,32 @@ int TAK_Platform_Init(TAK_Platform *plat, const TAK_DisplayConfig *cfg) {
 
     Uint32 win_flags = SDL_WINDOW_RESIZABLE;
     if (cfg->fullscreen) win_flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    /* The GL render driver shares its context with the 3D view, which
+     * needs a depth buffer on the window. SDL would recreate the window
+     * for the driver anyway, so ask for it up front. */
+    const char *driver = cfg->use_sw_renderer ? NULL : cfg->renderer_name;
+    if (driver && strncmp(driver, "opengl", 6) == 0) {
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+        win_flags |= SDL_WINDOW_OPENGL;
+    }
 
     plat->window = SDL_CreateWindow("Total Annihilation: Kingdoms",
                                      SDL_WINDOWPOS_CENTERED,
                                      SDL_WINDOWPOS_CENTERED,
                                      cfg->window_w, cfg->window_h,
                                      win_flags);
+    if (!plat->window && (win_flags & SDL_WINDOW_OPENGL)) {
+        /* No GL here. The game still runs, without the 3D view. */
+        fprintf(stderr, "No OpenGL window (%s), starting without the 3D view\n",
+                SDL_GetError());
+        driver = NULL;
+        win_flags &= ~(Uint32)SDL_WINDOW_OPENGL;
+        plat->window = SDL_CreateWindow("Total Annihilation: Kingdoms",
+                                         SDL_WINDOWPOS_CENTERED,
+                                         SDL_WINDOWPOS_CENTERED,
+                                         cfg->window_w, cfg->window_h,
+                                         win_flags);
+    }
     if (!plat->window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
@@ -96,7 +125,21 @@ int TAK_Platform_Init(TAK_Platform *plat, const TAK_DisplayConfig *cfg) {
         : SDL_RENDERER_ACCELERATED;
     if (cfg->vsync) rend_flags |= SDL_RENDERER_PRESENTVSYNC;
 
+    /* Naming a driver turns SDL's draw batching off unless it is asked
+     * for by name too. The 3D view flushes the queue before its own
+     * drawing, so batching stays on. */
+    if (driver) {
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, driver);
+        SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1");
+    }
     plat->renderer = SDL_CreateRenderer(plat->window, -1, rend_flags);
+    if (!plat->renderer && driver) {
+        /* No such driver here: let SDL choose, without the 3D view. */
+        fprintf(stderr, "Renderer %s unavailable (%s), falling back\n",
+                driver, SDL_GetError());
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "");
+        plat->renderer = SDL_CreateRenderer(plat->window, -1, rend_flags);
+    }
     if (!plat->renderer) {
         /* Retry without vsync, then without hardware, before giving up. */
         rend_flags &= ~SDL_RENDERER_PRESENTVSYNC;
@@ -195,6 +238,7 @@ int TAK_Platform_PumpEvents(TAK_Platform *plat) {
     plat->pressed_escape = 0;
     plat->pressed_backspace = 0;
     plat->pressed_mouse_left = 0;
+    plat->wheel_dy = 0;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
@@ -229,6 +273,11 @@ int TAK_Platform_PumpEvents(TAK_Platform *plat) {
             case SDL_SCANCODE_BACKSPACE: plat->pressed_backspace = 1; break;
             default: break;
             }
+            break;
+
+        case SDL_MOUSEWHEEL:
+            plat->wheel_dy += ev.wheel.direction == SDL_MOUSEWHEEL_FLIPPED
+                            ? -ev.wheel.y : ev.wheel.y;
             break;
 
         case SDL_MOUSEBUTTONDOWN:

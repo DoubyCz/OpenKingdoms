@@ -601,12 +601,20 @@ void PerfProbe_BeginMeasureOnly(const char *label, int ticks) {
     pp_window_reset();
 }
 
+static int pp_revealed;
+
+void PerfProbe_SetRevealed(int on) { pp_revealed = on ? 1 : 0; }
+
 int PerfProbe_BeginWorld(TAK_Platform *plat) {
     if (pp.kind != PP_FFA && pp.kind != PP_CROWD &&
         pp.kind != PP_BUILD8 && pp.kind != PP_BUILD1) return -1;
     BattleConfig cfg;
     BattleConfig_SetDefaults(&cfg);
     cfg.monarch_expendable = 1;
+    if (pp_revealed) {
+        cfg.map_revealed = 1;
+        cfg.line_of_sight = 0;
+    }
     const char *map, *kingdom;
     if (pp.kind == PP_FFA) {
         /* The largest map with four starts. Four AI seats, no human. */
