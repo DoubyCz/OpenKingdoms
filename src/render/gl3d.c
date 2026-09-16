@@ -127,6 +127,13 @@ static struct {
     SDL_Renderer *renderer;
     Program     terrain, model, sprite;
     int         max_nodes;
+#ifdef __EMSCRIPTEN__
+    /* The scene draws inside this render target of SDL's. */
+    SDL_Texture *target;
+    int         target_w, target_h;
+    SDL_Rect    target_dst;
+    int         in_target;
+#endif
     float       viewproj[16], eye[3], light[3];
     GL3D_Texture *fog;
     float       map_w, map_h;
@@ -204,7 +211,16 @@ static const char *k_model_vs_fmt =
     "varying vec2 v_uv; varying vec4 v_col; varying float v_light; varying float v_dist;\n"
     "void main() {\n"
     "  int n = (int(a_node) - int(u_nodebase)) * 3;\n"
+#ifdef __EMSCRIPTEN__
+    /* ES 1.00 guarantees a uniform array index only as a constant or
+     * a loop counter, so the row is found by walking. */
+    "  vec4 r0 = u_nodes[0]; vec4 r1 = u_nodes[1]; vec4 r2 = u_nodes[2];\n"
+    "  for (int i = 0; i < %d; i += 3) {\n"
+    "    if (i == n) { r0 = u_nodes[i]; r1 = u_nodes[i + 1]; r2 = u_nodes[i + 2]; }\n"
+    "  }\n"
+#else
     "  vec4 r0 = u_nodes[n]; vec4 r1 = u_nodes[n + 1]; vec4 r2 = u_nodes[n + 2];\n"
+#endif
     "  vec3 p = vec3(dot(r0.xyz, a_pos) + r0.w, dot(r1.xyz, a_pos) + r1.w, dot(r2.xyz, a_pos) + r2.w);\n"
     "  vec3 nn = vec3(dot(r0.xyz, a_nrm), dot(r1.xyz, a_nrm), dot(r2.xyz, a_nrm));\n"
     "  vec4 wp = u_model * vec4(p, 1.0);\n"
@@ -359,9 +375,13 @@ int GL3D_Init(SDL_Window *window, SDL_Renderer *renderer) {
     if (nodes < 8) nodes = 8;
     g.max_nodes = nodes;
 
-    char *model_vs = (char *)tak_malloc(strlen(k_model_vs_fmt) + 32);
+    char *model_vs = (char *)tak_malloc(strlen(k_model_vs_fmt) + 64);
     if (!model_vs) return -1;
+#ifdef __EMSCRIPTEN__
+    sprintf(model_vs, k_model_vs_fmt, nodes * 3, nodes * 3);
+#else
     sprintf(model_vs, k_model_vs_fmt, nodes * 3);
+#endif
     int rc = build_program(&g.terrain, k_terrain_vs, k_terrain_fs);
     if (rc == 0) rc = build_program(&g.model, model_vs, k_model_fs);
     if (rc == 0) rc = build_program(&g.sprite, k_sprite_vs, k_sprite_fs);
@@ -504,8 +524,36 @@ void GL3D_BeginFrame(SDL_Renderer *renderer, int win_w, int win_h,
     int x1 = (r.x + r.w) * dw / win_w;
     int y0 = r.y * dh / win_h;
     int y1 = (r.y + r.h) * dh / win_h;
+#ifdef __EMSCRIPTEN__
+    {
+        int tw = x1 - x0, th = y1 - y0;
+        if (tw < 1) tw = 1;
+        if (th < 1) th = 1;
+        if (!g.target || g.target_w != tw || g.target_h != th) {
+            if (g.target) SDL_DestroyTexture(g.target);
+            g.target = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+                                         SDL_TEXTUREACCESS_TARGET, tw, th);
+            g.target_w = tw;
+            g.target_h = th;
+        }
+        g.target_dst = r;
+        g.in_target = 0;
+        /* SDL binds its own framebuffer for the target and flushes,
+         * so the GL draws that follow land in the texture. */
+        if (g.target && SDL_SetRenderTarget(renderer, g.target) == 0) {
+            SDL_RenderFlush(renderer);
+            g.in_target = 1;
+            GLF(Viewport)(0, 0, tw, th);
+            GLF(Scissor)(0, 0, tw, th);
+        } else {
+            GLF(Viewport)(x0, dh - y1, x1 - x0, y1 - y0);
+            GLF(Scissor)(x0, dh - y1, x1 - x0, y1 - y0);
+        }
+    }
+#else
     GLF(Viewport)(x0, dh - y1, x1 - x0, y1 - y0);
     GLF(Scissor)(x0, dh - y1, x1 - x0, y1 - y0);
+#endif
     GLF(Enable)(GL_SCISSOR_TEST);
 
     GLF(ColorMask)(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -527,6 +575,16 @@ void GL3D_EndFrame(void) {
     if (!g.ready || !g.frame_open) return;
     restore_state();
     g.frame_open = 0;
+#ifdef __EMSCRIPTEN__
+    if (g.in_target) {
+        SDL_SetRenderTarget(g.renderer, NULL);
+        g.in_target = 0;
+        /* Rows run top down in the texture and the scene was drawn
+         * bottom up, hence the flip. */
+        SDL_RenderCopyEx(g.renderer, g.target, NULL, &g.target_dst, 0.0, NULL,
+                         SDL_FLIP_VERTICAL);
+    }
+#endif
 }
 
 void GL3D_SetCamera(const float viewproj[16], const float eye[3],
