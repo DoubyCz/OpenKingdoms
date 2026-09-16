@@ -96,6 +96,13 @@ static const TAK_View *ig_view(void) {
 /* Long enough to read twice, in milliseconds. */
 #define IG_VIEW3D_NOTICE_MS 6000u
 
+/* What the play area says while the notice stands. */
+static const char *g_view3d_notice_text;
+static const char k_view3d_entered[] =
+    "3D view, experimental. Press V for the classic view.";
+static const char k_view3d_refused[] =
+    "The 3D view needs the OpenGL renderer. Start with --renderer opengl.";
+
 /* Switch views in place. The world, the selection and every order in
  * flight are untouched: only what draws it and what the pointer maps
  * through change. Returns 1 when the view asked for is the one up. */
@@ -105,15 +112,22 @@ int InGame_SetView3D(int on) {
     if (on == ig.view3d) return 1;
     if (on) {
         const TAK_View *v3 = View_3D();
-        if (!View3D_IsReady() && v3->init(ig.platform) != 0) return 0;
+        if (!View3D_IsReady() && v3->init(ig.platform) != 0) {
+            g_view3d_notice_text = k_view3d_refused;
+            ig.view3d_notice_until =
+                SDL_GetTicks() + IG_VIEW3D_NOTICE_MS;
+            return 0;
+        }
         View3D_EnterFrom(world);
         ig.view = v3;
         ig.view3d = 1;
+        g_view3d_notice_text = k_view3d_entered;
         ig.view3d_notice_until = SDL_GetTicks() + IG_VIEW3D_NOTICE_MS;
     } else {
         View3D_LeaveTo(world);
         ig.view = View_Classic();
         ig.view3d = 0;
+        g_view3d_notice_text = NULL;
         ig.view3d_notice_until = 0;
     }
     fprintf(stderr, "View: %s\n", ig.view->name);
@@ -625,15 +639,12 @@ static void InGame_DrawSkirmishBanner(const GameWorld *world) {
 /* The 3D view is not finished, so it says so on the way in and says
  * which key brings the classic view back. Six seconds, then it goes. */
 static void InGame_DrawView3DNotice(TAK_Platform *platform) {
-    if (!ig.view3d || !ig.view3d_notice_until) return;
+    if (!ig.view3d_notice_until || !g_view3d_notice_text) return;
     if (SDL_GetTicks() >= ig.view3d_notice_until) {
         ig.view3d_notice_until = 0;
         return;
     }
-    /* Through the renderer, like the speed line: the 3D world is drawn
-     * by GL over the offscreen surface, so text put there is lost. */
-    HUD_DrawMessageLine(platform,
-                        "3D view, experimental. Press V for the classic view.");
+    HUD_DrawMessageLine(platform, g_view3d_notice_text);
 }
 
 /* A released drag box: with Load armed and one transport selected, a

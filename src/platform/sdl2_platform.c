@@ -28,11 +28,10 @@ TAK_DisplayConfig TAK_DisplayConfig_Default(void) {
      * 720px height). Pass --pixel-perfect to opt in. */
     c.pixel_perfect   = 0;
     c.use_sw_renderer = 0;
-#ifdef __EMSCRIPTEN__
+    /* NULL leaves SDL its own pick: Direct3D on Windows, Metal on
+     * macOS, GL on Linux. The 3D view needs "opengl" and asks for it
+     * through the Renderer setting or --renderer. */
     c.renderer_name   = NULL;
-#else
-    c.renderer_name   = "opengl";
-#endif
     return c;
 }
 
@@ -98,6 +97,18 @@ int TAK_Platform_Init(TAK_Platform *plat, const TAK_DisplayConfig *cfg) {
                                      SDL_WINDOWPOS_CENTERED,
                                      cfg->window_w, cfg->window_h,
                                      win_flags);
+    if (!plat->window && (win_flags & SDL_WINDOW_OPENGL)) {
+        /* No GL here. The game still runs, without the 3D view. */
+        fprintf(stderr, "No OpenGL window (%s), starting without the 3D view\n",
+                SDL_GetError());
+        driver = NULL;
+        win_flags &= ~(Uint32)SDL_WINDOW_OPENGL;
+        plat->window = SDL_CreateWindow("Total Annihilation: Kingdoms",
+                                         SDL_WINDOWPOS_CENTERED,
+                                         SDL_WINDOWPOS_CENTERED,
+                                         cfg->window_w, cfg->window_h,
+                                         win_flags);
+    }
     if (!plat->window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
