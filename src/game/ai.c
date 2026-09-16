@@ -270,6 +270,8 @@ static int ai_find_clear_site(int build_def, int32_t cx, int32_t cy,
     return 0;
 }
 
+static int ai_trace(void);
+
 static int ai_try_start_build_def(int actor_idx, int build_def) {
     const Unit *units = Units_GetActive(NULL);
     if (!units) return 0;
