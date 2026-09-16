@@ -133,6 +133,9 @@ static struct {
     int         target_w, target_h;
     SDL_Rect    target_dst;
     int         in_target;
+    /* SDL gives the target a colour attachment only. */
+    GLuint      depth_rb;
+    int         depth_w, depth_h;
 #endif
     float       viewproj[16], eye[3], light[3];
     GL3D_Texture *fog;
@@ -403,6 +406,10 @@ void GL3D_Shutdown(void) {
     if (g.sprite.id)  GLF(DeleteProgram)(g.sprite.id);
     if (g.stream_vbo) GLF(DeleteBuffers)(1, &g.stream_vbo);
     if (g.stream_ibo) GLF(DeleteBuffers)(1, &g.stream_ibo);
+#ifdef __EMSCRIPTEN__
+    if (g.depth_rb) glDeleteRenderbuffers(1, &g.depth_rb);
+    if (g.target) SDL_DestroyTexture(g.target);
+#endif
     memset(&g, 0, sizeof(g));
 }
 
@@ -505,6 +512,34 @@ static void restore_state(void) {
     (void)GLF(GetError)();
 }
 
+#ifdef __EMSCRIPTEN__
+/* The framebuffer SDL binds for its target texture has no depth
+ * attachment, so one of ours is attached each frame. Without it
+ * nothing in the scene is depth tested. */
+static void attach_depth(int w, int h) {
+    GLint fbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+    if (fbo == 0) return;
+    if (g.depth_rb && (g.depth_w != w || g.depth_h != h)) {
+        glDeleteRenderbuffers(1, &g.depth_rb);
+        g.depth_rb = 0;
+    }
+    if (!g.depth_rb) {
+        glGenRenderbuffers(1, &g.depth_rb);
+        glBindRenderbuffer(GL_RENDERBUFFER, g.depth_rb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, w, h);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        g.depth_w = w;
+        g.depth_h = h;
+    }
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
+                              g.depth_rb);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+    }
+}
+#endif
+
 void GL3D_BeginFrame(SDL_Renderer *renderer, int win_w, int win_h,
                      const SDL_Rect *viewport, const float sky[3]) {
     if (!g.ready || g.frame_open) return;
@@ -531,6 +566,7 @@ void GL3D_BeginFrame(SDL_Renderer *renderer, int win_w, int win_h,
         if (th < 1) th = 1;
         if (!g.target || g.target_w != tw || g.target_h != th) {
             if (g.target) SDL_DestroyTexture(g.target);
+            if (g.depth_rb) { glDeleteRenderbuffers(1, &g.depth_rb); g.depth_rb = 0; }
             g.target = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
                                          SDL_TEXTUREACCESS_TARGET, tw, th);
             g.target_w = tw;
@@ -543,6 +579,7 @@ void GL3D_BeginFrame(SDL_Renderer *renderer, int win_w, int win_h,
         if (g.target && SDL_SetRenderTarget(renderer, g.target) == 0) {
             SDL_RenderFlush(renderer);
             g.in_target = 1;
+            attach_depth(tw, th);
             GLF(Viewport)(0, 0, tw, th);
             GLF(Scissor)(0, 0, tw, th);
         } else {

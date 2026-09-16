@@ -32,14 +32,34 @@ three hundred units across the map. A still monarch on still ground is
 a still frame. On the crowd probe, the browser's 3D frames differ by
 thousands of pixels with eleven units in view.
 
+The moving scene was the wrong colour: brown ground, coloured units
+and grey trees all came out one flat blue grey. The decoded chunk
+bytes were printed from both loaders and matched, brown and in RGB
+order, and the classic view of the same spot in the same tab was
+brown. A terrain shader made to output its raw sample was still blue
+grey, and every chunk uploaded as solid red came out (146, 64, 94):
+red under a translucent blue. That is the water plane, a quad across
+the whole map that the depth test is meant to hide wherever the ground
+stands above sea level. SDL's framebuffer for a target texture has a
+colour attachment and nothing else, so in the browser nothing in the
+scene was depth tested and the water covered the play area, units and
+all. The desktop draws to the window, which has a depth buffer.
+
 ## What the engine does now
 
 In a browser tab the renderer is created able to take a render target.
 The 3D view draws inside a target texture that SDL owns, the size of
 the play rect, and SDL composites it where the play rect is, the same
-way it composites the HUD canvas. The context is asked for a 24 bit
-depth buffer, and the model shader finds a piece's row by walking the
-uniform array, since ES 1.00 only promises a constant or loop index.
+way it composites the HUD canvas. Each frame a depth renderbuffer of
+the target's size is attached to the framebuffer SDL bound, and
+detached again if the framebuffer then reports incomplete. The context
+is asked for a 24 bit depth buffer, and the model shader finds a
+piece's row by walking the uniform array, since ES 1.00 only promises
+a constant or loop index.
+
+Measured after the change: sand reads (79, 71, 50) in the browser
+against (85, 74, 52) on the desktop, ponds read water blue, and frames
+five seconds apart differ by eight thousand play area pixels.
 
 The desktop is unchanged: it draws to the window as before, and the
 3D suite's byte identical classic frame gate holds.
