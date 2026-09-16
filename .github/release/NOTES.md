@@ -2,6 +2,52 @@ OpenKingdoms VERSION_HERE, an engine for Total Annihilation: Kingdoms.
 
 Play in a browser at [openkingdoms.net](https://openkingdoms.net), or download below and play on the desktop.
 
+## Changed in 0.1.3
+
+Every build can now play every other build. Until this release a Windows
+player, a Mac player, a Linux player and a browser player were each kept
+in a separate room, because each platform's maths library rounded a sine
+its own way and the difference pulled two machines apart over a match.
+The simulation carries its own trigonometry now, identical on every
+platform by construction, and a test plays out a battle and compares the
+result across all four so it stays that way.
+
+Story mode is a campaign rather than a mission launcher. The Book of
+Deeds lists the campaigns it finds, so the Iron Plague is reachable for
+the first time, chapters carry their written titles and artwork, and
+finishing a mission returns you to the book with the next chapter open.
+
+Campaign missions can be won. Victory and defeat conditions were treated
+as one list that all had to hold at once, and losing your whole army was
+in it, so twenty nine of the shipped missions could not be completed at
+all. They are two lists now, as the original has them, and defeat fires
+properly. Twenty three further missions are won by their mission script,
+which is the next piece of work.
+
+Computer players build armies. A seat refused to start anything while
+any of its units was under construction, and refused a second production
+building while it owned one, so the first castle it began was often the
+last thing it built. Its army target also stopped growing under fog. In a
+measured match a computer player went from twelve units built to forty
+two.
+
+Shells land where they should. A lobbed shot left the middle of the unit
+rather than the barrel, and detonated when it reached its target rather
+than when it met the ground, so a cannoneer on a hill would shoot
+through a ridge.
+
+An order now lands where you clicked. The ground draws lifted by half
+its height and units draw the same way, but an order carried the flat
+reading of the pointer, so a unit walked to a spot up to 45 pixels above
+the click and missed further the higher the ground. Walking up the
+screen it overshot and walking down it stopped short. Selection boxes
+had the same fault and could miss a unit they were drawn over. This was
+never right on any platform rather than something that broke recently.
+
+With Line of Sight off, ground you have explored stays explored and
+ground you have not is black, which is what the original does. The
+option grants sight. It never revealed the map.
+
 ## Changed in 0.1.2
 
 Windows, macOS, Linux and browser players share rooms. Before this each
