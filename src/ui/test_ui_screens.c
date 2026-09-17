@@ -2800,6 +2800,8 @@ TEST(a_taros_computer_players_ranged_units_fire) {
            ranged_built, ranged_targeting, ranged_fired, dungeons, fire_demons);
 
     InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
     UI_Shutdown();
     teardown_platform(&platform);
     VFS_Shutdown();
@@ -2903,6 +2905,8 @@ TEST(every_guided_weapon_unit_fires_at_an_enemy_in_range) {
     printf("[%d guided shooters, %d silent] ", tried, silent);
 
     InGame_Shutdown();
+    Loading_Shutdown();
+    World_End(&platform);
     UI_Shutdown();
     teardown_platform(&platform);
     VFS_Shutdown();
