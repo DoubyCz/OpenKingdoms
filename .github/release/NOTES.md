@@ -8,11 +8,32 @@ There is a 3D view. Press V in any battle and the same world is drawn
 in 3D under a camera you can orbit, tilt and zoom, with the terrain
 built from the map's own heights and textures, water at the water line,
 and every unit and building as its own model moving as the classic view
-moves it. Press V again and the classic view is back with nothing lost.
-It is experimental and it says so when it opens. Shots, explosions and
-spell effects are not drawn in it yet. Nothing in the simulation changed
-for this, and a player in the 3D view can play a match against a player
-in the classic one.
+moves it. Shots in flight, the bursts where they land, beams and spell
+effects are drawn in it too. Press V again and the classic view is back
+with nothing lost. It is experimental and it says so when it opens.
+Nothing in the simulation changed for this, and a player in the 3D view
+can play a match against a player in the classic one.
+
+The 3D view works in a browser tab. Only its first frame ever reached
+the screen there, and once frames moved the whole play area was washed
+blue, because the scene was drawn with no depth buffer and the water
+plane covered everything. Building works in it as well: the placement
+ghost stands where the pointer is, so a lodestone can be put down.
+
+Spells look like themselves. A dragon's breath and every other flame
+came out as a lightning bolt, and the great area spells, Elsin's
+Earthen Wave among them, came out as a disc flying at the target. Each
+is drawn from its own weapon data now, the way the original draws it.
+Flames stream from the muzzle. Earthen Wave, Earthquake, Ring of Fire,
+Fire Wave, Tsunami, Water Blast, Wind Wave, Shockring, Death Aura and
+Area Mind Control spread their rings in their own colours. Hail Shower,
+Fire Storm and Ice Storm rain over their area and burst where they
+land. This holds in both views.
+
+Computer players move on to their next factory. A seat priced only the
+first production building on its list, so once it had built as many of
+those as its profile allowed it never built another kind. Taros never
+reached the Dungeon, which is why its fire demons were never seen.
 
 Scrollbars scroll by their arrows. Every scrollbar in the game moved by
 dragging its ball and not by the arrows at its ends, because the arrows
