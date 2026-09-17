@@ -72,8 +72,9 @@ play a match against a player in the classic one.
   Home             back to the classic angle over the same spot
   WASD, arrows, screen edges   scroll, as always
 
-Units, buildings, terrain, water, trees and the fog are drawn. Shots,
-explosions, spell effects, shadows and health bars are not yet. If V
+Units, buildings, terrain, water, trees and the fog are drawn, and so
+are shots, explosions, beams and spell effects. Shadows and health
+bars are not yet. If V
 does nothing, the game says why over the play area: the 3D view needs
 OpenGL and this machine could not provide it.
 
