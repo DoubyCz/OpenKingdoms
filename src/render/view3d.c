@@ -729,7 +729,7 @@ static void draw_effects(const GameWorld *world, const float planes[6][4]) {
     int nb = 0;
     for (int i = 0; i < pn; i++) {
         const Projectile *p = &ps[i];
-        if (!p->alive || p->is_beam) continue;
+        if (!p->alive || p->is_beam || p->hidden) continue;
         if (!Units_ProjectileVisible(world, p)) continue;
         float c[3] = { (float)p->world_x, p->height, (float)p->world_y };
         if (p->art_kind == UNIT_WEAPON_ART_MODEL && p->art_idx >= 0) {
@@ -754,6 +754,7 @@ static void draw_effects(const GameWorld *world, const float planes[6][4]) {
             continue;
         }
         /* No art of its own: the bright dot the classic view draws. */
+        if (p->visual_kind == UNIT_PROJECTILE_VIS_REMOTE) continue;
         if (!Camera3D_SphereInFrustum(planes, c, 8.0f)) continue;
         Billboard *b = &bb[nb++];
         b->tex = NULL; b->flat = 0; b->shade = 1.0f;
@@ -765,7 +766,7 @@ static void draw_effects(const GameWorld *world, const float planes[6][4]) {
     }
     for (int i = 0; i < en; i++) {
         const ProjectileEffect *e = &es[i];
-        if (!e->alive) continue;
+        if (!e->alive || e->delay_ticks) continue;
         if (!Fog_ShowsAt(world, e->world_x, e->world_y)) continue;
         EffectTex *et = effect_tex_for(e->sprite_idx);
         if (!et) continue;
@@ -808,7 +809,7 @@ static void draw_beams(const GameWorld *world) {
     int nv = 0, ni = 0;
     for (int i = 0; i < pn; i++) {
         const Projectile *p = &ps[i];
-        if (!p->alive || !p->is_beam) continue;
+        if (!p->alive || !p->is_beam || p->visual_kind == UNIT_PROJECTILE_VIS_FLAME) continue;
         if (!Units_ProjectileVisible(world, p)) continue;
         float ax = (float)p->src_x, az = (float)p->src_y;
         float ay = (float)p->src_height + 12.0f;

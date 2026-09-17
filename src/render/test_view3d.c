@@ -531,6 +531,150 @@ TEST(an_impact_effect_is_drawn_in_the_3d_view) {
     shutdown_all(&platform);
 }
 
+/* The first def whose weapon in some slot passes `want`; -1 if none. */
+static int find_weapon(int (*want)(const UnitWeapon *), int *out_slot) {
+    for (int i = 0; i < Units_GetDefCount(); i++) {
+        const UnitDef *d = Units_GetDef(i);
+        if (!d) continue;
+        for (int k = 0; k < d->num_weapons && k < 3; k++) {
+            if (want(&d->weapons[k])) { *out_slot = k; return i; }
+        }
+    }
+    return -1;
+}
+static int is_flame(const UnitWeapon *w) { return w->los_kind == 2; }
+static int is_rings(const UnitWeapon *w) { return w->remote_kind == 1; }
+static int is_rain(const UnitWeapon *w)  { return w->remote_kind == 2; }
+
+/* Spawns a def beside the monarch for the local player. */
+static int spawn_beside_monarch(int def, int32_t *out_x, int32_t *out_y) {
+    int n = 0;
+    const Unit *units = Units_GetActive(&n);
+    if (n <= 0) return -1;
+    *out_x = units[0].world_x + 96;
+    *out_y = units[0].world_y;
+    return Units_Spawn(def, units[0].player_id, units[0].team_color_idx, *out_x, *out_y);
+}
+
+static int count_effects(int sprite, int *out_delayed) {
+    int en = 0, c = 0;
+    const ProjectileEffect *es = Units_GetProjectileEffects(&en);
+    if (out_delayed) *out_delayed = 0;
+    for (int i = 0; i < en; i++) {
+        if (!es[i].alive || es[i].sprite_idx != sprite) continue;
+        c++;
+        if (out_delayed && es[i].delay_ticks) (*out_delayed)++;
+    }
+    return c;
+}
+
+/* A flame weapon sheds a particle a tick along its line and draws no ray. */
+TEST(a_flame_weapon_streams_particles_instead_of_a_ray) {
+    TAK_Platform platform;
+    GameWorld *world = NULL;
+    int rc = boot(&platform, &world);
+    if (rc == 1) return;
+    ASSERT_EQ_INT(0, rc);
+    int slot = 0;
+    int def = find_weapon(is_flame, &slot);
+    ASSERT(def >= 0);
+    int32_t x = 0, y = 0;
+    int h = spawn_beside_monarch(def, &x, &y);
+    ASSERT(h >= 0);
+    printf("(%s) ", Units_GetDef(def)->weapons[slot].name);
+    ASSERT_EQ_INT(1, Units_DebugFireGround(h, slot, x + 150, y));
+    InGame_DebugRunSimTicks(12);
+    int pn = 0, flame_beams = 0;
+    const Projectile *ps = Units_GetProjectiles(&pn);
+    for (int i = 0; i < pn; i++) {
+        if (ps[i].alive && ps[i].is_beam && ps[i].visual_kind == UNIT_PROJECTILE_VIS_FLAME) flame_beams++;
+    }
+    ASSERT_EQ_INT(1, flame_beams);
+    int sprite = Units_FindSpriteArt("flame");
+    ASSERT(sprite >= 0);
+    ASSERT(count_effects(sprite, NULL) >= 6);
+    shutdown_all(&platform);
+}
+
+/* A ring spell lays ringcount rings of spritecount radiusart sprites
+ * that travel outward, and its own shot goes unseen. */
+TEST(a_ring_spell_lays_its_rings_from_the_data) {
+    TAK_Platform platform;
+    GameWorld *world = NULL;
+    int rc = boot(&platform, &world);
+    if (rc == 1) return;
+    ASSERT_EQ_INT(0, rc);
+    int slot = 0;
+    int def = find_weapon(is_rings, &slot);
+    ASSERT(def >= 0);
+    const UnitWeapon *w = &Units_GetDef(def)->weapons[slot];
+    int32_t x = 0, y = 0;
+    int h = spawn_beside_monarch(def, &x, &y);
+    ASSERT(h >= 0);
+    printf("(%s) ", w->name);
+    int32_t cx = x + 60, cy = y;
+    ASSERT_EQ_INT(1, Units_DebugFireGround(h, slot, cx, cy));
+    int pn = 0, hidden = 0;
+    const Projectile *ps = Units_GetProjectiles(&pn);
+    for (int i = 0; i < pn; i++) if (ps[i].alive && ps[i].hidden) hidden++;
+    ASSERT_EQ_INT(1, hidden);
+    InGame_DebugRunSimTicks(w->buildup_ticks + (w->ring_count - 1) * w->ring_delay_ticks + 2);
+    int total = 0;
+    for (int k = 0; k < w->ring_count && k < 3; k++) {
+        ASSERT(w->radius_sprite[k] >= 0);
+        ASSERT_EQ_INT(w->radius_sprite[k], Units_FindSpriteArt(w->radius_art[k]));
+    }
+    int en = 0, outward = 0;
+    const ProjectileEffect *es = Units_GetProjectileEffects(&en);
+    for (int i = 0; i < en; i++) {
+        const ProjectileEffect *e = &es[i];
+        if (!e->alive) continue;
+        int ring = 0;
+        for (int k = 0; k < 3; k++) if (w->radius_sprite[k] >= 0 && e->sprite_idx == w->radius_sprite[k]) ring = 1;
+        if (!ring) continue;
+        total++;
+        long long away = (long long)(e->world_x - cx) * e->vx_fp + (long long)(e->world_y - cy) * e->vy_fp;
+        if (!e->delay_ticks && (e->vx_fp || e->vy_fp) && away >= 0) outward++;
+    }
+    printf("(%d rings of %d, %d moving outward) ", w->ring_count, w->sprite_count, outward);
+    ASSERT_EQ_INT(w->ring_count * w->sprite_count, total);
+    ASSERT(outward >= w->sprite_count);
+    shutdown_all(&platform);
+}
+
+/* A storm queues particlespersecond drops a second for its duration,
+ * each to burst with the weapon's explosionclass where it lands. */
+TEST(a_storm_rains_its_drops_from_the_data) {
+    TAK_Platform platform;
+    GameWorld *world = NULL;
+    int rc = boot(&platform, &world);
+    if (rc == 1) return;
+    ASSERT_EQ_INT(0, rc);
+    int slot = 0;
+    int def = find_weapon(is_rain, &slot);
+    ASSERT(def >= 0);
+    const UnitWeapon *w = &Units_GetDef(def)->weapons[slot];
+    int32_t x = 0, y = 0;
+    int h = spawn_beside_monarch(def, &x, &y);
+    ASSERT(h >= 0);
+    printf("(%s) ", w->name);
+    ASSERT_EQ_INT(1, Units_DebugFireGround(h, slot, x + 200, y));
+    InGame_DebugRunSimTicks(1);
+    ASSERT(w->rain_sprite >= 0);
+    ASSERT_EQ_INT(w->rain_sprite, Units_FindSpriteArt(w->weapon_art));
+    int delayed = 0;
+    int drops = count_effects(w->rain_sprite, &delayed);
+    printf("(%d drops, %d still to fall) ", drops, delayed);
+    ASSERT_EQ_INT(w->rain_per_second * w->rain_ticks / 60, drops);
+    int en = 0, bursting = 0;
+    const ProjectileEffect *es = Units_GetProjectileEffects(&en);
+    for (int i = 0; i < en; i++) {
+        if (es[i].alive && es[i].sprite_idx == w->rain_sprite && es[i].land_explosion == w->explosion_idx) bursting++;
+    }
+    ASSERT_EQ_INT(drops, bursting);
+    shutdown_all(&platform);
+}
+
 TEST(the_build_ghost_in_3d_is_judged_where_the_pointer_lands) {
     TAK_Platform platform;
     GameWorld *world = NULL;
@@ -600,5 +744,8 @@ int main(int argc, char **argv) {
     RUN_NAMED(the_build_ghost_in_3d_is_judged_where_the_pointer_lands);
     RUN_NAMED(a_projectile_in_flight_is_drawn_in_the_3d_view);
     RUN_NAMED(an_impact_effect_is_drawn_in_the_3d_view);
+    RUN_NAMED(a_flame_weapon_streams_particles_instead_of_a_ray);
+    RUN_NAMED(a_ring_spell_lays_its_rings_from_the_data);
+    RUN_NAMED(a_storm_rains_its_drops_from_the_data);
     TEST_REPORT();
 }

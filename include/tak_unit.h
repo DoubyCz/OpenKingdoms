@@ -161,6 +161,16 @@ typedef struct UnitWeapon {
     uint8_t beam_inner[3];       /* innercolor RGB */
     uint8_t beam_middle[3];      /* middlecolor RGB */
     uint8_t beam_outer[3];       /* outercolor RGB */
+    /* Remote Effect spells, from their own keys: kind 1 lays
+     * ring_count rings of sprite_count radiusart sprites, kind 2
+     * rains rain_per_second weaponart drops for rain_ticks. */
+    uint8_t remote_kind;
+    char    radius_art[3][32];
+    int16_t radius_sprite[3];
+    int16_t rain_sprite;
+    int32_t ring_count, ring_delay_ticks, ring_duration_ticks, sprite_count;
+    int32_t buildup_ticks, decay_ticks;
+    int32_t rain_per_second, rain_ticks;
     int32_t water_weapon;     /* waterweapon targeting flag */
     int32_t to_air_weapon;    /* toairweapon targeting flag */
     int32_t no_air_weapon;    /* noairweapon targeting flag */
@@ -252,6 +262,7 @@ typedef struct Projectile {
     uint8_t  color_idx;           /* owner team colour (legacy:249446)  */
     int16_t  art_idx;             /* art cache slot, -1 = unresolved    */
     int16_t  explosion_idx;       /* explosionclass slot, -1 = none     */
+    uint8_t  hidden;              /* a spell's shot, drawn by effects  */
 } Projectile;
 
 #define UNIT_PROJECTILE_VIS_GENERIC 0
@@ -259,6 +270,7 @@ typedef struct Projectile {
 #define UNIT_PROJECTILE_VIS_CANNON  2
 #define UNIT_PROJECTILE_VIS_MAGIC   3
 #define UNIT_PROJECTILE_VIS_REMOTE  4
+#define UNIT_PROJECTILE_VIS_FLAME   5   /* a flame beam: particles, no ray */
 
 /* Resolved projectile art (legacy:250074 model / legacy:250088
  * weaponart / the beam subtypes at legacy:249761). */
@@ -282,6 +294,10 @@ typedef struct ProjectileEffect {
     uint8_t  loops;            /* the pictures repeat instead of playing out */
     uint8_t  alive;
     int16_t  owner;            /* the unit it plays for, -1 for none */
+    int32_t  vx_fp, vy_fp;     /* ground travel a tick, 16.16 */
+    int32_t  x_acc, y_acc;     /* the fraction of a pixel carried */
+    uint16_t delay_ticks;      /* neither shown nor moved until this runs out */
+    int16_t  land_explosion;   /* explosionclass played where a faller lands, -1 none */
 } ProjectileEffect;
 
 typedef struct UnitDef {
@@ -1081,6 +1097,10 @@ typedef struct ProjSpriteStrip {
 int         Units_ProjectileSpriteStrip(int sprite_idx, ProjSpriteStrip *out);
 int         Units_ProjectileVisible(const struct GameWorld *world, const Projectile *p);
 const char *Units_ProjectileModelName(int art_idx);
+/* The art slot a sequence name resolved to, -1 when never seen. */
+int         Units_FindSpriteArt(const char *name);
+/* Fires weapon `slot` of a unit at the ground, for tests. 1 when it fired. */
+int         Units_DebugFireGround(int handle, int slot, int32_t x, int32_t y);
 /* Art and current frame of live effect i. 0 when i is not live. */
 int               Units_GetEffectInfo(int i, const char **out_file,
                                       const char **out_seq, int *out_frame);
