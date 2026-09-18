@@ -522,9 +522,14 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
         }
     }
 
+    /* Options and Exit: frame 1 is the pressed art, where the button face is
+     * pushed in. The original only shows it while the button is actually held
+     * down — a hover alone leaves the button at rest. */
+    int held = mouse_down != 0;
+
     /* Options button */
     if (menu.options_pixels[0]) {
-        int state = (menu.hovered_button == MENUBTN_OPTIONS) ? 1 : 0;
+        int state = (held && menu.hovered_button == MENUBTN_OPTIONS) ? 1 : 0;
         if (menu.options_pixels[state]) {
             Blit_RGBA(offscreen, 524, 406,
                       menu.options_pixels[state], menu.options_w, menu.options_h);
@@ -533,7 +538,7 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
 
     /* Exit button */
     if (menu.exit_pixels[0]) {
-        int state = (menu.hovered_button == MENUBTN_EXIT) ? 1 : 0;
+        int state = (held && menu.hovered_button == MENUBTN_EXIT) ? 1 : 0;
         if (menu.exit_pixels[state]) {
             Blit_RGBA(offscreen, 68, 407,
                       menu.exit_pixels[state], menu.exit_w, menu.exit_h);
