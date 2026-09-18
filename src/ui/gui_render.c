@@ -398,11 +398,17 @@ static void blit_frame_to_rect(SDL_Surface *dst, SDL_Rect r,
  * Buttons, sliders and scroll nubs keep their art's own size. The
  * battle backgrounds rely on that, leaving a 49x62 well behind a Previous
  * button whose cell is 39x51, and the room's unit bar is 69 px of art in
- * a 91 px cell. A cell with no size takes the art's own size. */
+ * a 91 px cell. A cell with no size takes the art's own size.
+ *
+ * A stage button counts as a button here: the Options tabs are 67x64 of art
+ * in a 60x57 cell, and the panel behind them is authored with a hole the size
+ * of the art, so squeezing the icon into the cell leaves the backdrop showing
+ * through along its right and bottom edge. */
 static int widget_art_keeps_own_size(const GUIWidget *w) {
     if (!w || w->rect.w <= 0 || w->rect.h <= 0) return 1;
     switch (w->type) {
     case GUI_WT_BUTTON:
+    case GUI_WT_STAGEBUTTON:
     case GUI_WT_SLIDER:
     case GUI_WT_SCROLLBTN:
         return 1;
