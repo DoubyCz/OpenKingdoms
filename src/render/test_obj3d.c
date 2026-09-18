@@ -99,6 +99,107 @@ TEST(load_zonhunt)  { check_unit("objects3d/zonhunt.3do",  10, 50); }
 
 /* ── Edge cases ──────────────────────────────────────────────────── */
 
+/* Copies one file. 0 on success. */
+static int copy_one_file(const char *from, const char *to) {
+    FILE *a = fopen(from, "rb");
+    if (!a) return -1;
+    FILE *b = fopen(to, "wb");
+    if (!b) { fclose(a); return -1; }
+    char buf[8192];
+    size_t n;
+    int ok = 1;
+    while ((n = fread(buf, 1, sizeof(buf), a)) > 0) {
+        if (fwrite(buf, 1, n, b) != n) { ok = 0; break; }
+    }
+    fclose(a);
+    fclose(b);
+    return ok ? 0 : -1;
+}
+
+#ifdef _WIN32
+#  include <direct.h>
+#  define probe_mkdir(p) _mkdir(p)
+#else
+#  include <sys/stat.h>
+#  define probe_mkdir(p) mkdir(p, 0755)
+#endif
+
+/* One node, three vertices, one triangle, written in the on disk shape
+ * the parser reads. Small enough that no shipped model could be
+ * mistaken for it. */
+static int write_tiny_3do(const char *path) {
+    unsigned char b[256];
+    memset(b, 0, sizeof(b));
+    const unsigned name_off = 52, vert_off = 64, prim_off = 100, idx_off = 132;
+    unsigned h[13] = {
+        1,            /* version */
+        3,            /* vertices */
+        1,            /* primitives */
+        0,            /* selection */
+        0, 0, 0,      /* x, y, z */
+        name_off,
+        0,
+        vert_off,
+        prim_off,
+        0,            /* sibling */
+        0             /* child */
+    };
+    memcpy(b, h, sizeof(h));
+    memcpy(b + name_off, "tiny", 5);
+    int verts[9] = { 0, 0, 0,  65536, 0, 0,  0, 65536, 0 };
+    memcpy(b + vert_off, verts, sizeof(verts));
+    /* colour, index count, a zero, the index list, then no texture. */
+    unsigned prim[8] = { 0, 3, 0, idx_off, 0, 0, 0, 0 };
+    memcpy(b + prim_off, prim, sizeof(prim));
+    unsigned short idx[3] = { 0, 1, 2 };
+    memcpy(b + idx_off, idx, sizeof(idx));
+
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+    size_t n = fwrite(b, 1, sizeof(b), f);
+    fclose(f);
+    return n == sizeof(b) ? 0 : -1;
+}
+
+/* The game's own archive holds objects3d/araking.3do. A file of that
+ * name in the player's game folder has to be the one that loads. */
+TEST(a_loose_model_in_the_game_folder_beats_the_archived_one) {
+    Obj3DFile *shipped = NULL;
+    if (Obj3D_Load(&shipped, "objects3d/araking.3do") != 0 || !shipped) {
+        SKIP("no game data");
+    }
+    int shipped_verts = shipped->root ? (int)shipped->root->num_vertices : 0;
+    Obj3D_Close(shipped);
+
+    probe_mkdir("obj3d_probe");
+    probe_mkdir("obj3d_probe/objects3d");
+    if (write_tiny_3do("obj3d_probe/objects3d/araking.3do") != 0) {
+        SKIP("cannot write beside the binary");
+    }
+    /* The scratch folder needs an archive to count as an install. */
+    if (copy_one_file(TAK_GAME_DIR "/boneyards2.hpi", "obj3d_probe/boneyards2.hpi") != 0) {
+        remove("obj3d_probe/objects3d/araking.3do");
+        SKIP("no archive to stand one up with");
+    }
+    VFS_Shutdown();
+    ASSERT_EQ_INT(0, VFS_Init("obj3d_probe", NULL));
+
+    Obj3DFile *mine = NULL;
+    int rc = Obj3D_Load(&mine, "objects3d/araking.3do");
+    int mine_verts = (rc == 0 && mine && mine->root) ? (int)mine->root->num_vertices : -1;
+    if (mine) Obj3D_Close(mine);
+    VFS_Shutdown();
+    remove("obj3d_probe/objects3d/araking.3do");
+    remove("obj3d_probe/boneyards2.hpi");
+    /* Back to the real thing for the cases after this one. */
+    ASSERT_EQ_INT(0, VFS_Init(TAK_GAME_DIR, TAK_DATA_DIR));
+
+    printf("(shipped root %d verts, loose root %d) ", shipped_verts, mine_verts);
+    ASSERT_EQ_INT(0, rc);
+    ASSERT_EQ_INT(3, mine_verts);
+    ASSERT(mine_verts != shipped_verts);
+}
+
 TEST(load_returns_negative_on_missing_file) {
     ensure_vfs();
     Obj3DFile *obj = (Obj3DFile *)0xdeadbeef;  /* sentinel — must be cleared */
@@ -190,6 +291,7 @@ int main(int argc, char **argv) {
     RUN(load_zonhunt);
 
     TEST_SUITE("Obj3D_Load — edge cases");
+    RUN(a_loose_model_in_the_game_folder_beats_the_archived_one);
     RUN(load_returns_negative_on_missing_file);
     RUN(load_returns_negative_on_null_args);
     RUN(close_of_null_is_safe);
