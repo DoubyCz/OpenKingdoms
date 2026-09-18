@@ -307,16 +307,19 @@ int Options_Tick(TAK_Platform *platform, float frame_dt) {
         Font_DrawString(opts.header_font, off, 320 - tw / 2, 95, label);
     }
 
-    /* Tooltip for hovered widget on whichever layer. */
+    /* Tooltip for hovered widget on whichever layer. It goes in the dialog's
+     * own HelpText widget, centred in it, the way the main menu does it — the
+     * panel already has the dark strip painted, so nothing is drawn behind the
+     * text. */
     if (opts.tooltip_font) {
         const GUIWidget *hw = GUIRuntime_HoveredWidget(opts.sub_rt);
         if (!hw || !hw->tooltip[0]) hw = GUIRuntime_HoveredWidget(opts.shell_rt);
         if (hw && hw->tooltip[0]) {
             int tw = Font_MeasureString(opts.tooltip_font, hw->tooltip);
-            SDL_Rect strip = { 120, 400, 400, 22 };
-            SDL_FillRect(off, &strip, SDL_MapRGBA(off->format, 18, 14, 8, 255));
-            Font_DrawString(opts.tooltip_font, off,
-                             320 - tw / 2, 404, hw->tooltip);
+            const GUIWidget *slot = GUIDialog_FindByName(&opts.shell, "HelpText");
+            int tx = slot ? slot->rect.x + (slot->rect.w - tw) / 2 : 320 - tw / 2;
+            int ty = slot ? slot->rect.y : 404;
+            Font_DrawString(opts.tooltip_font, off, tx, ty, hw->tooltip);
         }
     }
 
