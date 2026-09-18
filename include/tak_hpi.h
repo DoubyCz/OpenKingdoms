@@ -168,6 +168,16 @@ int VFS_GetArchiveCount(void);
 // Returns 0 on success, -1 if not found.
 int VFS_ReadFile(const char *path, void **out_data, uint32_t *out_size);
 
+/* The largest loose file the reader below will take. A model of a
+ * building is a few hundred kilobytes. */
+#define VFS_GAME_FILE_MAX (64u * 1024u * 1024u)
+
+/* Reads a loose file from the folder the game is in, which is where
+ * a player puts content of their own. 0 on success, and the caller
+ * frees with VFS_FreeFile. Archives are not consulted: this finds
+ * only what VFS_ReadFile would not. */
+int VFS_ReadGameFile(const char *relative, void **out_data, uint32_t *out_size);
+
 // Check if a file exists in any loaded archive (or loose dir).
 int VFS_FileExists(const char *path);
 

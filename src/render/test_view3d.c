@@ -739,6 +739,23 @@ TEST(the_build_ghost_in_3d_is_judged_where_the_pointer_lands) {
 #  define probe_mkdir(p) mkdir(p, 0755)
 #endif
 
+/* Copies one file. Returns 0 on success. */
+static int copy_file(const char *from, const char *to) {
+    FILE *a = fopen(from, "rb");
+    if (!a) return -1;
+    FILE *b = fopen(to, "wb");
+    if (!b) { fclose(a); return -1; }
+    char buf[8192];
+    size_t n;
+    int ok = 1;
+    while ((n = fread(buf, 1, sizeof(buf), a)) > 0) {
+        if (fwrite(buf, 1, n, b) != n) { ok = 0; break; }
+    }
+    fclose(a);
+    fclose(b);
+    return ok ? 0 : -1;
+}
+
 /* One triangle in a .glb, written where a data dir of ours will find
  * it. Returns 0 on success. */
 static int write_probe_glb(const char *path) {
@@ -835,6 +852,63 @@ TEST(the_3d_view_takes_an_artists_model_over_the_shipped_one) {
     remove("gltf_probe/models3d/aralode.glb");
 }
 
+/* A release binary is built with no data folder, so the only place it
+ * can find a model is the folder the game is in. Both folders here are
+ * the test's own, and the game one holds no archives at all, which is
+ * the same shape as an install with a models3d folder added to it. */
+TEST(a_model_in_the_game_folder_is_found_without_a_data_folder) {
+    probe_mkdir("gltf_game");
+    probe_mkdir("gltf_game/models3d");
+    if (write_probe_glb("gltf_game/models3d/aralode.glb") != 0) {
+        SKIP("cannot write beside the binary");
+    }
+    /* A folder with no archives at all is not an install, and the
+     * engine says so. The smallest of the shipped ones stands in for
+     * the hundreds of megabytes a real one holds. */
+    if (copy_file(TAK_GAME_DIR "/boneyards2.hpi", "gltf_game/boneyards2.hpi") != 0) {
+        remove("gltf_game/models3d/aralode.glb");
+        SKIP("no game dir to take an archive from");
+    }
+    if (VFS_IsInitialized()) VFS_Shutdown();
+    /* No data folder, exactly as a release is built. */
+    if (VFS_Init("gltf_game", NULL) != 0) {
+        remove("gltf_game/models3d/aralode.glb");
+        remove("gltf_game/boneyards2.hpi");
+        SKIP("the test's own game folder would not mount");
+    }
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) {
+        VFS_Shutdown();
+        remove("gltf_game/models3d/aralode.glb");
+        remove("gltf_game/boneyards2.hpi");
+        return;
+    }
+    if (GL3D_Init(platform.window, platform.renderer) != 0) {
+        SKIP_MARK("no GL context");
+        teardown_platform(&platform);
+        VFS_Shutdown();
+        remove("gltf_game/models3d/aralode.glb");
+        remove("gltf_game/boneyards2.hpi");
+        return;
+    }
+
+    const GpuModel *m = ModelStore_Get("ARALODE", 0);
+    ASSERT_NOT_NULL(m);
+    ASSERT_EQ_INT(1, (int)m->from_gltf);
+    ASSERT(strcmp(m->mesh->nodes[0].name, "spire") == 0);
+    printf("(read from the game folder) ");
+
+    /* And nothing is invented for a name with no model anywhere. */
+    ASSERT(ModelStore_Get("no_such_object_at_all", 0) == NULL);
+
+    ModelStore_Clear();
+    GL3D_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+    remove("gltf_game/models3d/aralode.glb");
+    remove("gltf_game/boneyards2.hpi");
+}
+
 /* An argument runs only the cases whose name contains it. */
 #define RUN_NAMED(name) do { \
         if (argc < 2 || strstr(#name, argv[1])) RUN(name); \
@@ -856,5 +930,6 @@ int main(int argc, char **argv) {
     RUN_NAMED(a_ring_spell_lays_its_rings_from_the_data);
     RUN_NAMED(a_storm_rains_its_drops_from_the_data);
     RUN_NAMED(the_3d_view_takes_an_artists_model_over_the_shipped_one);
+    RUN_NAMED(a_model_in_the_game_folder_is_found_without_a_data_folder);
     TEST_REPORT();
 }

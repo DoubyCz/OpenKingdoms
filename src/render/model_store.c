@@ -231,7 +231,17 @@ static GpuModel *build_gltf(const char *name, int color_idx) {
     char path[TAK_UNITDEF_OBJ_MAX + 24];
     snprintf(path, sizeof(path), "models3d/%s.glb", lower);
     GltfModel *g = NULL;
-    if (Gltf_Load(&g, path) != 0 || !g) return NULL;
+    if (Gltf_Load(&g, path) != 0 || !g) {
+        /* Nothing in the archives or the data folder. A release binary
+         * is built without a data folder at all, so the place a player
+         * would actually put a model is the game folder itself. */
+        void *bytes = NULL;
+        uint32_t size = 0;
+        if (VFS_ReadGameFile(path, &bytes, &size) != 0 || !bytes) return NULL;
+        int rc = Gltf_LoadFromMemory(&g, (const uint8_t *)bytes, (size_t)size);
+        tak_free(bytes);
+        if (rc != 0 || !g) return NULL;
+    }
 
     int image_of_batch[UNIT_MESH_MAX_BATCHES];
     for (int i = 0; i < UNIT_MESH_MAX_BATCHES; i++) image_of_batch[i] = -1;

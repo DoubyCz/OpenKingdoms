@@ -260,6 +260,9 @@ static uint8_t *archive_kinds = NULL;
 static size_t total_archive_count = 0;
 static HPIArchive **archives = NULL;
 static char *local_dir = NULL;
+/* The folder the game itself is in. Kept for the one reader
+ * below, which is the only way a loose file there is found. */
+static char *game_root = NULL;
 static int vfs_initialized = 0;
 static VFSMountFilter vfs_mount_filter = NULL;
 static unsigned vfs_generation = 0;
@@ -363,6 +366,8 @@ int VFS_Init(const char *game_dir, const char *loose_dir) {
     }
 
     if (!game_dir) return -1;
+    game_root = tak_strdup(game_dir);
+    if (!game_root) return -1;
 
     if (loose_dir) {
         local_dir = tak_strdup(loose_dir);
@@ -383,7 +388,9 @@ int VFS_Init(const char *game_dir, const char *loose_dir) {
     if (scan_directory(game_dir, ".hpi", &hpi_files, &hpi_count) != 0) {
         fprintf(stderr, "VFS_Init: cannot open game directory: %s\n", game_dir);
         tak_free(local_dir);
+        tak_free(game_root);
         local_dir = NULL;
+        game_root = NULL;
         return -1;
     }
     if (scan_directory(game_dir, ".ufo", &ufo_files, &ufo_count) != 0) {
@@ -484,7 +491,9 @@ fail:
     archives = NULL;
     total_archive_count = 0;
     tak_free(local_dir);
+    tak_free(game_root);
     local_dir = NULL;
+    game_root = NULL;
     vfs_initialized = 0;
     return -1;
 }
@@ -501,11 +510,13 @@ void VFS_Shutdown(void) {
     tak_free(archive_paths);
     tak_free(archive_kinds);
     tak_free(local_dir);
+    tak_free(game_root);
 
     archives = NULL;
     archive_paths = NULL;
     archive_kinds = NULL;
     local_dir = NULL;
+    game_root = NULL;
     total_archive_count = 0;
     vfs_initialized = 0;
 }
@@ -586,6 +597,36 @@ int VFS_FileExists(const char *path) {
     }
 
     return -1;
+}
+
+/* A loose file under the folder the game is in, for content a
+ * player put there themselves. Deliberately not part of VFS_ReadFile:
+ * every path that resolves today has to keep resolving the same way,
+ * and this only ever finds what nothing else would. */
+int VFS_ReadGameFile(const char *relative, void **out_data, uint32_t *out_size) {
+    if (!relative || !out_data || !out_size) return -1;
+    if (!vfs_initialized || !game_root) return -1;
+    *out_data = NULL;
+    *out_size = 0;
+
+    char full[4096];
+    if (build_loose_path(full, sizeof(full), game_root, relative) != 0) return -1;
+    vfs_fixup_case(full);
+    FILE *fp = fopen(full, "rb");
+    if (!fp) return -1;
+    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return -1; }
+    long len = ftell(fp);
+    if (len < 0 || len > (long)VFS_GAME_FILE_MAX) { fclose(fp); return -1; }
+    rewind(fp);
+
+    void *buf = tak_malloc((size_t)len ? (size_t)len : 1);
+    if (!buf) { fclose(fp); return -1; }
+    size_t got = fread(buf, 1, (size_t)len, fp);
+    fclose(fp);
+    if (got != (size_t)len) { tak_free(buf); return -1; }
+    *out_data = buf;
+    *out_size = (uint32_t)len;
+    return 0;
 }
 
 int VFS_ReadFile(const char *path, void **out_data, uint32_t *out_size) {
