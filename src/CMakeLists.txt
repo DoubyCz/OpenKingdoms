@@ -59,6 +59,9 @@ set(TAK_VIEW_SOURCES
     render/camera3d.c
     render/gl3d.c
     render/model_store.c
+    render/model_gltf.c
+    render/gltf.c
+    render/png_decode.c
     render/view3d.c
 )
 
@@ -1166,6 +1169,37 @@ target_compile_definitions(test_obj3d PRIVATE
     TAK_GAME_DIR="${TAK_GAME_DIR}"
 )
 
+# ── glTF reader tests ────────────────────────────────────
+# Builds .glb files in memory and reads them back, so it needs no game
+# data and runs wherever CI runs.
+add_executable(test_gltf
+    render/test_gltf.c
+    render/gltf.c
+    render/model_gltf.c
+    render/png_decode.c
+    render/jpg_decode.c
+    core/hpi/hpi.c
+    core/hpi/hpi_vfs.c
+    core/hpi/hpi_decompress.c
+    core/memory.c
+    core/io.c
+    core/util.c
+    core/crash.c
+    ${TAK_THIRD_PARTY_SOURCES}
+)
+target_include_directories(test_gltf PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_compile_definitions(test_gltf PRIVATE
+    TAK_DATA_DIR="${TAK_DATA_DIR}"
+    TAK_GAME_DIR="${TAK_GAME_DIR}"
+)
+target_link_libraries(test_gltf PRIVATE SDL2::SDL2 SDL2::SDL2main)
+if(WIN32)
+    target_link_libraries(test_gltf PRIVATE dbghelp)
+endif()
+
 # ── JPG decode tests (M5) ────────────────────────────────────────────────
 add_executable(test_jpg
     render/test_jpg.c
@@ -1970,6 +2004,28 @@ target_include_directories(test_ws_conn PRIVATE
 # The frame parser's fuzz target. Built without a fuzzing engine it runs a
 # deterministic sweep, so CI exercises it on every build. With clang:
 #   -fsanitize=fuzzer,address -DTAK_FUZZ_ENGINE
+add_executable(fuzz_gltf
+    render/fuzz_gltf.c
+    render/gltf.c
+    render/png_decode.c
+    render/jpg_decode.c
+    core/hpi/hpi.c
+    core/hpi/hpi_vfs.c
+    core/hpi/hpi_decompress.c
+    core/memory.c
+    core/io.c
+    core/util.c
+    ${TAK_THIRD_PARTY_SOURCES}
+)
+target_include_directories(fuzz_gltf PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_compile_definitions(fuzz_gltf PRIVATE
+    TAK_DATA_DIR="${TAK_DATA_DIR}"
+    TAK_GAME_DIR="${TAK_GAME_DIR}"
+)
+
 add_executable(fuzz_protocol
     net/fuzz_protocol.c
     net/protocol.c
@@ -2119,6 +2175,7 @@ if(BUILD_TESTING)
     add_test(NAME test_palette     COMMAND test_palette)
     add_test(NAME test_tnt         COMMAND test_tnt)
     add_test(NAME test_obj3d       COMMAND test_obj3d)
+    add_test(NAME test_gltf        COMMAND test_gltf)
     add_test(NAME test_jpg         COMMAND test_jpg)
     # The data free half, for a runner with no game files.
     add_test(NAME test_jpg_no_data COMMAND test_jpg --no-data)
@@ -2151,6 +2208,7 @@ if(BUILD_TESTING)
     add_test(NAME test_ws_conn     COMMAND test_ws_conn)
     add_test(NAME test_client      COMMAND test_client)
     add_test(NAME fuzz_protocol    COMMAND fuzz_protocol)
+    add_test(NAME fuzz_gltf        COMMAND fuzz_gltf)
     add_test(NAME test_room        COMMAND test_room)
     add_test(NAME test_turnclock   COMMAND test_turnclock)
     add_test(NAME test_relay_loopback COMMAND test_relay_loopback)
