@@ -5,29 +5,52 @@ The 3D view draws the shipped 3DO models. Put a glTF 2.0 binary in
 Nothing else changes: the classic view keeps the shipped model, and so
 does every player without the file.
 
-## In a browser
-
-Drag the .glb onto the page at any time, or use Add 3D models on the
-screen that asks for your game files. Either way it is written where
-the engine reads loose files from, and if you asked the page to
-remember your game files it is remembered with them.
-
-The 3D view asks for a model the first time it draws a unit and again
-after a world changes, so a model added during a battle is drawn from
-the next battle.
-
 ## Where the file goes
 
-`models3d/<objectname>.glb`, under the data directory the game reads.
-The object name is the `objectname` line in the unit's FBI, lowercased.
-The Aramon lodestone is `ARALODE`, so its model is
-`models3d/aralode.glb`. One file replaces that name wherever it is
-drawn, which for a few names means units, map features and projectiles
-alike.
+Make a `models3d` folder inside your Total Annihilation Kingdoms
+folder, beside the .hpi archives, and put the model in it named after
+the unit's object name.
+
+    Total Annihilation Kingdoms/
+      data.hpi
+      terrain.hpi
+      models3d/
+        aralode.glb
+
+The object name is the `objectname` line in the unit's FBI. The Aramon
+lodestone is `ARALODE`, so its model is `aralode.glb`. Case does not
+matter. One file replaces that name wherever it is drawn, which for a
+few names means units, map features and projectiles alike.
+
+These are the lodestones:
+
+    aralode.glb   Aramon Lodestone, two by two
+    tarlode.glb   Taros Lodestone, two by two
+    verlode.glb   Veruna Lodestone, two by two
+    zonlode.glb   Zhon Lodestone, two by two
+    aramana.glb   Aramon Divine Lodestone, three by three
+
+A game built from source with a data directory reads `models3d` from
+there too, which is where a developer's loose files live.
 
 If the file is missing, or will not read, or asks for more than a model
 can hold, the shipped model is drawn and a line on standard error says
 why. A bad model can lose you the new art. It cannot take the game down.
+
+## In a browser
+
+The same folder works. Pick your game folder on the page and anything
+in its `models3d` comes along with the archives, so you play with your
+models the way you would on the desktop.
+
+A model can also be added on its own at any time, running or not:
+drag the .glb onto the page, or use Add 3D models on the screen that
+asks for your game files. If you asked the page to remember your game
+files, models are remembered with them.
+
+The 3D view asks for a model the first time it draws a unit and again
+after a world changes, so a model added during a battle is drawn from
+the next battle.
 
 ## What the file should hold
 
