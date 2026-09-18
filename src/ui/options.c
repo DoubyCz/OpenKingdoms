@@ -183,6 +183,14 @@ static int load_tab(int tab) {
     }
 
     opts.active_tab = tab;
+
+    /* The chosen tab stays pushed in: frame 1 is the selected art, and the
+     * others go back to the plain frame 2 by clearing their override. */
+    for (int t = 0; t < TAB_COUNT; t++) {
+        GUIRuntime_SetFrameOverride(opts.shell_rt, tab_widget_name[t],
+                                    t == tab ? 1 : -1);
+    }
+
     sync_visual_checkboxes();
     return 0;
 }
