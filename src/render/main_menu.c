@@ -86,7 +86,9 @@ static const char *button_tooltips[MENUBTN_COUNT] = {
     "Play an Opponent",
     "Credits",             /* snort — legacy setup line 140437 */
     "Options",
-    "Exit to Windows",
+    /* The original says "Exit to Windows". This build runs on Linux and macOS
+     * too, so the help text names the thing it actually returns you to. */
+    "Exit to Desktop",
 };
 
 /* HelpText widget rect from mainmenu.gui line 112: 172 441 296 31. */
