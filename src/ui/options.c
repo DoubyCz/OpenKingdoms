@@ -166,18 +166,22 @@ static int load_tab(int tab) {
     opts.sub_loaded = 1;
     opts.sub_rt = GUIRuntime_Create(&opts.sub);
 
-    /* Sub-dialog widgets are declared in absolute screen coordinates
-     * (they inherit positioning from the main dialog they're parented
-     * to in the original game), so draw them at their natural rects —
-     * no offset. */
+    /* Each sub-dialog is authored at its own place on the screen, but all
+     * four are the size of the shell's PlaceHolderForOptionPages widget
+     * (311x172) and belong inside it. Shift each one by the difference
+     * between where the placeholder sits and where the sub-dialog's root
+     * was authored, so every tab lands in the same frame.
+     *
+     * Observed in the shipped data: the placeholder is at 165,187 and the
+     * roots are Interface 52,49 / Music 167,148 / Sound 88,119, which is
+     * why a fixed offset cannot serve them all. */
     if (opts.sub_rt) {
-        int dx = (opts.sub.root.rect.x < opts.shell.root.rect.x)
-               ? opts.shell.root.rect.x : 0;
-        int dy = (opts.sub.root.rect.y < opts.shell.root.rect.y)
-               ? opts.shell.root.rect.y : 0;
-        if (tab == TAB_INTERFACE) {
-            dx = 105;
-            dy = 130;
+        int dx = 0, dy = 0;
+        GUIWidget *slot = GUIDialog_FindByName(&opts.shell,
+                                               "PlaceHolderForOptionPages");
+        if (slot) {
+            dx = slot->rect.x - opts.sub.root.rect.x;
+            dy = slot->rect.y - opts.sub.root.rect.y;
         }
         GUIRuntime_SetOffset(opts.sub_rt, dx, dy);
     }
