@@ -57,7 +57,6 @@ static struct {
     int          sub_loaded;      /* 1 when `sub` holds a valid dialog */
     int          active_tab;
     Font        *tooltip_font;
-    Font        *header_font;
     int          return_state;
     int          pending_nextstate;
     /* The main screen the dialog sits on when opened from the menu: the
@@ -216,7 +215,6 @@ int Options_Init(TAK_Platform *platform) {
 
     opts.tooltip_font = Font_Load("data/fonts/b_times new roman (100b)",
                                    UI_RGBAFormat());
-    opts.header_font  = opts.tooltip_font;   /* reuse */
 
     if (opts.return_state == GAMESTATE_MENU)
         opts.backdrop = load_menu_backdrop();
@@ -298,14 +296,6 @@ int Options_Tick(TAK_Platform *platform, float frame_dt) {
 
     GUIRuntime_Render(opts.shell_rt);
     if (opts.sub_rt) GUIRuntime_Render(opts.sub_rt);
-
-    /* Tab label banner at the top so the user can see which tab is active. */
-    if (opts.header_font && opts.active_tab >= 0 &&
-        opts.active_tab < TAB_COUNT) {
-        const char *label = tab_label[opts.active_tab];
-        int tw = Font_MeasureString(opts.header_font, label);
-        Font_DrawString(opts.header_font, off, 320 - tw / 2, 95, label);
-    }
 
     /* Tooltip for hovered widget on whichever layer. It goes in the dialog's
      * own HelpText widget, centred in it, the way the main menu does it — the
