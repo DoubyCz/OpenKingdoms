@@ -11,6 +11,7 @@
 
 #include "tak_model_store.h"
 #include "tak_gltf.h"
+#include "tak_hpi.h"
 #include "tak_model_gltf.h"
 #include "tak_gpu.h"
 #include "tak_memory.h"
