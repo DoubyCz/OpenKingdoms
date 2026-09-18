@@ -257,9 +257,14 @@ int Obj3D_Load(Obj3DFile **out, const char *vfs_path) {
 
     void *raw = NULL;
     uint32_t raw_size = 0;
-    if (VFS_ReadFile(vfs_path, &raw, &raw_size) != 0) {
-        fprintf(stderr, "Obj3D_Load: VFS_ReadFile failed for %s\n", vfs_path);
-        return -1;
+    /* A model loose in the player's own game folder stands in for the
+     * shipped one. That is how a model mod arrives, and it is the one
+     * place a file outside the archives is allowed to win. */
+    if (VFS_ReadGameFile(vfs_path, &raw, &raw_size) != 0 || !raw) {
+        if (VFS_ReadFile(vfs_path, &raw, &raw_size) != 0) {
+            fprintf(stderr, "Obj3D_Load: VFS_ReadFile failed for %s\n", vfs_path);
+            return -1;
+        }
     }
     if (raw_size < sizeof(DiskObj3DHeader)) {
         fprintf(stderr, "Obj3D_Load: %s too small (%u bytes)\n", vfs_path, raw_size);
