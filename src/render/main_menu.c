@@ -564,7 +564,13 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
         const char *text = button_tooltips[menu.hovered_button];
         int tw = Font_MeasureString(menu.tooltip_font, text);
         int tx = helptext_rect.x + (helptext_rect.w - tw) / 2;
-        int ty = helptext_rect.y;
+        /* Centre the ink in the cell, not the line box: the strip is 31 px
+         * tall and the glyphs cover far less, so drawing from the top edge
+         * leaves the text sitting high in it. */
+        int top = 0, bottom = 0;
+        if (Font_InkExtent(menu.tooltip_font, text, &top, &bottom) != 0)
+            top = bottom = 0;
+        int ty = helptext_rect.y + (helptext_rect.h - (bottom - top)) / 2 - top;
         Font_DrawString(menu.tooltip_font, offscreen, tx, ty, text);
     }
 
