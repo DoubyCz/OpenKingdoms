@@ -549,14 +549,14 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
         }
     }
 
-    /* Version line in the bottom strip, where the original writes its
-     * own. Shown whenever nothing is hovered so it does not fight the
-     * tooltip. */
-    if (menu.tooltip_font && menu.hovered_button < 0) {
+    /* Version line above the bottom strip, where the original writes its own.
+     * Always on: the original shows it all the time, and it no longer fights
+     * the tooltip now that the tooltip is centred inside the strip. */
+    if (menu.tooltip_font) {
         const char *version = MainMenu_VersionText();
         int vw = Font_MeasureString(menu.tooltip_font, version);
         int vx = 320 - vw / 2;
-        int vy = helptext_rect.y - 18;
+        int vy = helptext_rect.y - 28;
         Font_DrawString(menu.tooltip_font, offscreen, vx, vy, version);
     }
 
