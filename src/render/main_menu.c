@@ -76,6 +76,10 @@ static const SDL_Rect character_hit_rects[MENU_NUM_CHARACTERS] = {
     { 124,  42,  71, 130 },  /* Credits      (snort)   — 0x7c,  0x2a, 0x47, 0x82 */
 };
 
+/* Sentinel for "no state change requested". It must not collide with any
+ * real GameStateEnum value: GAMESTATE_QUIT is -1, so -1 cannot mean "none". */
+#define MENU_NO_PENDING (-2)
+
 static const char *button_tooltips[MENUBTN_COUNT] = {
     "Play the Machine",
     "Play the Adventure",
@@ -345,7 +349,7 @@ int MainMenu_Init(TAK_Platform *platform) {
         menu.tooltip_font = Font_Load("data/fonts/b_times new roman (100)", UI_RGBAFormat());
     }
 
-    menu.pending_nextstate = -1;
+    menu.pending_nextstate = MENU_NO_PENDING;
     menu.initialized = 1;
     return 0;
 }
@@ -577,8 +581,8 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
     /* Hand the composited surface to the window. */
     UI_Present(platform);
 
-    int next = (menu.pending_nextstate >=0 ) ? menu.pending_nextstate : GAMESTATE_MENU;
-    menu.pending_nextstate = -1;
+    int next = (menu.pending_nextstate != MENU_NO_PENDING) ? menu.pending_nextstate : GAMESTATE_MENU;
+    menu.pending_nextstate = MENU_NO_PENDING;
     return next;
 }
 
