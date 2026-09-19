@@ -734,4 +734,16 @@ Format per entry:
   it with the generic frame. The engine now does the same. See
   docs/notes/2026-09-15-the-book-of-deeds.md.
 
+## D-012: The exit caption says Desktop rather than Windows
+
+- Change: the main menu's help text for the exit door reads "Exit to
+  Desktop". The original reads "Exit to Windows".
+- Why: the engine runs natively on Windows, macOS and Linux, and in a
+  browser, and on three of the four the old caption names a system the
+  player is not returning to. It is a string in the help strip, not a
+  rule, a number or a piece of art. The `ExitToWindows` widget name in
+  the game data and the in game menu's own caption are untouched.
+  Contributed in #204.
+- Citation: Manual §II, the main menu, names the door Exit to Windows.
+
 *(More entries added as deviations land.)*
