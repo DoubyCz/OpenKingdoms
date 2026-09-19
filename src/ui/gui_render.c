@@ -63,6 +63,7 @@ struct GUIRuntime {
 
     int          hovered;           /* child index, or -1 for root */
     int          prev_mouse_down;
+    int          mouse_down;        /* held right now — drives the pressed art */
 
     int          offset_x;          /* added to every widget rect at draw/hit-test */
     int          offset_y;
@@ -241,6 +242,7 @@ int GUIRuntime_UpdateEx(GUIRuntime *rt, int mx, int my, int mouse_down,
     if (out_clicked && out_clicked_cap) out_clicked[0] = '\0';
     if (out_index) *out_index = -1;
     if (!rt) return 0;
+    rt->mouse_down = mouse_down;
 
     /* Of the widgets under the pointer the smallest wins, and a later
      * one wins a tie, because a list box or a slider track authored
@@ -296,24 +298,27 @@ int GUIRuntime_Update(GUIRuntime *rt, int mx, int my, int mouse_down,
  *     state from the OTHER side — it's the legacy "state index" not
  *     the button's animation index.
  *   - 2-frame menu controls: frame 0 = normal, frame 1 = hover. */
-static int pick_frame(const GUIWidget *w, const WidgetCache *c, int is_hovered) {
+static int pick_frame(const GUIWidget *w, const WidgetCache *c, int is_hovered,
+                      int is_pressed) {
     if (c->frame_override >= 0 && c->frame_override < w->num_frames)
         return c->frame_override;
     if (w->num_frames <= 1) return 0;
     switch (w->type) {
     case GUI_WT_BUTTON:
-        /* BUTTON 3-frame (e.g. MOVE/ATTACK action row): rest=2, hover=1.
-         * 2-frame: rest=0, hover=1. */
-        if (w->num_frames >= 3) return is_hovered ? 1 : 2;
-        return is_hovered ? 1 : 0;
+        /* BUTTON 3-frame (e.g. MOVE/ATTACK action row): rest=2, pressed=1.
+         * 2-frame: rest=0, pressed=1. Frame 1 is the pushed-in face, which
+         * the original shows only while the button is held, not on hover. */
+        if (w->num_frames >= 3) return is_pressed ? 1 : 2;
+        return is_pressed ? 1 : 0;
     case GUI_WT_STAGEBUTTON:
         /* A stage button starts life on frame 2 (legacy:346764) and
          * its states run 0 disabled, 1 selected, 2 deselected. The
          * sheets follow: a dark slot at 0, the lit icon at 1, the
-         * plain icon at 2. Rest is 2 and a hover lights it. A two
-         * frame sheet keeps 0 as rest. */
-        if (w->num_frames >= 3) return is_hovered ? 1 : 2;
-        return is_hovered ? 1 : 0;
+         * plain icon at 2. Frame 1 draws the face pushed in, which the
+         * original shows only while the button is held — hovering over
+         * one leaves it at rest. A two frame sheet keeps 0 as rest. */
+        if (w->num_frames >= 3) return is_pressed ? 1 : 2;
+        return is_pressed ? 1 : 0;
     case GUI_WT_CHECKBOX:
         /* 5-frame checkbox sheet: 3 = unchecked, 4 = checked
          * (legacy:139330 sets the anim to `state + 3`). Frames 0..2 are
@@ -398,11 +403,17 @@ static void blit_frame_to_rect(SDL_Surface *dst, SDL_Rect r,
  * Buttons, sliders and scroll nubs keep their art's own size. The
  * battle backgrounds rely on that, leaving a 49x62 well behind a Previous
  * button whose cell is 39x51, and the room's unit bar is 69 px of art in
- * a 91 px cell. A cell with no size takes the art's own size. */
+ * a 91 px cell. A cell with no size takes the art's own size.
+ *
+ * A stage button counts as a button here: the Options tabs are 67x64 of art
+ * in a 60x57 cell, and the panel behind them is authored with a hole the size
+ * of the art, so squeezing the icon into the cell leaves the backdrop showing
+ * through along its right and bottom edge. */
 static int widget_art_keeps_own_size(const GUIWidget *w) {
     if (!w || w->rect.w <= 0 || w->rect.h <= 0) return 1;
     switch (w->type) {
     case GUI_WT_BUTTON:
+    case GUI_WT_STAGEBUTTON:
     case GUI_WT_SLIDER:
     case GUI_WT_SCROLLBTN:
         return 1;
@@ -490,7 +501,7 @@ void GUIRuntime_Render(GUIRuntime *rt) {
         int wx = w->rect.x + ox;
         int wy = w->rect.y + oy;
 
-        int fi = pick_frame(w, c, hovered);
+        int fi = pick_frame(w, c, hovered, hovered && rt->mouse_down);
         if (c->frames[fi]) {
             /* widget_draw_rect picks the size by widget kind. The origin
              * is the cell minus the frame's hotspot: BattleBar is authored
@@ -538,7 +549,7 @@ int GUIRuntime_WidgetDrawRect(const GUIRuntime *rt, int index, SDL_Rect *out) {
     if (!rt || !out || index < 0 || index >= rt->dialog->num_children) return -1;
     const GUIWidget    *w = &rt->dialog->children[index];
     const WidgetCache  *c = &rt->caches[index];
-    int fi = pick_frame(w, c, 0);
+    int fi = pick_frame(w, c, 0, 0);
     if (!c->frames[fi] || c->frame_w[fi] <= 0 || c->frame_h[fi] <= 0) return -1;
     *out = widget_draw_rect(w, c, fi, w->rect.x + rt->offset_x,
                             w->rect.y + rt->offset_y);
@@ -620,7 +631,8 @@ int GUIRuntime_DrawnFrame(const GUIRuntime *rt, const char *name) {
     for (int i = 0; i < rt->dialog->num_children; i++) {
         const GUIWidget *w = &rt->dialog->children[i];
         if (tak_stricmp(w->name, name) != 0) continue;
-        return pick_frame(w, &rt->caches[i], rt->hovered == i);
+        return pick_frame(w, &rt->caches[i], rt->hovered == i,
+                          rt->hovered == i && rt->mouse_down);
     }
     return -1;
 }

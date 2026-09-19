@@ -76,13 +76,19 @@ static const SDL_Rect character_hit_rects[MENU_NUM_CHARACTERS] = {
     { 124,  42,  71, 130 },  /* Credits      (snort)   — 0x7c,  0x2a, 0x47, 0x82 */
 };
 
+/* Sentinel for "no state change requested". It must not collide with any
+ * real GameStateEnum value: GAMESTATE_QUIT is -1, so -1 cannot mean "none". */
+#define MENU_NO_PENDING (-2)
+
 static const char *button_tooltips[MENUBTN_COUNT] = {
     "Play the Machine",
     "Play the Adventure",
     "Play an Opponent",
     "Credits",             /* snort — legacy setup line 140437 */
     "Options",
-    "Exit to Windows",
+    /* The original says "Exit to Windows". This build runs on Linux and macOS
+     * too, so the help text names the thing it actually returns you to. */
+    "Exit to Desktop",
 };
 
 /* HelpText widget rect from mainmenu.gui line 112: 172 441 296 31. */
@@ -345,7 +351,7 @@ int MainMenu_Init(TAK_Platform *platform) {
         menu.tooltip_font = Font_Load("data/fonts/b_times new roman (100)", UI_RGBAFormat());
     }
 
-    menu.pending_nextstate = -1;
+    menu.pending_nextstate = MENU_NO_PENDING;
     menu.initialized = 1;
     return 0;
 }
@@ -522,9 +528,14 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
         }
     }
 
+    /* Options and Exit: frame 1 is the pressed art, where the button face is
+     * pushed in. The original only shows it while the button is actually held
+     * down — a hover alone leaves the button at rest. */
+    int held = mouse_down != 0;
+
     /* Options button */
     if (menu.options_pixels[0]) {
-        int state = (menu.hovered_button == MENUBTN_OPTIONS) ? 1 : 0;
+        int state = (held && menu.hovered_button == MENUBTN_OPTIONS) ? 1 : 0;
         if (menu.options_pixels[state]) {
             Blit_RGBA(offscreen, 524, 406,
                       menu.options_pixels[state], menu.options_w, menu.options_h);
@@ -533,21 +544,21 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
 
     /* Exit button */
     if (menu.exit_pixels[0]) {
-        int state = (menu.hovered_button == MENUBTN_EXIT) ? 1 : 0;
+        int state = (held && menu.hovered_button == MENUBTN_EXIT) ? 1 : 0;
         if (menu.exit_pixels[state]) {
             Blit_RGBA(offscreen, 68, 407,
                       menu.exit_pixels[state], menu.exit_w, menu.exit_h);
         }
     }
 
-    /* Version line in the bottom strip, where the original writes its
-     * own. Shown whenever nothing is hovered so it does not fight the
-     * tooltip. */
-    if (menu.tooltip_font && menu.hovered_button < 0) {
+    /* Version line above the bottom strip, where the original writes its own.
+     * Always on: the original shows it all the time, and it no longer fights
+     * the tooltip now that the tooltip is centred inside the strip. */
+    if (menu.tooltip_font) {
         const char *version = MainMenu_VersionText();
         int vw = Font_MeasureString(menu.tooltip_font, version);
         int vx = 320 - vw / 2;
-        int vy = helptext_rect.y - 18;
+        int vy = helptext_rect.y - 28;
         Font_DrawString(menu.tooltip_font, offscreen, vx, vy, version);
     }
 
@@ -559,15 +570,21 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
         const char *text = button_tooltips[menu.hovered_button];
         int tw = Font_MeasureString(menu.tooltip_font, text);
         int tx = helptext_rect.x + (helptext_rect.w - tw) / 2;
-        int ty = helptext_rect.y;
+        /* Centre the ink in the cell, not the line box: the strip is 31 px
+         * tall and the glyphs cover far less, so drawing from the top edge
+         * leaves the text sitting high in it. */
+        int top = 0, bottom = 0;
+        if (Font_InkExtent(menu.tooltip_font, text, &top, &bottom) != 0)
+            top = bottom = 0;
+        int ty = helptext_rect.y + (helptext_rect.h - (bottom - top)) / 2 - top;
         Font_DrawString(menu.tooltip_font, offscreen, tx, ty, text);
     }
 
     /* Hand the composited surface to the window. */
     UI_Present(platform);
 
-    int next = (menu.pending_nextstate >=0 ) ? menu.pending_nextstate : GAMESTATE_MENU;
-    menu.pending_nextstate = -1;
+    int next = (menu.pending_nextstate != MENU_NO_PENDING) ? menu.pending_nextstate : GAMESTATE_MENU;
+    menu.pending_nextstate = MENU_NO_PENDING;
     return next;
 }
 

@@ -57,7 +57,6 @@ static struct {
     int          sub_loaded;      /* 1 when `sub` holds a valid dialog */
     int          active_tab;
     Font        *tooltip_font;
-    Font        *header_font;
     int          return_state;
     int          pending_nextstate;
     /* The main screen the dialog sits on when opened from the menu: the
@@ -166,23 +165,35 @@ static int load_tab(int tab) {
     opts.sub_loaded = 1;
     opts.sub_rt = GUIRuntime_Create(&opts.sub);
 
-    /* Sub-dialog widgets are declared in absolute screen coordinates
-     * (they inherit positioning from the main dialog they're parented
-     * to in the original game), so draw them at their natural rects —
-     * no offset. */
+    /* Each sub-dialog is authored at its own place on the screen, but all
+     * four are the size of the shell's PlaceHolderForOptionPages widget
+     * (311x172) and belong inside it. Shift each one by the difference
+     * between where the placeholder sits and where the sub-dialog's root
+     * was authored, so every tab lands in the same frame.
+     *
+     * Observed in the shipped data: the placeholder is at 165,187 and the
+     * roots are Interface 52,49 / Music 167,148 / Sound 88,119, which is
+     * why a fixed offset cannot serve them all. */
     if (opts.sub_rt) {
-        int dx = (opts.sub.root.rect.x < opts.shell.root.rect.x)
-               ? opts.shell.root.rect.x : 0;
-        int dy = (opts.sub.root.rect.y < opts.shell.root.rect.y)
-               ? opts.shell.root.rect.y : 0;
-        if (tab == TAB_INTERFACE) {
-            dx = 105;
-            dy = 130;
+        int dx = 0, dy = 0;
+        GUIWidget *slot = GUIDialog_FindByName(&opts.shell,
+                                               "PlaceHolderForOptionPages");
+        if (slot) {
+            dx = slot->rect.x - opts.sub.root.rect.x;
+            dy = slot->rect.y - opts.sub.root.rect.y;
         }
         GUIRuntime_SetOffset(opts.sub_rt, dx, dy);
     }
 
     opts.active_tab = tab;
+
+    /* The chosen tab stays pushed in: frame 1 is the selected art, and the
+     * others go back to the plain frame 2 by clearing their override. */
+    for (int t = 0; t < TAB_COUNT; t++) {
+        GUIRuntime_SetFrameOverride(opts.shell_rt, tab_widget_name[t],
+                                    t == tab ? 1 : -1);
+    }
+
     sync_visual_checkboxes();
     return 0;
 }
@@ -204,7 +215,6 @@ int Options_Init(TAK_Platform *platform) {
 
     opts.tooltip_font = Font_Load("data/fonts/b_times new roman (100b)",
                                    UI_RGBAFormat());
-    opts.header_font  = opts.tooltip_font;   /* reuse */
 
     if (opts.return_state == GAMESTATE_MENU)
         opts.backdrop = load_menu_backdrop();
@@ -287,24 +297,28 @@ int Options_Tick(TAK_Platform *platform, float frame_dt) {
     GUIRuntime_Render(opts.shell_rt);
     if (opts.sub_rt) GUIRuntime_Render(opts.sub_rt);
 
-    /* Tab label banner at the top so the user can see which tab is active. */
-    if (opts.header_font && opts.active_tab >= 0 &&
-        opts.active_tab < TAB_COUNT) {
-        const char *label = tab_label[opts.active_tab];
-        int tw = Font_MeasureString(opts.header_font, label);
-        Font_DrawString(opts.header_font, off, 320 - tw / 2, 95, label);
-    }
-
-    /* Tooltip for hovered widget on whichever layer. */
+    /* Tooltip for hovered widget on whichever layer. It goes in the dialog's
+     * own HelpText widget, centred in it, the way the main menu does it — the
+     * panel already has the dark strip painted, so nothing is drawn behind the
+     * text. */
     if (opts.tooltip_font) {
         const GUIWidget *hw = GUIRuntime_HoveredWidget(opts.sub_rt);
         if (!hw || !hw->tooltip[0]) hw = GUIRuntime_HoveredWidget(opts.shell_rt);
         if (hw && hw->tooltip[0]) {
             int tw = Font_MeasureString(opts.tooltip_font, hw->tooltip);
-            SDL_Rect strip = { 120, 400, 400, 22 };
-            SDL_FillRect(off, &strip, SDL_MapRGBA(off->format, 18, 14, 8, 255));
-            Font_DrawString(opts.tooltip_font, off,
-                             320 - tw / 2, 404, hw->tooltip);
+            const GUIWidget *slot = GUIDialog_FindByName(&opts.shell, "HelpText");
+            int tx = slot ? slot->rect.x + (slot->rect.w - tw) / 2 : 320 - tw / 2;
+            int ty = slot ? slot->rect.y : 404;
+            if (slot) {
+                /* Centre the ink in the cell, not the line box: the help
+                 * strip is 30 px tall and the glyphs cover far less, so
+                 * drawing from the top edge leaves the text sitting high. */
+                int top = 0, bottom = 0;
+                if (Font_InkExtent(opts.tooltip_font, hw->tooltip,
+                                   &top, &bottom) != 0) top = bottom = 0;
+                ty += (slot->rect.h - (bottom - top)) / 2 - top;
+            }
+            Font_DrawString(opts.tooltip_font, off, tx, ty, hw->tooltip);
         }
     }
 
