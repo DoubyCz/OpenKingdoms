@@ -504,10 +504,16 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
          * and NetPlayerMap_Method28 at line 147978. */
         const SDL_Rect *hr = &character_hit_rects[i];
 
-        if (ch->has_video && ch->active_player && ch->active_clip >= 0) {
-            const uint32_t *vpixels = BinkPlayer_GetPixels(ch->active_player);
-            int vw = BinkPlayer_GetWidth(ch->active_player);
-            int vh = BinkPlayer_GetHeight(ch->active_player);
+        /* Rest draws the idle clip, since the sheet is a different size
+         * and a hover starting a clip would resize the door. No sheet
+         * (the snort) means no disagreement, and it stays invisible. */
+        BinkPlayer *shown = ch->active_player;
+        if (!shown && ch->state == 2 && ch->current_pixels) shown = ch->clips[0];
+
+        if (ch->has_video && shown) {
+            const uint32_t *vpixels = BinkPlayer_GetPixels(shown);
+            int vw = BinkPlayer_GetWidth(shown);
+            int vh = BinkPlayer_GetHeight(shown);
             if (vpixels && vw > 0 && vh > 0) {
                 /* The original game draws the Bink frame with its top-left
                  * at the .gui rect's (x, y), using the video's natural
