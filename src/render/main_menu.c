@@ -177,12 +177,7 @@ static struct {
 static int init_character(CharacterAnim *ch, const char *gaf_name, const char *bink_name) {
     memset(ch, 0, sizeof(*ch));
     ch->active_clip = -1;
-    /* Rest on the one-frame idle clip (state 4), not on the GAF sheet
-     * (state 2). The sheet and the clips are different sizes — machine is
-     * 143x182 on the sheet and 160x195 in the clips — so resting on the
-     * sheet makes the door change size the moment a hover starts a clip.
-     * The original rests on the idle clip, so nothing resizes. */
-    ch->state = 4;
+    ch->state = 2;
 
     if (gaf_name) {
         char gaf_path[256], pcx_path[256];
@@ -349,16 +344,6 @@ int MainMenu_Init(TAK_Platform *platform) {
     init_character(&menu.characters[2], "multiknight",    "knight");
     init_character(&menu.characters[3], NULL,             "snort");
 
-    /* Put each door on its idle clip straight away. The state machine only
-     * calls select_clip when the state changes, so a door left in state 4
-     * from init would draw the GAF sheet until the first hover moved it
-     * through 5-6-7 and back — which is exactly the size change this is
-     * meant to avoid. */
-    for (int i = 0; i < MENU_NUM_CHARACTERS; i++) {
-        CharacterAnim *ch = &menu.characters[i];
-        if (ch->has_video && ch->state == 4) select_clip(ch, 0);
-    }
-
     /* Tooltip font — mainmenu.gui HelpText uses "times new roman (100b).gaf".
      * The matching .gaf/.pcx live under data/fonts/ with a "b_" prefix. */
     menu.tooltip_font = Font_Load("data/fonts/b_times new roman (100b)", UI_RGBAFormat());
@@ -421,7 +406,7 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
         int next = ch->state;
         if (entered) {
             ch->hovered_flag = 1;
-            if (ch->state == 2 || ch->state == 4) next = 5;
+            if (ch->state == 2) next = 5;
         }
         if (ch->hovered_flag && !inside && ch->state == 6) {
             ch->hovered_flag = 0;
@@ -435,10 +420,10 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
             }
             if (finished) {
                 switch (ch->state) {
-                case 4: next = ch->hovered_flag ? 6 : 4; break;
+                case 4: next = ch->hovered_flag ? 6 : 2; break;
                 case 5: next = 6; break;
                 case 6: BinkPlayer_Rewind(ch->active_player); break;
-                case 7: next = 4; break;
+                case 7: next = 2; break;
                 default: break;
                 }
             }
