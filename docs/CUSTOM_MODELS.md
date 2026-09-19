@@ -30,6 +30,26 @@ These are the lodestones:
     zonlode.glb   Zhon Lodestone, two by two
     aramana.glb   Aramon Divine Lodestone, three by three
 
+## Standing stones and other flat scenery
+
+The stones around a mana site, and most trees, rocks and ruins, are
+not models in the original. They are flat pictures, and in the 3D view
+a picture can only lie on the ground. Each one is a feature with a
+sequence name in the `features` data, `VerHenge01` for the first
+Veruna standing stone, and a model named after that sequence stands
+where the picture would have lain:
+
+    models3d/
+      verhenge01.glb
+
+The sequence names for the standing stones are `AraHenge01` to
+`AraHenge11`, `TarHenge01` to `TarHenge14`, `VerHenge01` to
+`VerHenge11` with `01b` and `05b`, and `ZonHenge01` to `ZonHenge11`.
+Each feature has a footprint in build squares of sixteen pixels and a
+height in pixels in its definition, and a model should be built to
+those rather than to the picture, which the camera foreshortens. The
+classic view keeps drawing the picture.
+
 A game built from source with a data directory reads `models3d` from
 there too, which is where a developer's loose files live.
 
@@ -73,24 +93,55 @@ whole of it is twelve vertices, so there is room to spend. If a model
 is authored at another scale, put the factor in the file's root
 `extras` as `tak_scale` and it is applied on load.
 
-Textures are PNG or JPEG, embedded, and power of two in both
-dimensions. The browser build is WebGL 1, where a mipmapped texture of
-any other size samples as black. 1024 or 2048 square is a good place
-to sit.
+Textures are PNG or JPEG, embedded. A power of two size in both
+dimensions gets mipmaps and stays smooth at a distance. Any other size
+draws, but without them, so it shimmers when the camera is far off.
+1024 or 2048 square is a good place to sit.
 
-Base colour is what the shader reads. Metalness, roughness and normal
-maps are not read yet, so anything that should be seen belongs in the
-base colour.
+## What a material may say
+
+The shader reads the material as Blender's Principled BSDF writes it.
+
+Base colour, as a factor, a texture, or both multiplied together.
+
+A normal map, with its strength. A tangent is made for every vertex
+from the way the picture lies across the surface when the file brings
+none, which is what Blender exports.
+
+Metallic and roughness, as factors and as the packed texture with
+roughness in green and metal in blue. A rough surface takes a broad
+soft highlight, a smooth one a tight bright one, and metal colours the
+highlight with the base colour.
+
+Emission, as a colour or a texture, added on top of the lighting. A
+crystal that should glow gets its light this way.
+
+Blend mode. Opaque draws as it is. Alpha Clip drops fragments fainter
+than the clip threshold. Alpha Blend draws the part over what is behind
+it, after the solid parts of the model, so a glass crystal shows what
+it stands on.
+
+Backface culling. A material with it off draws both faces.
+
+Each material's pictures are laid by one UV map. If the material's
+pictures name the second map, that is the one used for all of them; a
+picture laid by a different map from the rest of its material is left
+out and said so in the log.
 
 A material named `teamcolor` takes the owning player's colour instead
 of its own. Use it for the parts that should say whose lodestone this
 is.
 
+A model's pictures are decoded and sent to the card once, then shared
+by every team colour of it. A model with nine 2048 square textures
+costs that once, not once for each player who builds one.
+
 ## What a model may not exceed
 
-A model holds at most 128 pieces, 65535 vertices, and 32 distinct
-textures. A few thousand triangles is nothing to the renderer. A model
-past any of those limits is refused and the shipped one is drawn.
+A model holds at most 128 pieces, 65535 vertices, 32 distinct
+materials and 32 pictures. A few thousand triangles is nothing to the
+renderer. A model past any of those limits is refused and the shipped
+one is drawn.
 
 ## What is not there yet
 
