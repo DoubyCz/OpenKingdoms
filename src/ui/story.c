@@ -712,6 +712,12 @@ int Story_Init(TAK_Platform *platform) {
         fprintf(stderr, "Story: failed to parse bod.gui\n");
         return -1;
     }
+    /* The HelpText cell ships with "Tooltip" in it, which the renderer
+     * would draw under the live help string. */
+    {
+        GUIWidget *ht = GUIDialog_FindByName(&story.dialog, "HelpText");
+        if (ht) ht->display_text[0] = '\0';
+    }
     story.rt = GUIRuntime_Create(&story.dialog);
     if (!story.rt) {
         GUIDialog_Free(&story.dialog);
@@ -847,8 +853,9 @@ int Story_Tick(TAK_Platform *platform, float frame_dt) {
             const GUIWidget *help = GUIDialog_FindByName(&story.dialog, "HelpText");
             SDL_Rect r = help ? help->rect : (SDL_Rect){ 208, 452, 224, 30 };
             int tw = Font_MeasureString(story.tooltip_font, hw->tooltip);
-            Font_DrawString(story.tooltip_font, off,
-                            r.x + (r.w - tw) / 2, r.y + 4, hw->tooltip);
+            Font_DrawString(story.tooltip_font, off, r.x + (r.w - tw) / 2,
+                            Font_CenterY(story.tooltip_font, r.y, r.h),
+                            hw->tooltip);
         }
     }
 

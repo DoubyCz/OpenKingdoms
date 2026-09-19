@@ -117,6 +117,11 @@ int Font_MeasureString(Font *f, const char *s) {
 
 int Font_LineHeight(Font *f) { return f ? f->max_h : 0; }
 
+int Font_CenterY(Font *f, int cell_y, int cell_h) {
+    if (!f) return cell_y;
+    return cell_y + (cell_h - f->max_h) / 2;
+}
+
 int Font_InkExtent(Font *f, const char *s, int *out_top, int *out_bottom) {
     if (!f || !s) return -1;
     int top = 0, bottom = 0, any = 0;

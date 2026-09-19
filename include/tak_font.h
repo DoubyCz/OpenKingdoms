@@ -28,6 +28,11 @@ void Font_Free(Font *f);
  * The top of tall glyphs lines up with `y`. */
 void Font_DrawString(Font *f, SDL_Surface *dst, int x, int y, const char *s);
 
+/* The pen Y that centres one line in a cell `cell_h` tall, by the line
+ * box. It takes no string: a help strip shows a different caption per
+ * button, and centring each on its own ink would move the line. */
+int Font_CenterY(Font *f, int cell_y, int cell_h);
+
 /* Measure a string's on-screen width in pixels (for centering / alignment). */
 int Font_MeasureString(Font *f, const char *s);
 
