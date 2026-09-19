@@ -779,6 +779,16 @@ static int story_click(TAK_Platform *platform, const char *clicked,
     return GAMESTATE_CAMPAIGN;
 }
 
+/* The book without its help strip. The load dialog draws over this,
+ * so it has to be a step of its own. */
+static void draw_book(void) {
+    SDL_Surface *off = UI_Offscreen();
+    SDL_Rect full = { 0, 0, 640, 480 };
+    SDL_FillRect(off, &full, SDL_MapRGBA(off->format, 12, 12, 18, 255));
+    GUIRuntime_Render(story.rt);
+    draw_chapter_art(off);
+}
+
 /* A chosen save takes the same two lines Play takes: bring up the
  * battle the save names, then let the loading screen apply it. */
 static int take_browser_result(SaveBrowserResult r, TAK_Platform *platform) {
@@ -809,7 +819,13 @@ int Story_Tick(TAK_Platform *platform, float frame_dt) {
     /* The load dialog and the chooser draw over this screen and own the
      * frame while they are up, the way the F1 menu owns Options. */
     if (story.browser_open) {
-        return take_browser_result(SaveBrowser_Tick(platform), platform);
+        /* SaveBrowser_Tick draws but does not present, and this branch
+         * returns before the present at the end of the frame. */
+        draw_book();
+        SaveBrowserResult r = SaveBrowser_Tick(platform);
+        int next = take_browser_result(r, platform);
+        UI_Present(platform);
+        return next;
     }
     if (story.chooser.open) {
         chooser_tick(&story.chooser, platform);
@@ -841,12 +857,9 @@ int Story_Tick(TAK_Platform *platform, float frame_dt) {
 
     update_story_labels();
 
-    SDL_Surface *off = UI_Offscreen();
-    SDL_Rect full = { 0, 0, 640, 480 };
-    SDL_FillRect(off, &full, SDL_MapRGBA(off->format, 12, 12, 18, 255));
-    GUIRuntime_Render(story.rt);
-    draw_chapter_art(off);
+    draw_book();
 
+    SDL_Surface *off = UI_Offscreen();
     if (story.tooltip_font) {
         const GUIWidget *hw = GUIRuntime_HoveredWidget(story.rt);
         if (hw && hw->tooltip[0]) {
