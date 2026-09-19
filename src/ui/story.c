@@ -644,6 +644,18 @@ static void chooser_draw_rows(StoryChooser *ch, SDL_Surface *off) {
     }
 }
 
+/* The hovered widget's help string, in the cell the dialog has for it. */
+static void chooser_draw_help(StoryChooser *ch, SDL_Surface *off) {
+    if (!ch->font || !off || !ch->rt) return;
+    const GUIWidget *hw = GUIRuntime_HoveredWidget(ch->rt);
+    const GUIWidget *help = GUIDialog_FindByName(&ch->dialog, "HelpText");
+    if (!hw || !help || !hw->tooltip[0]) return;
+    int tw = Font_MeasureString(ch->font, hw->tooltip);
+    Font_DrawString(ch->font, off, help->rect.x + (help->rect.w - tw) / 2,
+                    Font_CenterY(ch->font, help->rect.y, help->rect.h),
+                    hw->tooltip);
+}
+
 static void chooser_tick(StoryChooser *ch, TAK_Platform *platform) {
     int mx = -1, my = -1, mouse_down = 0;
     if (platform && platform->has_focus)
@@ -679,6 +691,7 @@ static void chooser_tick(StoryChooser *ch, TAK_Platform *platform) {
     GUIRuntime_Render(story.rt);
     GUIRuntime_Render(ch->rt);
     chooser_draw_rows(ch, UI_Offscreen());
+    chooser_draw_help(ch, UI_Offscreen());
     UI_Present(platform);
 }
 
