@@ -404,10 +404,10 @@ int MainMenu_Tick(TAK_Platform *platform, float frame_dt) {
             continue;
         }
         int next = ch->state;
-        if (entered) {
-            ch->hovered_flag = 1;
-            if (ch->state == 2) next = 5;
-        }
+        if (entered) ch->hovered_flag = 1;
+        /* Rest follows the cursor being there, not the crossing onto it:
+         * a crossing during the leave clip has nowhere to be recorded. */
+        if (inside && ch->state == 2) next = 5;
         if (ch->hovered_flag && !inside && ch->state == 6) {
             ch->hovered_flag = 0;
             next = 7;
