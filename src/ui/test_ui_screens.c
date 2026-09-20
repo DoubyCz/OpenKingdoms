@@ -8424,6 +8424,24 @@ TEST(skirmish_setup_error_requires_two_spawnable_players) {
     VFS_Shutdown();
 }
 
+#define STORY_SCRATCH_DIR "story_scratch"
+
+/* The player is a setting and the name box on the multiplayer screen
+ * shows whatever is remembered, so a case that opens a book under its
+ * own name hands the name back on the way out. */
+static char story_borrowed_name[32];
+
+static void story_open_as(const char *who) {
+    snprintf(story_borrowed_name, sizeof story_borrowed_name, "%s",
+             Story_PlayerName());
+    Story_SetPlayerName(who);
+}
+
+static void story_hand_the_name_back(void) {
+    Story_SetPlayerName(story_borrowed_name);
+    story_borrowed_name[0] = '\0';
+}
+
 TEST(story_play_starts_campaign_loading) {
     if (setup_vfs() != 0) SKIP("no data dir");
 
@@ -8675,6 +8693,11 @@ TEST(story_shift_play_on_the_last_chapter_launches_the_hidden_one) {
  * it on, a loss leaves it (legacy:144404-144422). */
 TEST(story_a_won_mission_opens_the_next_chapter) {
     if (setup_vfs() != 0) SKIP("no data dir");
+    /* A win is written down now, so this needs a book nothing else in
+     * the run has opened and a settings file of its own. */
+    Settings_SetDirectory(STORY_SCRATCH_DIR);
+    remove(Settings_FilePath());
+    story_open_as("Lokken");
     Story_SelectCampaign(0);
     Story_SelectChapter(0);
     int start_high = Story_HighWaterChapter();
@@ -8687,6 +8710,8 @@ TEST(story_a_won_mission_opens_the_next_chapter) {
     int after_win = Story_HighWaterChapter();
     int chapter_after_win = Story_SelectedChapter();
     VFS_Shutdown();
+    story_hand_the_name_back();
+    Settings_SetDirectory(NULL);
 
     ASSERT_EQ_INT(0, start_high);
     ASSERT_EQ_INT(0, after_loss);
@@ -8699,6 +8724,7 @@ TEST(story_a_won_mission_opens_the_next_chapter) {
  * (legacy:144228-144232). */
 TEST(story_wasabi_unlocks_every_chapter) {
     if (setup_vfs() != 0) SKIP("no data dir");
+    story_open_as("Ari");
     Story_SelectCampaign(0);
     Story_SelectChapter(0);
     int locked = Story_HighWaterChapter();
@@ -8707,6 +8733,7 @@ TEST(story_wasabi_unlocks_every_chapter) {
     Story_TypeText("i");
     int unlocked = Story_HighWaterChapter();
     int chapters = Story_ChapterCount();
+    story_hand_the_name_back();
     VFS_Shutdown();
 
     ASSERT_EQ_INT(0, locked);
@@ -8719,14 +8746,205 @@ TEST(story_wasabi_unlocks_every_chapter) {
  * (legacy:144267). The campaign name belongs in the chooser. */
 TEST(story_book_name_is_the_player_not_the_campaign) {
     if (setup_vfs() != 0) SKIP("no data dir");
-    Story_SetPlayerName("Darien");
+    story_open_as("Darien");
     char shown[64] = "";
     snprintf(shown, sizeof shown, "%s", Story_PlayerName());
+    story_hand_the_name_back();
     VFS_Shutdown();
     ASSERT_EQ_STR("Darien", shown);
 }
 
 /* ── Entry ───────────────────────────────────────────────────────────── */
+
+/* The HelpText strip's own string, the way bs_help_text reads the
+ * lobby's. */
+static const char *story_help_text(void) {
+    const GUIWidget *w = GUIRuntime_WidgetByName(Story_Runtime(), "HelpText");
+    return w ? w->display_text : "(no HelpText)";
+}
+
+/* The ink box of one named label, for the heading cases below. */
+static int story_text_box(const char *name, SDL_Rect *out) {
+    GUIRuntime *rt = Story_Runtime();
+    for (int i = 0; i < GUIRuntime_NumWidgets(rt); i++) {
+        const GUIWidget *w = GUIRuntime_WidgetAt(rt, i);
+        if (w && tak_stricmp(w->name, name) == 0)
+            return GUIRuntime_TextDrawRect(rt, i, out);
+    }
+    return -1;
+}
+
+/* A won mission is remembered between runs. The original writes a
+ * highwater save under savedgames\<player> and reads it back when the
+ * book opens (legacy:153802-153926, legacy:144384-144422). Here it is a
+ * line in the settings file, which is the one thing the browser already
+ * copies out of the tab (paths.c, web/shell.html restorePrefs). */
+TEST(story_progress_outlives_the_run) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    Settings_SetDirectory(STORY_SCRATCH_DIR);
+    /* SDL makes the preference directory on a desktop and the page
+     * makes it in a browser. A scratch one has to be made here, or
+     * every write to it is a no-op. */
+    (void)Paths_SaveDir();
+    remove(Settings_FilePath());
+    story_open_as("Elsin");
+    Story_SelectCampaign(0);
+    Story_SelectChapter(0);
+    Story_MissionFinished(1);
+    Story_MissionFinished(1);
+    int reached = Story_HighWaterChapter();
+
+    char written[8192] = "";
+    FILE *fp = fopen(Settings_FilePath(), "r");
+    if (fp) {
+        size_t n = fread(written, 1, sizeof(written) - 1, fp);
+        written[n] = '\0';
+        fclose(fp);
+    }
+    int on_disk = strstr(written, "HighWater.Elsin.book of darien=2") != NULL;
+    VFS_Shutdown();
+
+    /* A fresh mount rebuilds the book list, the way a new run does. */
+    int reopened = -1, opened_at = -1;
+    if (setup_vfs() == 0) {
+        reopened = Story_HighWaterChapter();
+        opened_at = Story_SelectedChapter();
+        VFS_Shutdown();
+    }
+    story_hand_the_name_back();
+    Settings_SetDirectory(NULL);
+
+    if (!on_disk) printf("(settings file holds: %.200s) ", written);
+    ASSERT_EQ_INT(2, reached);
+    ASSERT_EQ_INT(1, on_disk);
+    ASSERT_EQ_INT(2, reopened);
+    ASSERT_EQ_INT(2, opened_at);
+}
+
+/* The page turners are greyed out where there is nowhere to turn: the
+ * original parks them on frame 0 and puts them on frame 2 when the page
+ * exists (legacy:144085-144133). */
+TEST(story_page_arrows_grey_out_at_the_ends_of_the_book) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    Settings_SetDirectory(STORY_SCRATCH_DIR);
+    story_open_as("Arden");
+    ASSERT_EQ_INT(0, Story_Init(&platform));
+    Story_SelectCampaign(0);
+    Story_SelectChapter(0);
+    Story_Tick(&platform, 1.0f / 60.0f);
+    int next_locked = GUIRuntime_DrawnFrame(Story_Runtime(), "NextPage");
+    int prev_at_start = GUIRuntime_DrawnFrame(Story_Runtime(), "PreviousPage");
+
+    Story_MissionFinished(1);
+    Story_SelectChapter(0);
+    Story_Tick(&platform, 1.0f / 60.0f);
+    int next_open = GUIRuntime_DrawnFrame(Story_Runtime(), "NextPage");
+
+    Story_SelectChapter(1);
+    Story_Tick(&platform, 1.0f / 60.0f);
+    int prev_on_two = GUIRuntime_DrawnFrame(Story_Runtime(), "PreviousPage");
+    int next_on_two = GUIRuntime_DrawnFrame(Story_Runtime(), "NextPage");
+
+    Story_Shutdown();
+    story_hand_the_name_back();
+    Settings_SetDirectory(NULL);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+
+    ASSERT_EQ_INT(0, next_locked);
+    ASSERT_EQ_INT(0, prev_at_start);
+    ASSERT_EQ_INT(2, next_open);
+    ASSERT_EQ_INT(2, prev_on_two);
+    ASSERT_EQ_INT(0, next_on_two);
+}
+
+/* The strip along the bottom carries the help text of whatever the
+ * pointer is over and nothing otherwise. bod.gui authors the word
+ * Tooltip into it (bod.gui:114-119), which is placeholder art the
+ * original never shows. */
+TEST(story_help_bar_does_not_show_the_authored_placeholder) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    ASSERT_EQ_INT(0, Story_Init(&platform));
+    char help[64] = "";
+    snprintf(help, sizeof help, "%s", story_help_text());
+    Story_Tick(&platform, 1.0f / 60.0f);
+    char after_tick[64] = "";
+    snprintf(after_tick, sizeof after_tick, "%s", story_help_text());
+    Story_Shutdown();
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+
+    ASSERT_EQ_STR("", help);
+    ASSERT_EQ_STR("", after_tick);
+}
+
+/* The heading is drawn in the book's own decorative font, not the
+ * generic one: bod.gui names bodfontdecor.gaf for the drop cap and the
+ * numeral (bod.gui:242, bod.gui:265). Its C is 67 by 74 and its 1 is 22
+ * by 49, where times new roman is a few pixels of each. */
+TEST(story_chapter_heading_uses_the_book_font) {
+    if (setup_vfs() != 0) SKIP("no data dir");
+    TAK_Platform platform;
+    if (setup_platform(&platform) != 0) { VFS_Shutdown(); return; }
+    ASSERT_EQ_INT(0, UI_Init());
+    Settings_SetDirectory(STORY_SCRATCH_DIR);
+    story_open_as("Thirsha");
+    ASSERT_EQ_INT(0, Story_Init(&platform));
+    Story_SelectCampaign(0);
+    Story_SelectChapter(0);
+    Story_Tick(&platform, 1.0f / 60.0f);
+
+    SDL_Rect cap = { 0, 0, 0, 0 }, num = { 0, 0, 0, 0 }, word = { 0, 0, 0, 0 };
+    int got_cap = story_text_box("C", &cap);
+    int got_num = story_text_box("ChapterNumber", &num);
+    int got_word = story_text_box("Hapter", &word);
+
+    Story_Shutdown();
+    story_hand_the_name_back();
+    Settings_SetDirectory(NULL);
+    UI_Shutdown();
+    teardown_platform(&platform);
+    VFS_Shutdown();
+
+    printf("(C %d,%d %dx%d numeral %d,%d %dx%d HAPTER %d,%d %dx%d) ",
+           cap.x, cap.y, cap.w, cap.h, num.x, num.y, num.w, num.h,
+           word.x, word.y, word.w, word.h);
+    ASSERT_EQ_INT(0, got_cap);
+    ASSERT_EQ_INT(0, got_num);
+    ASSERT_EQ_INT(0, got_word);
+    ASSERT_EQ_INT(67, cap.w);
+    ASSERT_EQ_INT(74, cap.h);
+    ASSERT_EQ_INT(22, num.w);
+    ASSERT_EQ_INT(49, num.h);
+    /* HAPTER in bodfontbody: 18+19+14+15+16+17 across, caps 20 tall. */
+    ASSERT_EQ_INT(99, word.w);
+
+    /* And the three land where the .gui puts them. The capital's cell is
+     * 97,34 94x97 and carries alignment 9, left and bottom, so its
+     * baseline is the bottom of the cell, and the C hangs two rows below
+     * that. HAPTER's cell is 162,78 139x25 and carries 1, left and
+     * centred, so its 18 tall line sits three rows down. The
+     * numeral's cell is 165,72 98x96 and carries 0, centred both ways. */
+    ASSERT_EQ_INT(97, cap.x);
+    ASSERT_EQ_INT(59, cap.y);
+    ASSERT_EQ_INT(162, word.x);
+    ASSERT_EQ_INT(82, word.y);
+    ASSERT_EQ_INT(203, num.x);
+    ASSERT_EQ_INT(109, num.y);
+    /* The capital spans the line the word is on, and the numeral sits
+     * under the word rather than raised beside it. */
+    ASSERT(cap.y <= word.y);
+    ASSERT(cap.y + cap.h >= word.y + word.h);
+    ASSERT(num.y >= word.y + word.h);
+}
 
 TEST(tech_tree_all_builder_menus_resolve) {
     if (setup_vfs() != 0) SKIP("no data dir");
@@ -23588,6 +23806,10 @@ int main(int argc, char **argv) {
     RUN_UI_TEST(UI_GROUP_A, story_a_won_mission_opens_the_next_chapter);
     RUN_UI_TEST(UI_GROUP_C, story_wasabi_unlocks_every_chapter);
     RUN_UI_TEST(UI_GROUP_D, story_book_name_is_the_player_not_the_campaign);
+    RUN_UI_TEST(UI_GROUP_B, story_progress_outlives_the_run);
+    RUN_UI_TEST(UI_GROUP_C, story_page_arrows_grey_out_at_the_ends_of_the_book);
+    RUN_UI_TEST(UI_GROUP_D, story_help_bar_does_not_show_the_authored_placeholder);
+    RUN_UI_TEST(UI_GROUP_A, story_chapter_heading_uses_the_book_font);
     RUN_UI_TEST(UI_GROUP_C, a_creon_save_needs_the_expansion_installed);
     RUN_UI_TEST(UI_GROUP_D, battle_setup_play_refuses_everyone_on_one_team);
     RUN_UI_TEST(UI_GROUP_B, skirmish_lobby_offers_creon_after_zhon);
